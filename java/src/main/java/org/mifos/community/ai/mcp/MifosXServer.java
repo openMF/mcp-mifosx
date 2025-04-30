@@ -124,7 +124,7 @@ public class MifosXServer {
     @Tool(description = "Activate a client using his account number. " +
             "Optionally provide an activation date. If omitted, today's date will be used.")
     JsonNode activateClient(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
-                            @ToolArg(description = "Activation Date (e.g. 22 April 2025)") String activationDate)
+                            @ToolArg(description = "Activation Date (e.g. 22 April 2025)", required = false) String activationDate)
             throws JsonProcessingException {
         ClientActivation clientActivation = new ClientActivation();
 
@@ -402,6 +402,27 @@ public class MifosXServer {
 
         String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountActivation);
         return mifosXClient.approveSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
+    }
+
+    @Tool(description = "Activate a savings account using the account number. " +
+            "You can optionally include a note for activate consideration.")
+    JsonNode activateSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
+                                   @ToolArg(description = "Note for approval consideration (e.g. Some observation)") String note)
+            throws JsonProcessingException {
+        SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
+        String command = "active";
+        ObjectMapper ow = new ObjectMapper();
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        String formattedDate = currentDate.format(dtf);
+
+        savingAccountActivation.setActivationDate(formattedDate);
+        savingAccountActivation.setDateFormat("dd MMMM yyyy");
+        savingAccountActivation.setLocale("en");
+        savingAccountActivation.setNote(note);
+
+        String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountActivation);
+        return mifosXClient.activateSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
     }
 
     private String getCurrencyCode (String currency) throws JsonProcessingException {
