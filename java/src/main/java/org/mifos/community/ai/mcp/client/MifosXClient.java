@@ -114,6 +114,14 @@ public interface MifosXClient {
     @Path("/fineract-provider/api/v1/loans")
     JsonNode newLoanAccountApplication(String newLoanAccountApplication);
 
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/savingsaccounts/{accountNumber}")
+    JsonNode approveSavingsAccount(@PathParam("accountNumber") Integer accountNumber,
+                                   @QueryParam("command") String command,
+                                   String approveSavingsAccount);
+
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Path("fineract-provider/api/v1/currencies")
