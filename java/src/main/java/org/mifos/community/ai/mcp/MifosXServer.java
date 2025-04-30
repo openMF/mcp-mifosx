@@ -280,18 +280,18 @@ public class MifosXServer {
             "interestRatePerPeriod, isEqualAmortization, numberOfRepayments, principal, repaymentEvery, " +
             "repaymentFrequencyType, and submittedOnDate.")
     JsonNode newLoanAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
-           @ToolArg(description = "Loan Type (e.g. Individual)") String loanType,
-           @ToolArg(description = "Expected Disbursement Date (e.g 14 April 2025)") String expectedDisbursementDate,
-           @ToolArg(description = "Interest Rate Frequency Type (e.g 2)" ) Integer interestRateFrequencyType,
-           @ToolArg(description = "Interest Rate Per Period (e.g 5)") BigDecimal interestRatePerPeriod,
-           @ToolArg(description = "Is Equal Amortization (e.g \"false\")") String isEqualAmortization,
-           @ToolArg(description = "Number Of Repayments (e.g 2)") Integer numberOfRepayments,
-           @ToolArg(description = "Principal (e.g 1000)") BigDecimal principal,
-           @ToolArg(description = "Product Id (e.g 2)") Integer productId,
-           @ToolArg(description = "Repayment Every (e.g 2)") Integer repaymentEvery,
-           @ToolArg(description = "Repayment Frequency Type (e.g 2)") Integer repaymentFrequencyType,
-           @ToolArg(description = "Submitted on Date (e.g 14 April 2025)") String submittedOnDate
-    ) throws JsonProcessingException {
+                                       @ToolArg(description = "Loan Type (e.g. Individual)") String loanType,
+                                       @ToolArg(description = "Expected Disbursement Date (e.g 14 April 2025)") String expectedDisbursementDate,
+                                       @ToolArg(description = "Interest Rate Frequency Type (e.g 2)") Integer interestRateFrequencyType,
+                                       @ToolArg(description = "Interest Rate Per Period (e.g 5)") BigDecimal interestRatePerPeriod,
+                                       @ToolArg(description = "Is Equal Amortization (e.g \"false\")") String isEqualAmortization,
+                                       @ToolArg(description = "Number Of Repayments (e.g 2)") Integer numberOfRepayments,
+                                       @ToolArg(description = "Principal (e.g 1000)") BigDecimal principal,
+                                       @ToolArg(description = "Product Id (e.g 2)") Integer productId,
+                                       @ToolArg(description = "Repayment Every (e.g 2)") Integer repaymentEvery,
+                                       @ToolArg(description = "Repayment Frequency Type (e.g 2)") Integer repaymentFrequencyType,
+                                       @ToolArg(description = "Submitted on Date (e.g 14 April 2025)") String submittedOnDate)
+            throws JsonProcessingException {
         LoanProductApplication loanProductApplication = new LoanProductApplication();
 
         loanProductApplication.setAllowPartialPeriodInterestCalcualtion("false");
@@ -341,7 +341,7 @@ public class MifosXServer {
 
     @Tool(description = "Create an application for a new saving account using a product ID and a client's account number." +
             "You can optionally include an external ID)")
-    JsonNode newSavingAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
+    JsonNode newSavingsAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
                                          @ToolArg(description = "Saving product ID (e.g. 1)") Integer productId,
                                          @ToolArg(description = "External Id (e.g CR03)", required = false) String externalId)
             throws IOException, JsonProcessingException {
@@ -381,6 +381,26 @@ public class MifosXServer {
         jsonSavingProductApplication = jsonSavingProductApplication.replace(":null", ":\"\"");
 
         return mifosXClient.newSavingAccountApplication(jsonSavingProductApplication);
+    }
+
+    @Tool(description = "")
+    JsonNode approveSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
+                                   @ToolArg(description = "Note for approval consideration (e.g. Some observation)") String note)
+            throws JsonProcessingException {
+        SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
+        String command = "approve";
+        ObjectMapper ow = new ObjectMapper();
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        String formattedDate = currentDate.format(dtf);
+
+        savingAccountActivation.setActivationDate(formattedDate);
+        savingAccountActivation.setDateFormat("dd MMMM yyyy");
+        savingAccountActivation.setLocale("en");
+        savingAccountActivation.setNote(note);
+
+        String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountActivation);
+        return mifosXClient.approveSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
     }
 
     private String getCurrencyCode (String currency) throws JsonProcessingException {
