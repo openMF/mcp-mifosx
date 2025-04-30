@@ -8,7 +8,7 @@ import java.util.List;
 
 @Setter
 @Getter
-public class LoanProdctApplications {
+public class LoanProductApplication {
     String allowPartialPeriodInterestCalcualtion;
     Integer amortizationType;
     List<Object> charges;
