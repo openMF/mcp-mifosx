@@ -383,7 +383,8 @@ public class MifosXServer {
         return mifosXClient.newSavingAccountApplication(jsonSavingProductApplication);
     }
 
-    @Tool(description = "")
+    @Tool(description = "Approve a savings account using the account number. " +
+            "You can optionally include a note for approval consideration.")
     JsonNode approveSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
                                    @ToolArg(description = "Note for approval consideration (e.g. Some observation)") String note)
             throws JsonProcessingException {
