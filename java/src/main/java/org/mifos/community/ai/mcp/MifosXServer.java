@@ -18,7 +18,6 @@
  */
 package org.mifos.community.ai.mcp;
 
-import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,10 +28,10 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 import io.quarkiverse.mcp.server.Tool;
 import io.quarkiverse.mcp.server.ToolArg;
 
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DecimalStyle;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -293,57 +292,95 @@ public class MifosXServer {
            @ToolArg(description = "Repayment Frequency Type (e.g 2)") Integer repaymentFrequencyType,
            @ToolArg(description = "Submitted on Date (e.g 14 April 2025)") String submittedOnDate
     ) throws JsonProcessingException {
-        LoanProdctApplications loanProdctApplications = new LoanProdctApplications();
+        LoanProductApplication loanProductApplication = new LoanProductApplication();
 
-        loanProdctApplications.setAllowPartialPeriodInterestCalcualtion("false");
-        loanProdctApplications.setAmortizationType(1);
+        loanProductApplication.setAllowPartialPeriodInterestCalcualtion("false");
+        loanProductApplication.setAmortizationType(1);
         ArrayList<Object> charges = new ArrayList<>();
-        loanProdctApplications.setCharges(charges);
-        loanProdctApplications.setClientId(clientId);
+        loanProductApplication.setCharges(charges);
+        loanProductApplication.setClientId(clientId);
         ArrayList<Object> colateral = new ArrayList<>();
-        loanProdctApplications.setCollateral(colateral);
-        loanProdctApplications.setCreateStandingInstructionAtDisbursement("");
-        loanProdctApplications.setDateFormat("dd MMMM yyyy");
-        loanProdctApplications.setExpectedDisbursementDate(expectedDisbursementDate);
-        loanProdctApplications.setExternalId(null);
-        loanProdctApplications.setFundId(null);
-        loanProdctApplications.setInterestCalculationPeriodType(1);
-        loanProdctApplications.setInterestChargedFromDate(null);
-        loanProdctApplications.setInterestRateFrequencyType(interestRateFrequencyType);
-        loanProdctApplications.setInterestRatePerPeriod(interestRatePerPeriod);
-        loanProdctApplications.setInterestType(0);
-        loanProdctApplications.setIsEqualAmortization(isEqualAmortization);
-        loanProdctApplications.setIsTopup("");
-        loanProdctApplications.setLinkAccountId("");
-        loanProdctApplications.setLoanIdToClose("");
-        loanProdctApplications.setLoanOfficerId("");
-        loanProdctApplications.setLoanPurposeId("");
-        loanProdctApplications.setLoanTermFrequency(4);
-        loanProdctApplications.setLoanTermFrequencyType(2);
-        loanProdctApplications.setLoanType(loanType);
-        loanProdctApplications.setLocale("en");
-        loanProdctApplications.setNumberOfRepayments(numberOfRepayments);
-        loanProdctApplications.setPrincipal(principal);
-        loanProdctApplications.setProductId(productId);
-        loanProdctApplications.setRepaymentEvery(repaymentEvery);
-        loanProdctApplications.setRepaymentFrequencyDayOfWeekType("");
-        loanProdctApplications.setRepaymentFrequencyNthDayType("");
-        loanProdctApplications.setRepaymentFrequencyType(repaymentFrequencyType);
-        loanProdctApplications.setRepaymentsStartingFromDate("");
-        loanProdctApplications.setSubmittedOnDate(submittedOnDate);
-        loanProdctApplications.setTransactionProcessingStrategyCode("creocore-strategy");
+        loanProductApplication.setCollateral(colateral);
+        loanProductApplication.setCreateStandingInstructionAtDisbursement("");
+        loanProductApplication.setDateFormat("dd MMMM yyyy");
+        loanProductApplication.setExpectedDisbursementDate(expectedDisbursementDate);
+        loanProductApplication.setExternalId(null);
+        loanProductApplication.setFundId(null);
+        loanProductApplication.setInterestCalculationPeriodType(1);
+        loanProductApplication.setInterestChargedFromDate(null);
+        loanProductApplication.setInterestRateFrequencyType(interestRateFrequencyType);
+        loanProductApplication.setInterestRatePerPeriod(interestRatePerPeriod);
+        loanProductApplication.setInterestType(0);
+        loanProductApplication.setIsEqualAmortization(isEqualAmortization);
+        loanProductApplication.setIsTopup("");
+        loanProductApplication.setLinkAccountId("");
+        loanProductApplication.setLoanIdToClose("");
+        loanProductApplication.setLoanOfficerId("");
+        loanProductApplication.setLoanPurposeId("");
+        loanProductApplication.setLoanTermFrequency(4);
+        loanProductApplication.setLoanTermFrequencyType(2);
+        loanProductApplication.setLoanType(loanType);
+        loanProductApplication.setLocale("en");
+        loanProductApplication.setNumberOfRepayments(numberOfRepayments);
+        loanProductApplication.setPrincipal(principal);
+        loanProductApplication.setProductId(productId);
+        loanProductApplication.setRepaymentEvery(repaymentEvery);
+        loanProductApplication.setRepaymentFrequencyDayOfWeekType("");
+        loanProductApplication.setRepaymentFrequencyNthDayType("");
+        loanProductApplication.setRepaymentFrequencyType(repaymentFrequencyType);
+        loanProductApplication.setRepaymentsStartingFromDate("");
+        loanProductApplication.setSubmittedOnDate(submittedOnDate);
+        loanProductApplication.setTransactionProcessingStrategyCode("creocore-strategy");
 
         ObjectMapper ow = new ObjectMapper();
-        String jsonClient = ow.writeValueAsString(loanProdctApplications);
+        String jsonClient = ow.writeValueAsString(loanProductApplication);
         jsonClient = jsonClient.replace(":null", ":\"\"");
 
         return mifosXClient.newLoanAccountApplication(jsonClient);
     }
 
-    @Tool(description = "")
-    JsonNode newSavingAccountApplication()
-            throws JsonProcessingException {
-        return null;
+    @Tool(description = "Create an application for a new saving account using a product ID and a client's account number." +
+            "You can optionally include an external ID)")
+    JsonNode newSavingAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
+                                         @ToolArg(description = "Saving product ID (e.g. 1)") Integer productId,
+                                         @ToolArg(description = "External Id (e.g CR03)", required = false) String externalId)
+            throws IOException, JsonProcessingException {
+        SavingProductApplication savingProductApplication = new SavingProductApplication();
+        ObjectMapper ow = new ObjectMapper();
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        String formattedDate = currentDate.format(dtf);
+
+        JsonNode templateSavingApplication = mifosXClient.getTemplateSavingsAccount(clientId, productId);
+
+        savingProductApplication.setProductId(productId);
+        savingProductApplication.setSubmittedOnDate(formattedDate);
+        savingProductApplication.setFieldOfficerId(null);
+        savingProductApplication.setExternalId("");
+        savingProductApplication.setNominalAnnualInterestRate(templateSavingApplication.get("nominalAnnualInterestRate").asInt());
+        savingProductApplication.setInterestCompoundingPeriodType(templateSavingApplication.get("interestCompoundingPeriodType").get("id").asInt());
+        savingProductApplication.setInterestPostingPeriodType(templateSavingApplication.get("interestPostingPeriodType").get("id").asInt());
+        savingProductApplication.setInterestCalculationType(templateSavingApplication.get("interestCalculationType").get("id").asInt());
+        savingProductApplication.setInterestCalculationDaysInYearType(templateSavingApplication.get("interestCalculationDaysInYearType").get("id").asInt());
+        savingProductApplication.setWithdrawalFeeForTransfers(templateSavingApplication.get("withdrawalFeeForTransfers").asText());
+        savingProductApplication.setLockinPeriodFrequency(null);
+        savingProductApplication.setLockinPeriodFrequencyType(null);
+        savingProductApplication.setAllowOverdraft(templateSavingApplication.get("allowOverdraft").asText());
+        savingProductApplication.setEnforceMinRequiredBalance(templateSavingApplication.get("enforceMinRequiredBalance").asText());
+
+        JsonNode chargesNode = templateSavingApplication.get("charges");
+        ArrayList<Charge> charges = ow.readerForListOf(Charge.class).readValue(chargesNode);
+
+        savingProductApplication.setCharges(charges);
+        savingProductApplication.setDateFormat("dd MMMM yyyy");
+        savingProductApplication.setMonthDayFormat("dd MMMM");
+        savingProductApplication.setLocale("en");
+        savingProductApplication.setClientId(clientId);
+
+        String jsonSavingProductApplication = ow.writeValueAsString(savingProductApplication);
+        jsonSavingProductApplication = jsonSavingProductApplication.replace(":null", ":\"\"");
+
+        return mifosXClient.newLoanAccountApplication(jsonSavingProductApplication);
     }
 
     private String getCurrencyCode (String currency) throws JsonProcessingException {

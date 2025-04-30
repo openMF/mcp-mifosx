@@ -19,6 +19,7 @@
 package org.mifos.community.ai.mcp.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import jakarta.json.Json;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import org.eclipse.microprofile.config.Config;
@@ -92,14 +93,26 @@ public interface MifosXClient {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    @Path("/fineract-provider/api/v1/loans")
-    JsonNode newLoanAccountApplication(String newLoanAccountApplication);
+    @Path("/fineract-provider/api/v1/savingsproducts")
+    JsonNode createDefaultSavingsProduct(String defaultSavingsProduct);
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/savingsaccounts/template")
+    JsonNode getTemplateSavingsAccount(@QueryParam("clientId") Integer clientId,
+                                       @QueryParam("productId") Integer productId);
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    @Path("fineract-provider/api/v1/savingsproducts")
-    JsonNode createDefaultSavingsProduct(String defaultSavingsProduct);
+    @Path("/fineract-provider/api/v1/savingsaccounts")
+    JsonNode newSavingAccountApplication(String newSavingAccountApplication);
+
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/loans")
+    JsonNode newLoanAccountApplication(String newLoanAccountApplication);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
