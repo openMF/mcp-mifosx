@@ -5,8 +5,9 @@ import lombok.Setter;
 
 @Getter
 @Setter
-public class SavingAccountActivation {
-    String activatedOnDate;
+public class SavingAccountApproval {
+    String approvedOnDate	;
     String dateFormat;
     String locale;
+    String note;
 }
