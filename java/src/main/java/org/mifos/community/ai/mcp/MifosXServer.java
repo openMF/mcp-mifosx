@@ -386,40 +386,37 @@ public class MifosXServer {
     @Tool(description = "Approve a savings account using the account number. " +
             "You can optionally include a note for approval consideration.")
     JsonNode approveSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
-                                   @ToolArg(description = "Note for approval consideration (e.g. Some observation)") String note)
+                                   @ToolArg(description = "Note for approval consideration (e.g. Some observation)", required = false) String note)
             throws JsonProcessingException {
-        SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
+        SavingAccountApproval savingAccountApproval = new SavingAccountApproval();
         String command = "approve";
         ObjectMapper ow = new ObjectMapper();
         LocalDate currentDate = LocalDate.now();
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
         String formattedDate = currentDate.format(dtf);
 
-        savingAccountActivation.setActivationDate(formattedDate);
-        savingAccountActivation.setDateFormat("dd MMMM yyyy");
-        savingAccountActivation.setLocale("en");
-        savingAccountActivation.setNote(note);
+        savingAccountApproval.setApprovedOnDate(formattedDate);
+        savingAccountApproval.setDateFormat("dd MMMM yyyy");
+        savingAccountApproval.setLocale("en");
+        savingAccountApproval.setNote(note);
 
-        String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountActivation);
+        String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountApproval);
         return mifosXClient.approveSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
     }
 
-    @Tool(description = "Activate a savings account using the account number. " +
-            "You can optionally include a note for activate consideration.")
-    JsonNode activateSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
-                                   @ToolArg(description = "Note for approval consideration (e.g. Some observation)") String note)
+    @Tool(description = "Activate a savings account using the account number.")
+    JsonNode activateSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber)
             throws JsonProcessingException {
         SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
-        String command = "active";
+        String command = "activate";
         ObjectMapper ow = new ObjectMapper();
         LocalDate currentDate = LocalDate.now();
         DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
         String formattedDate = currentDate.format(dtf);
 
-        savingAccountActivation.setActivationDate(formattedDate);
+        savingAccountActivation.setActivatedOnDate(formattedDate);
         savingAccountActivation.setDateFormat("dd MMMM yyyy");
         savingAccountActivation.setLocale("en");
-        savingAccountActivation.setNote(note);
 
         String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountActivation);
         return mifosXClient.activateSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
