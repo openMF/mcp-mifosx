@@ -100,7 +100,7 @@ public class MifosXServer {
         if(mobileNo != null){
             client.setMobileNo(mobileNo);
         }
-        if(mobileNo != null){
+        if(externalId != null){
             client.setExternalId(externalId);
         }                
         client.setOfficeId(1);
@@ -380,7 +380,7 @@ public class MifosXServer {
         String jsonSavingProductApplication = ow.writeValueAsString(savingProductApplication);
         jsonSavingProductApplication = jsonSavingProductApplication.replace(":null", ":\"\"");
 
-        return mifosXClient.newLoanAccountApplication(jsonSavingProductApplication);
+        return mifosXClient.newSavingAccountApplication(jsonSavingProductApplication);
     }
 
     private String getCurrencyCode (String currency) throws JsonProcessingException {
