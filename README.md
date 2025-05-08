@@ -28,6 +28,12 @@ This starts a local web UI to connect to your MCP server via STDIO or SSE.
    ```bash
    pip install mcp[cli] uv flask
    ```
+
+   > **Note for zsh users**: If you're using zsh, be sure to quote extras to avoid shell expansion errors:
+   >
+   > ```bash
+   > pip install 'mcp[cli]' uv flask
+   > ```
 2. Run the server:
    ```bash
    mcp dev app.py
