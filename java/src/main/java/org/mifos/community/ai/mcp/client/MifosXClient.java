@@ -128,7 +128,20 @@ public interface MifosXClient {
     @Path("/fineract-provider/api/v1/savingsaccounts/{accountNumber}")
     JsonNode activateSavingsAccount(@PathParam("accountNumber") Integer accountNumber,
                                    @QueryParam("command") String command,
-                                   String approveSavingsAccount);
+                                   String activateSavingsAccount);
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/savingsaccounts/{clientId}/transactions/template")
+    JsonNode getSavingsTransactionTemplate(@PathParam("clientId") Integer clientId);
+
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/savingsaccounts/{clientId}/transactions")
+    JsonNode newSavingsTransaction(@PathParam("clientId") Integer clientId,
+                                   @QueryParam("command") String command,
+                                   String SavingsTransaction);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
