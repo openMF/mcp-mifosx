@@ -275,6 +275,57 @@ public class MifosXServer {
         return mifosXClient.createDefaultSavingsProduct(jsonClient);
     }
 
+    @Tool(description = "Create a savings transaction (deposit or withdrawal) for a specific client. " +
+            "Provide: client ID, transaction type, payment type, " +
+            "amount, and optionally a note and transaction date. " +
+            "If no date is provided, the current date will be used. " +
+            "Use this to register client savings transactions.")
+    JsonNode newSavingsTransaction(
+            @ToolArg(description = "Client ID for whom the transaction is being made (e.g. 1).") Integer clientId,
+            @ToolArg(description = "Type of transaction: either DEPOSIT or WITHDRAWAL.") String transaction,
+            @ToolArg(description = "Optional note or description for the transaction (e.g. NOTE).", required = false) String note,
+            @ToolArg(description = "Payment method used (e.g. Money Transfer).") String paymentType,
+            @ToolArg(description = "Amount of money involved in the transaction (e.g. 1000).") double transactionAmount,
+            @ToolArg(description = "Optional transaction date in 'dd MMMM yyyy' format (e.g. 09 May 2025). " +
+                    "If not provided, current date is used.", required = false) String transactionDate)
+            throws JsonProcessingException{
+        JsonNode jsonTemplate = mifosXClient.getSavingsTransactionTemplate(clientId);
+        ObjectMapper ow = new ObjectMapper();
+        SavingsTransactionTemplate template = ow.treeToValue(jsonTemplate, SavingsTransactionTemplate.class);
+
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        String formattedDate = currentDate.format(dtf);
+
+        SavingsTransaction savingsTransaction = new SavingsTransaction();
+
+
+        try {
+            PaymentType matchingPaymentType = template.getPaymentTypeOptions().stream()
+                    .filter(pt -> pt.getName().equalsIgnoreCase(paymentType))
+                    .findFirst()
+                    .orElse(null);
+
+            if (matchingPaymentType != null) {
+                savingsTransaction.setPaymentTypeId(matchingPaymentType.getId());
+            }
+        } catch (NullPointerException e) {
+            log.error("The provided payment type does not match any of the available options", e);
+        }
+
+        savingsTransaction.setDateFormat("dd MMMM yyyy");
+        savingsTransaction.setLocale("en");
+        savingsTransaction.setNote(Optional.ofNullable(note).orElse(""));
+
+        savingsTransaction.setTransactionAmount(transactionAmount);
+        savingsTransaction.setTransactionDate(Optional.ofNullable(transactionDate).orElse(formattedDate));
+
+        String jsonSavingsTransaction = ow.writeValueAsString(savingsTransaction);
+        jsonSavingsTransaction = jsonSavingsTransaction.replace(":null", ":\"\"");
+
+        return mifosXClient.newSavingsTransaction(clientId, transaction.toLowerCase(), jsonSavingsTransaction);
+    }
+
     @Tool(description = "Create a new loan account for a client using their account number and a loan product ID. " +
             "The following fields are required: loanType, expectedDisbursementDate, interestRateFrequencyType, " +
             "interestRatePerPeriod, isEqualAmortization, numberOfRepayments, principal, repaymentEvery, " +
