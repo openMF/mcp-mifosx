@@ -11,5 +11,6 @@ public class PaymentType {
     String description;
     String isCashPayment;
     Integer position;
+    String codeName;
     String isSystemDefined;
 }
