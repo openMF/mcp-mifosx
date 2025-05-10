@@ -282,7 +282,7 @@ public class MifosXServer {
             "Use this to register client savings transactions.")
     JsonNode newSavingsTransaction(
             @ToolArg(description = "Account Number for whom the transaction is being made (e.g. 1).") Integer accountNumber,
-            @ToolArg(description = "Type of transaction: either DEPOSIT or WITHDRAWAL.") String transaction,
+            @ToolArg(description = "Type of transaction: either DEPOSIT or WITHDRAWAL. (e.g. deposit)") String transaction,
             @ToolArg(description = "Optional note or description for the transaction (e.g. NOTE).", required = false) String note,
             @ToolArg(description = "Payment method used (e.g. Money Transfer).") String paymentType,
             @ToolArg(description = "Amount of money involved in the transaction (e.g. 1000).") double transactionAmount,
@@ -292,10 +292,6 @@ public class MifosXServer {
         JsonNode jsonTemplate = mifosXClient.getSavingsTransactionTemplate(accountNumber);
         ObjectMapper ow = new ObjectMapper();
         SavingsTransactionTemplate template = ow.treeToValue(jsonTemplate, SavingsTransactionTemplate.class);
-
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-        String formattedDate = currentDate.format(dtf);
 
         SavingsTransaction savingsTransaction = new SavingsTransaction();
 
@@ -318,7 +314,7 @@ public class MifosXServer {
         savingsTransaction.setNote(Optional.ofNullable(note).orElse(""));
 
         savingsTransaction.setTransactionAmount(transactionAmount);
-        savingsTransaction.setTransactionDate(Optional.ofNullable(transactionDate).orElse(formattedDate));
+        savingsTransaction.setTransactionDate(Optional.ofNullable(transactionDate).orElse(template.getDate()));
 
         String jsonSavingsTransaction = ow.writeValueAsString(savingsTransaction);
         jsonSavingsTransaction = jsonSavingsTransaction.replace(":null", ":\"\"");
