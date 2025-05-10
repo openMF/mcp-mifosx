@@ -1,5 +1,6 @@
 package org.mifos.community.ai.mcp.dto;
 
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -10,9 +11,11 @@ import java.util.List;
 public class SavingsTransactionTemplate {
     Integer accountId;
     String accountNo;
+    @JsonDeserialize(using = DateArrayDeserializer.class)
     String date;
     Currency currency;
     String reversed;
+    @JsonDeserialize(using = DateArrayDeserializer.class)
     String submittedOnDate;
     String interestedPostedAsOn;
     String isManualTransaction;
