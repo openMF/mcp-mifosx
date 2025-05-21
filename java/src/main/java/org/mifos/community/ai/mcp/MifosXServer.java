@@ -322,6 +322,54 @@ public class MifosXServer {
         return mifosXClient.newSavingsTransaction(accountNumber, transaction.toLowerCase(), jsonSavingsTransaction);
     }
 
+    @Tool(description = "Create a default loan product. " +
+            "Provide only the following inputs: name, short name, principal, number of repayments, nominal interest rate, " +
+            "repayment frequency, repayment frequency type, and currency. " +
+            "All other values will be automatically set with default configuration. " +
+            "Use this to quickly initialize standard loan products.")
+    JsonNode createDefaultLoanProduct (@ToolArg(description = "Full name of the loan product (e.g. BRONCE).") String name,
+                                       @ToolArg(description = "Short code for the loan product (e.g. LB01).") String shortName,
+                                       @ToolArg(description = "Total loan amount (e.g. 10000).") Double principal,
+                                       @ToolArg(description = "Number of repayments (e.g. 5).") Integer numberOfRepayments,
+                                       @ToolArg(description = "Nominal interest rate per period in percentage (e.g. 10.0).") Double nominalInterestRate,
+                                       @ToolArg(description = "Interval between repayments (e.g. 2).") Integer repaymentFrequency,
+                                       @ToolArg(description = "Unit of time for repayment (e.g. MONTHS).") String repaymentFrequencyType,
+                                       @ToolArg(description = "Currency to use, either code or name (e.g. USD or US Dollar).") String currency)
+        throws JsonProcessingException, IOException {
+        ObjectMapper ow = new ObjectMapper();
+
+        LoanProduct loanProduct = new LoanProduct();
+        AllowAttributeOverrides allowAttributeOverrides = new AllowAttributeOverrides();
+
+        JsonNode repaymentOptionsNode = mifosXClient.getLoanProductTemplate().get("repaymentFrequencyTypeOptions");
+        List<Options> repaymentOptions = ow.readerForListOf(Options.class).readValue(repaymentOptionsNode);
+
+
+        loanProduct.setName(name);
+        loanProduct.setShortName(shortName);
+        loanProduct.setPrincipal(principal);
+        loanProduct.setNumberOfRepayments(numberOfRepayments);
+        loanProduct.setInterestRatePerPeriod(nominalInterestRate);
+        loanProduct.setRepaymentEvery(repaymentFrequency);
+
+        for (Options repaymentOption : repaymentOptions) {
+            if (repaymentOption.getValue().equalsIgnoreCase(repaymentFrequencyType)) {
+                loanProduct.setRepaymentFrequencyType(repaymentOption.getId());
+            }
+        }
+
+        loanProduct.setCurrencyCode(getCurrencyCode(currency));
+
+        ArrayList<Charge> charges = new ArrayList<>();
+        loanProduct.setCharges(charges);
+
+
+        String jsonDefaultLoanProduct = ow.writeValueAsString(loanProduct);
+        //jsonDefaultLoanProduct = jsonDefaultLoanProduct.replace(":null", ":\"\"");
+
+        return mifosXClient.createDefaultLoanProduct(jsonDefaultLoanProduct);
+    }
+    
     @Tool(description = "Create a new loan account for a client using their account number and a loan product ID. " +
             "The following fields are required: loanType, expectedDisbursementDate, interestRateFrequencyType, " +
             "interestRatePerPeriod, isEqualAmortization, numberOfRepayments, principal, repaymentEvery, " +
