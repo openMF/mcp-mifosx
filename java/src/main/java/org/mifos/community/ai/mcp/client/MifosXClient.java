@@ -145,6 +145,17 @@ public interface MifosXClient {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/loanproducts/template")
+    JsonNode getLoanProductTemplate();
+
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/loanproducts")
+    JsonNode createDefaultLoanProduct(String defaultLoanProduct);
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
     @Path("fineract-provider/api/v1/currencies")
     JsonNode getCurrencies();
 
