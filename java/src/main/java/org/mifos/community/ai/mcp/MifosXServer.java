@@ -324,10 +324,10 @@ public class MifosXServer {
 
     @Tool(description = "Create a default loan product. " +
             "Provide only the following inputs: name, short name, principal, number of repayments, nominal interest rate, " +
-            "repayment frequency, repayment frequency type, and currency. " +
+            "repayment frequency, repayment frequency type (valid values: DAYS, WEEKS, MONTHS...), and currency. " +
             "All other values will be automatically set with default configuration. " +
             "Use this to quickly initialize standard loan products.")
-    JsonNode createDefaultLoanProduct (@ToolArg(description = "Full name of the loan product (e.g. BRONCE).") String name,
+    JsonNode createDefaultLoanProduct (@ToolArg(description = "Full name of the loan product (e.g. BRONZE).") String name,
                                        @ToolArg(description = "Short code for the loan product (e.g. LB01).") String shortName,
                                        @ToolArg(description = "Total loan amount (e.g. 10000).") Double principal,
                                        @ToolArg(description = "Number of repayments (e.g. 5).") Integer numberOfRepayments,
@@ -359,6 +359,8 @@ public class MifosXServer {
         }
 
         loanProduct.setCurrencyCode(getCurrencyCode(currency));
+
+        loanProduct.setAllowAttributeOverrides(allowAttributeOverrides);
 
         ArrayList<Charge> charges = new ArrayList<>();
         loanProduct.setCharges(charges);
