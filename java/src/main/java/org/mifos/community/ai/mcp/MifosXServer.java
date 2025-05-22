@@ -341,6 +341,11 @@ public class MifosXServer {
         LoanProduct loanProduct = new LoanProduct();
         AllowAttributeOverrides allowAttributeOverrides = new AllowAttributeOverrides();
 
+        List<Options> interestRateVariationsForBorrowerCycle = new ArrayList<>();
+        List<Options> numberOfRepaymentVariationsForBorrowerCycle = new ArrayList<>();
+        List<Options> principalVariationsForBorrowerCycle = new ArrayList<>();
+
+
         JsonNode repaymentOptionsNode = mifosXClient.getLoanProductTemplate().get("repaymentFrequencyTypeOptions");
         List<Options> repaymentOptions = ow.readerForListOf(Options.class).readValue(repaymentOptionsNode);
 
@@ -361,6 +366,10 @@ public class MifosXServer {
         loanProduct.setCurrencyCode(getCurrencyCode(currency));
 
         loanProduct.setAllowAttributeOverrides(allowAttributeOverrides);
+
+        loanProduct.setInterestRateVariationsForBorrowerCycle(interestRateVariationsForBorrowerCycle);
+        loanProduct.setNumberOfRepaymentVariationsForBorrowerCycle(numberOfRepaymentVariationsForBorrowerCycle);
+        loanProduct.setPrincipalVariationsForBorrowerCycle(principalVariationsForBorrowerCycle);
 
         ArrayList<Charge> charges = new ArrayList<>();
         loanProduct.setCharges(charges);

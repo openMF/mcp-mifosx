@@ -31,7 +31,7 @@ public class LoanProduct {
     Integer dueDaysForRepaymentEvent = 1;
     String enableDownPayment = "false";
     String enableInstallmentLevelDelinquency = "false";
-    String externalId;
+    String externalId = "";
     Integer fixedLength;
     String holdGuaranteeFunds = "false";
     String includeInBorrowerCycle = "false";
@@ -41,7 +41,7 @@ public class LoanProduct {
     Integer interestRateFrequencyType = 2;
     @NotNull
     double interestRatePerPeriod;
-    List<Object> interestRateVariationsForBorrowerCycle;
+    List<Options> interestRateVariationsForBorrowerCycle;
     String interestRecognitionOnDisbursementDate = "false";
     Integer interestType = 0;
     String isEqualAmortization = "false";
@@ -53,11 +53,11 @@ public class LoanProduct {
     String name;
     @NotNull
     Integer numberOfRepayments;
-    List<Object> numberOfRepaymentVariationsForBorrowerCycle;
+    List<Options> numberOfRepaymentVariationsForBorrowerCycle;
     Integer overDueDaysForRepaymentEvent = 1;
     @NotNull
     double principal;
-    List<Object> principalVariationsForBorrowerCycle;
+    List<Options> principalVariationsForBorrowerCycle;
     @NotNull
     Integer repaymentEvery;
     @NotNull
