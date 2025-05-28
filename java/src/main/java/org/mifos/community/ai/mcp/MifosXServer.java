@@ -383,21 +383,20 @@ public class MifosXServer {
 
         return mifosXClient.createDefaultLoanProduct(jsonDefaultLoanProduct);
     }
-    
-    @Tool(description = "Create a new loan account for a client using their account number and a loan product ID. " +
-            "The following fields are required: loanType, expectedDisbursementDate, interestRateFrequencyType, " +
-            "interestRatePerPeriod, isEqualAmortization, numberOfRepayments, principal, repaymentEvery, " +
-            "repaymentFrequencyType, and submittedOnDate.")
+
+    @Tool(description = "Create an application for a new loan account using a product ID and a client's account number. " +
+            "The following fields are required: clientId, loanType, and productId. " +
+            "Optional fields include numberOfRepayments, loanType, principal, productId, repaymentEvery, and expectedDisbursementDate.")
     JsonNode newLoanAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
-                                       @ToolArg(description = "Loan Type (e.g. Individual)", required = false) String loanType,
+                                       @ToolArg(description = "Loan Type (e.g. Individual)") String loanType,
                                        @ToolArg(description = "Expected Disbursement Date (e.g 14 April 2025)", required = false) String expectedDisbursementDate,
                                        //@ToolArg(description = "Interest Rate Frequency Type (e.g 2)") String interestRateFrequencyType,
                                        //@ToolArg(description = "Interest Rate Per Period (e.g 5)") Double interestRatePerPeriod,
                                        //@ToolArg(description = "Is Equal Amortization (e.g \"false\")") String isEqualAmortization,
-                                       @ToolArg(description = "Number Of Repayments (e.g 2)") Integer numberOfRepayments,
-                                       @ToolArg(description = "Principal (e.g 1000)") Double principal,
+                                       @ToolArg(description = "Number Of Repayments (e.g 2)", required = false) Integer numberOfRepayments,
+                                       @ToolArg(description = "Principal (e.g 1000)", required = false) Double principal,
                                        @ToolArg(description = "Product Id (e.g 2)") Integer productId,
-                                       @ToolArg(description = "Repayment Every (e.g 2)") Integer repaymentEvery
+                                       @ToolArg(description = "Repayment Every (e.g 2)", required = false) Integer repaymentEvery
                                        //@ToolArg(description = "Repayment Frequency Type (e.g 2)") String repaymentFrequencyType,
                                        /*@ToolArg(description = "Submitted on Date (e.g 14 April 2025)") String submittedOnDate*/)
             throws JsonProcessingException {
@@ -435,17 +434,17 @@ public class MifosXServer {
         loanProductApplication.setLoanTermFrequencyType(lpat.getTermPeriodFrequencyType().getId());
         loanProductApplication.setLoanType(loanType);
         loanProductApplication.setLocale("en");
-        loanProductApplication.setNumberOfRepayments(numberOfRepayments);
-        loanProductApplication.setPrincipal(principal);
+        loanProductApplication.setNumberOfRepayments(Optional.ofNullable(numberOfRepayments).orElse(lpat.getNumberOfRepayments()));
+        loanProductApplication.setPrincipal(Optional.ofNullable(principal).orElse(lpat.getPrincipal()));
         loanProductApplication.setProductId(productId);
-        loanProductApplication.setRepaymentEvery(repaymentEvery);
+        loanProductApplication.setRepaymentEvery(Optional.ofNullable(repaymentEvery).orElse(lpat.getRepaymentEvery()));
         loanProductApplication.setRepaymentFrequencyDayOfWeekType("");
         loanProductApplication.setRepaymentFrequencyNthDayType("");
         loanProductApplication.setRepaymentFrequencyType(lpat.getRepaymentFrequencyType().getId());
         loanProductApplication.setRepaymentsStartingFromDate("");
 
         LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern(loanProductApplication.getDateFormat());
         String formattedDate = currentDate.format(dtf);
 
         loanProductApplication.setSubmittedOnDate(formattedDate);
