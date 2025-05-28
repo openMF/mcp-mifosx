@@ -389,45 +389,50 @@ public class MifosXServer {
             "interestRatePerPeriod, isEqualAmortization, numberOfRepayments, principal, repaymentEvery, " +
             "repaymentFrequencyType, and submittedOnDate.")
     JsonNode newLoanAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
-                                       @ToolArg(description = "Loan Type (e.g. Individual)") String loanType,
-                                       @ToolArg(description = "Expected Disbursement Date (e.g 14 April 2025)") String expectedDisbursementDate,
-                                       @ToolArg(description = "Interest Rate Frequency Type (e.g 2)") Integer interestRateFrequencyType,
-                                       @ToolArg(description = "Interest Rate Per Period (e.g 5)") BigDecimal interestRatePerPeriod,
-                                       @ToolArg(description = "Is Equal Amortization (e.g \"false\")") String isEqualAmortization,
+                                       @ToolArg(description = "Loan Type (e.g. Individual)", required = false) String loanType,
+                                       @ToolArg(description = "Expected Disbursement Date (e.g 14 April 2025)", required = false) String expectedDisbursementDate,
+                                       //@ToolArg(description = "Interest Rate Frequency Type (e.g 2)") String interestRateFrequencyType,
+                                       //@ToolArg(description = "Interest Rate Per Period (e.g 5)") Double interestRatePerPeriod,
+                                       //@ToolArg(description = "Is Equal Amortization (e.g \"false\")") String isEqualAmortization,
                                        @ToolArg(description = "Number Of Repayments (e.g 2)") Integer numberOfRepayments,
-                                       @ToolArg(description = "Principal (e.g 1000)") BigDecimal principal,
+                                       @ToolArg(description = "Principal (e.g 1000)") Double principal,
                                        @ToolArg(description = "Product Id (e.g 2)") Integer productId,
-                                       @ToolArg(description = "Repayment Every (e.g 2)") Integer repaymentEvery,
-                                       @ToolArg(description = "Repayment Frequency Type (e.g 2)") Integer repaymentFrequencyType,
-                                       @ToolArg(description = "Submitted on Date (e.g 14 April 2025)") String submittedOnDate)
+                                       @ToolArg(description = "Repayment Every (e.g 2)") Integer repaymentEvery
+                                       //@ToolArg(description = "Repayment Frequency Type (e.g 2)") String repaymentFrequencyType,
+                                       /*@ToolArg(description = "Submitted on Date (e.g 14 April 2025)") String submittedOnDate*/)
             throws JsonProcessingException {
         LoanProductApplication loanProductApplication = new LoanProductApplication();
+        ArrayList<Charge> charges = new ArrayList<>();
+        ArrayList<AddLoanProductCollateralRequest> colateral = new ArrayList<>();
+
+
+        JsonNode loanApplicationTemplateJson = mifosXClient.getLoanProductApplicationTemplate("true","true",productId,clientId,loanType);
+        LoanProductApplicationTemplate lpat = mapper.treeToValue(loanApplicationTemplateJson, LoanProductApplicationTemplate.class);
+
 
         loanProductApplication.setAllowPartialPeriodInterestCalcualtion("false");
-        loanProductApplication.setAmortizationType(1);
-        ArrayList<Object> charges = new ArrayList<>();
+        loanProductApplication.setAmortizationType(lpat.getAmortizationType().getId());
         loanProductApplication.setCharges(charges);
         loanProductApplication.setClientId(clientId);
-        ArrayList<Object> colateral = new ArrayList<>();
         loanProductApplication.setCollateral(colateral);
         loanProductApplication.setCreateStandingInstructionAtDisbursement("");
         loanProductApplication.setDateFormat("dd MMMM yyyy");
-        loanProductApplication.setExpectedDisbursementDate(expectedDisbursementDate);
-        loanProductApplication.setExternalId(null);
-        loanProductApplication.setFundId(null);
-        loanProductApplication.setInterestCalculationPeriodType(1);
+        loanProductApplication.setExpectedDisbursementDate(Optional.ofNullable(expectedDisbursementDate).orElse(lpat.getExpectedDisbursementDate()));
+        loanProductApplication.setExternalId(Optional.ofNullable(lpat.getProduct().getExternalId()).orElse(""));
+        loanProductApplication.setFundId(null); // It should be included in the template
+        loanProductApplication.setInterestCalculationPeriodType(lpat.getInterestCalculationPeriodType().getId());
         loanProductApplication.setInterestChargedFromDate(null);
-        loanProductApplication.setInterestRateFrequencyType(interestRateFrequencyType);
-        loanProductApplication.setInterestRatePerPeriod(interestRatePerPeriod);
-        loanProductApplication.setInterestType(0);
-        loanProductApplication.setIsEqualAmortization(isEqualAmortization);
-        loanProductApplication.setIsTopup("");
-        loanProductApplication.setLinkAccountId("");
-        loanProductApplication.setLoanIdToClose("");
-        loanProductApplication.setLoanOfficerId("");
-        loanProductApplication.setLoanPurposeId("");
-        loanProductApplication.setLoanTermFrequency(4);
-        loanProductApplication.setLoanTermFrequencyType(2);
+        loanProductApplication.setInterestRateFrequencyType(lpat.getInterestRateFrequencyType().getId());
+        loanProductApplication.setInterestRatePerPeriod(lpat.getInterestRatePerPeriod());
+        loanProductApplication.setInterestType(lpat.getInterestType().getId());
+        loanProductApplication.setIsEqualAmortization(lpat.getIsEqualAmortization());
+        loanProductApplication.setIsTopup(lpat.getIsTopup());
+        loanProductApplication.setLinkAccountId(""); // It should be included in the template
+        loanProductApplication.setLoanIdToClose(""); // It should be included in the template
+        loanProductApplication.setLoanOfficerId(""); // It should be included in the template
+        loanProductApplication.setLoanPurposeId(""); // It should be included in the template
+        loanProductApplication.setLoanTermFrequency(lpat.getTermFrequency());
+        loanProductApplication.setLoanTermFrequencyType(lpat.getTermPeriodFrequencyType().getId());
         loanProductApplication.setLoanType(loanType);
         loanProductApplication.setLocale("en");
         loanProductApplication.setNumberOfRepayments(numberOfRepayments);
@@ -436,16 +441,21 @@ public class MifosXServer {
         loanProductApplication.setRepaymentEvery(repaymentEvery);
         loanProductApplication.setRepaymentFrequencyDayOfWeekType("");
         loanProductApplication.setRepaymentFrequencyNthDayType("");
-        loanProductApplication.setRepaymentFrequencyType(repaymentFrequencyType);
+        loanProductApplication.setRepaymentFrequencyType(lpat.getRepaymentFrequencyType().getId());
         loanProductApplication.setRepaymentsStartingFromDate("");
-        loanProductApplication.setSubmittedOnDate(submittedOnDate);
-        loanProductApplication.setTransactionProcessingStrategyCode("creocore-strategy");
+
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+        String formattedDate = currentDate.format(dtf);
+
+        loanProductApplication.setSubmittedOnDate(formattedDate);
+        loanProductApplication.setTransactionProcessingStrategyCode(lpat.getTransactionProcessingStrategyCode());
 
         ObjectMapper ow = new ObjectMapper();
-        String jsonClient = ow.writeValueAsString(loanProductApplication);
-        jsonClient = jsonClient.replace(":null", ":\"\"");
+        String jsonLoanAccountApplication = ow.writeValueAsString(loanProductApplication);
+        jsonLoanAccountApplication = jsonLoanAccountApplication.replace(":null", ":\"\"");
 
-        return mifosXClient.newLoanAccountApplication(jsonClient);
+        return mifosXClient.newLoanAccountApplication(jsonLoanAccountApplication);
     }
 
     @Tool(description = "Create an application for a new saving account using a product ID and a client's account number." +
