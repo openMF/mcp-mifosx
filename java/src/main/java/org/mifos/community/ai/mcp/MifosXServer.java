@@ -29,7 +29,6 @@ import io.quarkiverse.mcp.server.Tool;
 import io.quarkiverse.mcp.server.ToolArg;
 
 import java.io.IOException;
-import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -341,13 +340,13 @@ public class MifosXServer {
         LoanProduct loanProduct = new LoanProduct();
         AllowAttributeOverrides allowAttributeOverrides = new AllowAttributeOverrides();
 
-        List<Options> interestRateVariationsForBorrowerCycle = new ArrayList<>();
-        List<Options> numberOfRepaymentVariationsForBorrowerCycle = new ArrayList<>();
-        List<Options> principalVariationsForBorrowerCycle = new ArrayList<>();
+        List<Types> interestRateVariationsForBorrowerCycle = new ArrayList<>();
+        List<Types> numberOfRepaymentVariationsForBorrowerCycle = new ArrayList<>();
+        List<Types> principalVariationsForBorrowerCycle = new ArrayList<>();
 
 
         JsonNode repaymentOptionsNode = mifosXClient.getLoanProductTemplate().get("repaymentFrequencyTypeOptions");
-        List<Options> repaymentOptions = ow.readerForListOf(Options.class).readValue(repaymentOptionsNode);
+        List<Types> repaymentOptions = ow.readerForListOf(Types.class).readValue(repaymentOptionsNode);
 
 
         loanProduct.setName(name);
@@ -357,7 +356,7 @@ public class MifosXServer {
         loanProduct.setInterestRatePerPeriod(nominalInterestRate);
         loanProduct.setRepaymentEvery(repaymentFrequency);
 
-        for (Options repaymentOption : repaymentOptions) {
+        for (Types repaymentOption : repaymentOptions) {
             if (repaymentOption.getValue().equalsIgnoreCase(repaymentFrequencyType)) {
                 loanProduct.setRepaymentFrequencyType(repaymentOption.getId());
             }

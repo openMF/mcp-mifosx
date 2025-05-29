@@ -19,5 +19,6 @@ public class LoanOfficer {
     String isLoanOfficer;
     String isActive;
     @JsonDeserialize(using = DateArrayDeserializer.class)
+    //@JsonSerialize()
     String joiningDate;
 }
