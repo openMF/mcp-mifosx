@@ -41,7 +41,7 @@ public class LoanProduct {
     Integer interestRateFrequencyType = 2;
     @NotNull
     double interestRatePerPeriod;
-    List<Options> interestRateVariationsForBorrowerCycle;
+    List<Types> interestRateVariationsForBorrowerCycle;
     String interestRecognitionOnDisbursementDate = "false";
     Integer interestType = 0;
     String isEqualAmortization = "false";
@@ -53,11 +53,11 @@ public class LoanProduct {
     String name;
     @NotNull
     Integer numberOfRepayments;
-    List<Options> numberOfRepaymentVariationsForBorrowerCycle;
+    List<Types> numberOfRepaymentVariationsForBorrowerCycle;
     Integer overDueDaysForRepaymentEvent = 1;
     @NotNull
     double principal;
-    List<Options> principalVariationsForBorrowerCycle;
+    List<Types> principalVariationsForBorrowerCycle;
     @NotNull
     Integer repaymentEvery;
     @NotNull
