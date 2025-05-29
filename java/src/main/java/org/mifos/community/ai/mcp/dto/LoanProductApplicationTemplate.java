@@ -39,7 +39,7 @@ public class LoanProductApplicationTemplate {
     Timeline timeline;
     List<Charge> charges;
     List<LoanProduct> productOptions;
-    LoanOfficer loanOfficerOptions;
+    List<LoanOfficer> loanOfficerOptions;
     List<Options> loanPurposeOptions;
     List<Options> fundOptions;
     List<Options> termFrequencyTypeOptions;
