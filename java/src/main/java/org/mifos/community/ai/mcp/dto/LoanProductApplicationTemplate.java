@@ -38,7 +38,7 @@ public class LoanProductApplicationTemplate {
     String disallowExpectedDisbursements;
     Timeline timeline;
     List<Charge> charges;
-    List<LoanProduct> productOptions;
+    List<LoanProductTemplate> productOptions;
     List<LoanOfficer> loanOfficerOptions;
     List<Object> loanPurposeOptions;
     List<Object> fundOptions;
@@ -61,7 +61,7 @@ public class LoanProductApplicationTemplate {
     String canDefineInstallmentAmount;
     String isTopup;
     String fraud;
-    LoanProduct product;
+    LoanProductTemplate product;
 
     List<Charge> overdueCharges;
     Types daysInMonthType;

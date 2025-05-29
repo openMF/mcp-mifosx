@@ -374,7 +374,6 @@ public class MifosXServer {
         loanProduct.setCharges(charges);
 
 
-        //jsonDefaultLoanProduct = jsonDefaultLoanProduct.replace(":null", ":\"\"");
         ObjectWriter owf = new ObjectMapper().writer().withDefaultPrettyPrinter();
         String jsonDefaultLoanProduct = ow.writeValueAsString(loanProduct);
 
