@@ -403,9 +403,10 @@ public class MifosXServer {
         ArrayList<AddLoanProductCollateralRequest> colateral = new ArrayList<>();
 
 
-        JsonNode loanApplicationTemplateJson = mifosXClient.getLoanProductApplicationTemplate("true","true",productId,clientId,loanType);
+        JsonNode loanApplicationTemplateJson = mifosXClient.getLoanProductApplicationTemplate("true","true",productId,clientId,loanType.toLowerCase());
+        log.info("******** JSON LOAN APPLICATION TEMPLATE ********\n" + loanApplicationTemplateJson);
         LoanProductApplicationTemplate lpat = mapper.treeToValue(loanApplicationTemplateJson, LoanProductApplicationTemplate.class);
-
+        log.info("\n\n ******** TEMPLATE HAS BEEN DESERIALIZED ********\n\n" );
 
         loanProductApplication.setAllowPartialPeriodInterestCalcualtion("false");
         loanProductApplication.setAmortizationType(lpat.getAmortizationType().getId());
@@ -424,20 +425,20 @@ public class MifosXServer {
         loanProductApplication.setInterestType(lpat.getInterestType().getId());
         loanProductApplication.setIsEqualAmortization(lpat.getIsEqualAmortization());
         loanProductApplication.setIsTopup(lpat.getIsTopup());
-        loanProductApplication.setLinkAccountId(""); // It should be included in the template
-        loanProductApplication.setLoanIdToClose(""); // It should be included in the template
-        loanProductApplication.setLoanOfficerId(""); // It should be included in the template
-        loanProductApplication.setLoanPurposeId(""); // It should be included in the template
+        loanProductApplication.setLinkAccountId(null); // It should be included in the template
+        loanProductApplication.setLoanIdToClose(null); // It should be included in the template
+        loanProductApplication.setLoanOfficerId(null); // It should be included in the template
+        loanProductApplication.setLoanPurposeId(null); // It should be included in the template
         loanProductApplication.setLoanTermFrequency(lpat.getTermFrequency());
         loanProductApplication.setLoanTermFrequencyType(lpat.getTermPeriodFrequencyType().getId());
-        loanProductApplication.setLoanType(loanType);
+        loanProductApplication.setLoanType(loanType.toLowerCase());
         loanProductApplication.setLocale("en");
         loanProductApplication.setNumberOfRepayments(Optional.ofNullable(numberOfRepayments).orElse(lpat.getNumberOfRepayments()));
         loanProductApplication.setPrincipal(Optional.ofNullable(principal).orElse(lpat.getPrincipal()));
         loanProductApplication.setProductId(productId);
         loanProductApplication.setRepaymentEvery(Optional.ofNullable(repaymentEvery).orElse(lpat.getRepaymentEvery()));
-        loanProductApplication.setRepaymentFrequencyDayOfWeekType("");
-        loanProductApplication.setRepaymentFrequencyNthDayType("");
+        loanProductApplication.setRepaymentFrequencyDayOfWeekType(null);
+        loanProductApplication.setRepaymentFrequencyNthDayType(null);
         loanProductApplication.setRepaymentFrequencyType(lpat.getRepaymentFrequencyType().getId());
         loanProductApplication.setRepaymentsStartingFromDate("");
 
@@ -451,6 +452,8 @@ public class MifosXServer {
         ObjectMapper ow = new ObjectMapper();
         String jsonLoanAccountApplication = ow.writeValueAsString(loanProductApplication);
         jsonLoanAccountApplication = jsonLoanAccountApplication.replace(":null", ":\"\"");
+
+        log.info("\n\n ******** SON STRUCTURE FOR THE REQUEST ********\n\n" );
 
         return mifosXClient.newLoanAccountApplication(jsonLoanAccountApplication);
     }
