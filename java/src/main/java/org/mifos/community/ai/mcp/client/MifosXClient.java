@@ -142,6 +142,12 @@ public interface MifosXClient {
     @Path("fineract-provider/api/v1/loanproducts/template")
     JsonNode getLoanProductTemplate();
 
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/loanproducts")
+    JsonNode createDefaultLoanProduct(String defaultLoanProduct);
+
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Path("fineract-provider/api/v1/loans/template")
@@ -154,14 +160,22 @@ public interface MifosXClient {
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    @Path("/fineract-provider/api/v1/loans")
+    @Path("fineract-provider/api/v1/loans")
     JsonNode newLoanAccountApplication(String newLoanAccountApplication);
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/loans/{accountNo}/template")
+    JsonNode getLoanApprovalTemplate(@PathParam("accountNo") Integer accountNo,
+                                     @QueryParam("templateType") String templateType);
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    @Path("fineract-provider/api/v1/loanproducts")
-    JsonNode createDefaultLoanProduct(String defaultLoanProduct);
+    @Path("fineract-provider/api/v1/loans/{accountNo}")
+    JsonNode approveLoanAccount(@PathParam("accountNo") Integer accountNo,
+                                @QueryParam("command") String command,
+                                String approveLoanAccount);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)

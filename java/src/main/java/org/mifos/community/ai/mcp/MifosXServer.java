@@ -274,6 +274,90 @@ public class MifosXServer {
         return mifosXClient.createDefaultSavingsProduct(jsonClient);
     }
 
+
+    @Tool(description = "Create an application for a new saving account using a product ID and a client's account number." +
+            "You can optionally include an external ID)")
+    JsonNode newSavingsAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
+                                          @ToolArg(description = "Saving product ID (e.g. 1)") Integer productId,
+                                          @ToolArg(description = "External Id (e.g CR03)", required = false) String externalId)
+            throws IOException, JsonProcessingException {
+        SavingProductApplication savingProductApplication = new SavingProductApplication();
+        ObjectMapper ow = new ObjectMapper();
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        String formattedDate = currentDate.format(dtf);
+
+        JsonNode templateSavingApplication = mifosXClient.getTemplateSavingsAccount(clientId, productId);
+
+        savingProductApplication.setProductId(productId);
+        savingProductApplication.setSubmittedOnDate(formattedDate);
+        savingProductApplication.setFieldOfficerId(null);
+        savingProductApplication.setExternalId("");
+        savingProductApplication.setNominalAnnualInterestRate(templateSavingApplication.get("nominalAnnualInterestRate").asInt());
+        savingProductApplication.setInterestCompoundingPeriodType(templateSavingApplication.get("interestCompoundingPeriodType").get("id").asInt());
+        savingProductApplication.setInterestPostingPeriodType(templateSavingApplication.get("interestPostingPeriodType").get("id").asInt());
+        savingProductApplication.setInterestCalculationType(templateSavingApplication.get("interestCalculationType").get("id").asInt());
+        savingProductApplication.setInterestCalculationDaysInYearType(templateSavingApplication.get("interestCalculationDaysInYearType").get("id").asInt());
+        savingProductApplication.setWithdrawalFeeForTransfers(templateSavingApplication.get("withdrawalFeeForTransfers").asText());
+        savingProductApplication.setLockinPeriodFrequency(null);
+        savingProductApplication.setLockinPeriodFrequencyType(null);
+        savingProductApplication.setAllowOverdraft(templateSavingApplication.get("allowOverdraft").asText());
+        savingProductApplication.setEnforceMinRequiredBalance(templateSavingApplication.get("enforceMinRequiredBalance").asText());
+
+        JsonNode chargesNode = templateSavingApplication.get("charges");
+        ArrayList<Charge> charges = ow.readerForListOf(Charge.class).readValue(chargesNode);
+
+        savingProductApplication.setCharges(charges);
+        savingProductApplication.setDateFormat("dd MMMM yyyy");
+        savingProductApplication.setMonthDayFormat("dd MMMM");
+        savingProductApplication.setLocale("en");
+        savingProductApplication.setClientId(clientId);
+
+        String jsonSavingProductApplication = ow.writeValueAsString(savingProductApplication);
+        jsonSavingProductApplication = jsonSavingProductApplication.replace(":null", ":\"\"");
+
+        return mifosXClient.newSavingAccountApplication(jsonSavingProductApplication);
+    }
+
+    @Tool(description = "Approve a savings account using the account number. " +
+            "You can optionally include a note for approval consideration.")
+    JsonNode approveSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
+                                   @ToolArg(description = "Note for approval consideration (e.g. Some observation)", required = false) String note)
+            throws JsonProcessingException {
+        SavingAccountApproval savingAccountApproval = new SavingAccountApproval();
+        String command = "approve";
+        ObjectMapper ow = new ObjectMapper();
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        String formattedDate = currentDate.format(dtf);
+
+        savingAccountApproval.setApprovedOnDate(formattedDate);
+        savingAccountApproval.setDateFormat("dd MMMM yyyy");
+        savingAccountApproval.setLocale("en");
+        savingAccountApproval.setNote(note);
+
+        String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountApproval);
+        return mifosXClient.approveSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
+    }
+
+    @Tool(description = "Activate a savings account using the account number.")
+    JsonNode activateSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber)
+            throws JsonProcessingException {
+        SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
+        String command = "activate";
+        ObjectMapper ow = new ObjectMapper();
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        String formattedDate = currentDate.format(dtf);
+
+        savingAccountActivation.setActivatedOnDate(formattedDate);
+        savingAccountActivation.setDateFormat("dd MMMM yyyy");
+        savingAccountActivation.setLocale("en");
+
+        String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountActivation);
+        return mifosXClient.activateSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
+    }
+
     @Tool(description = "Create a savings transaction (deposit or withdrawal) for a specific client. " +
             "Provide: account number, transaction, payment type, " +
             "transaction amount, and optionally a note and transaction date. " +
@@ -377,7 +461,7 @@ public class MifosXServer {
         ObjectWriter owf = new ObjectMapper().writer().withDefaultPrettyPrinter();
         String jsonDefaultLoanProduct = ow.writeValueAsString(loanProduct);
 
-        log.info("******** Contenido de loanProduct enviado al backend ********\n" + jsonDefaultLoanProduct);
+        log.info("\n\n ******** Contenido de loanProduct enviado al backend ********\n" + jsonDefaultLoanProduct + "\n\n");
 
         return mifosXClient.createDefaultLoanProduct(jsonDefaultLoanProduct);
     }
@@ -387,13 +471,13 @@ public class MifosXServer {
             "Optional fields include numberOfRepayments, loanType, principal, productId, repaymentEvery, and expectedDisbursementDate.")
     JsonNode newLoanAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
                                        @ToolArg(description = "Loan Type (e.g. Individual)") String loanType,
+                                       @ToolArg(description = "Product Id (e.g 2)") Integer productId,
                                        @ToolArg(description = "Expected Disbursement Date (e.g 14 April 2025)", required = false) String expectedDisbursementDate,
                                        //@ToolArg(description = "Interest Rate Frequency Type (e.g 2)") String interestRateFrequencyType,
                                        //@ToolArg(description = "Interest Rate Per Period (e.g 5)") Double interestRatePerPeriod,
                                        //@ToolArg(description = "Is Equal Amortization (e.g \"false\")") String isEqualAmortization,
                                        @ToolArg(description = "Number Of Repayments (e.g 2)", required = false) Integer numberOfRepayments,
                                        @ToolArg(description = "Principal (e.g 1000)", required = false) Double principal,
-                                       @ToolArg(description = "Product Id (e.g 2)") Integer productId,
                                        @ToolArg(description = "Repayment Every (e.g 2)", required = false) Integer repaymentEvery
                                        //@ToolArg(description = "Repayment Frequency Type (e.g 2)") String repaymentFrequencyType,
                                        /*@ToolArg(description = "Submitted on Date (e.g 14 April 2025)") String submittedOnDate*/)
@@ -404,7 +488,7 @@ public class MifosXServer {
 
 
         JsonNode loanApplicationTemplateJson = mifosXClient.getLoanProductApplicationTemplate("true","true",productId,clientId,loanType.toLowerCase());
-        log.info("******** JSON LOAN APPLICATION TEMPLATE ********\n" + loanApplicationTemplateJson);
+        log.info("\n\n ******** JSON LOAN APPLICATION TEMPLATE ********\n\n" + loanApplicationTemplateJson + "\n\n");
         LoanProductApplicationTemplate lpat = mapper.treeToValue(loanApplicationTemplateJson, LoanProductApplicationTemplate.class);
         log.info("\n\n ******** TEMPLATE HAS BEEN DESERIALIZED ********\n\n" );
 
@@ -453,92 +537,63 @@ public class MifosXServer {
         String jsonLoanAccountApplication = ow.writeValueAsString(loanProductApplication);
         jsonLoanAccountApplication = jsonLoanAccountApplication.replace(":null", ":\"\"");
 
-        log.info("\n\n ******** SON STRUCTURE FOR THE REQUEST ********\n\n" );
-
+        log.info("\n\n ******** JSON STRUCTURE FOR THE REQUEST ********\n\n" + jsonLoanAccountApplication + "\n\n");
+        log.info("\n\n ******** JSON STRUCTURE FOR THE REQUEST ********\n\n" );
         return mifosXClient.newLoanAccountApplication(jsonLoanAccountApplication);
     }
 
-    @Tool(description = "Create an application for a new saving account using a product ID and a client's account number." +
-            "You can optionally include an external ID)")
-    JsonNode newSavingsAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
-                                         @ToolArg(description = "Saving product ID (e.g. 1)") Integer productId,
-                                         @ToolArg(description = "External Id (e.g CR03)", required = false) String externalId)
-            throws IOException, JsonProcessingException {
-        SavingProductApplication savingProductApplication = new SavingProductApplication();
-        ObjectMapper ow = new ObjectMapper();
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-        String formattedDate = currentDate.format(dtf);
-
-        JsonNode templateSavingApplication = mifosXClient.getTemplateSavingsAccount(clientId, productId);
-
-        savingProductApplication.setProductId(productId);
-        savingProductApplication.setSubmittedOnDate(formattedDate);
-        savingProductApplication.setFieldOfficerId(null);
-        savingProductApplication.setExternalId("");
-        savingProductApplication.setNominalAnnualInterestRate(templateSavingApplication.get("nominalAnnualInterestRate").asInt());
-        savingProductApplication.setInterestCompoundingPeriodType(templateSavingApplication.get("interestCompoundingPeriodType").get("id").asInt());
-        savingProductApplication.setInterestPostingPeriodType(templateSavingApplication.get("interestPostingPeriodType").get("id").asInt());
-        savingProductApplication.setInterestCalculationType(templateSavingApplication.get("interestCalculationType").get("id").asInt());
-        savingProductApplication.setInterestCalculationDaysInYearType(templateSavingApplication.get("interestCalculationDaysInYearType").get("id").asInt());
-        savingProductApplication.setWithdrawalFeeForTransfers(templateSavingApplication.get("withdrawalFeeForTransfers").asText());
-        savingProductApplication.setLockinPeriodFrequency(null);
-        savingProductApplication.setLockinPeriodFrequencyType(null);
-        savingProductApplication.setAllowOverdraft(templateSavingApplication.get("allowOverdraft").asText());
-        savingProductApplication.setEnforceMinRequiredBalance(templateSavingApplication.get("enforceMinRequiredBalance").asText());
-
-        JsonNode chargesNode = templateSavingApplication.get("charges");
-        ArrayList<Charge> charges = ow.readerForListOf(Charge.class).readValue(chargesNode);
-
-        savingProductApplication.setCharges(charges);
-        savingProductApplication.setDateFormat("dd MMMM yyyy");
-        savingProductApplication.setMonthDayFormat("dd MMMM");
-        savingProductApplication.setLocale("en");
-        savingProductApplication.setClientId(clientId);
-
-        String jsonSavingProductApplication = ow.writeValueAsString(savingProductApplication);
-        jsonSavingProductApplication = jsonSavingProductApplication.replace(":null", ":\"\"");
-
-        return mifosXClient.newSavingAccountApplication(jsonSavingProductApplication);
-    }
-
-    @Tool(description = "Approve a savings account using the account number. " +
-            "You can optionally include a note for approval consideration.")
-    JsonNode approveSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
+    @Tool(description = "Approve a loan account using the account number. " +
+            "Optionally, include the approval date, expected disbursement date, approved loan amount, and a note.")
+    JsonNode approveLoanAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
+                                   @ToolArg(description = "Account approval date (e.g. 29 May 2025).", required = false) String approvalDate,
+                                   @ToolArg(description = "Expected disbursement date (e.g. Some observation)", required = false) String expectedDisbursementDate,
+                                   @ToolArg(description = "Approved loan amount for the account (e.g. Some 10000)", required = false) Double approvedLoanAmount,
                                    @ToolArg(description = "Note for approval consideration (e.g. Some observation)", required = false) String note)
             throws JsonProcessingException {
-        SavingAccountApproval savingAccountApproval = new SavingAccountApproval();
+        LoanAccountApproval loanAccountApproval = new LoanAccountApproval();
+        JsonNode jsonNode = mifosXClient.getLoanApprovalTemplate(accountNumber,"approval");
+        ObjectMapper ow = new ObjectMapper();
+        LoanAccountApprovalTemplate loanAccountApprovalTemplate = ow.treeToValue(jsonNode, LoanAccountApprovalTemplate.class);
         String command = "approve";
-        ObjectMapper ow = new ObjectMapper();
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-        String formattedDate = currentDate.format(dtf);
 
-        savingAccountApproval.setApprovedOnDate(formattedDate);
-        savingAccountApproval.setDateFormat("dd MMMM yyyy");
-        savingAccountApproval.setLocale("en");
-        savingAccountApproval.setNote(note);
+        loanAccountApproval.setDateFormat("dd MMMM yyyy");
 
-        String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountApproval);
-        return mifosXClient.approveSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
-    }
+        if (approvalDate != null) {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern(loanAccountApproval.getDateFormat());
+            LocalDate ad = LocalDate.parse(approvalDate, formatter);
+            LocalDate adTemplate = LocalDate.parse(loanAccountApprovalTemplate.getApprovalDate(), formatter);
+            if (ad.isAfter(adTemplate)) {
+                loanAccountApproval.setApprovedOnDate(approvalDate);
+            }
+            else {
+                throw new IllegalArgumentException("The approval date cannot be earlier than the application date.");
+            }
+        }
+        else {
+            loanAccountApproval.setApprovedOnDate(loanAccountApprovalTemplate.getApprovalDate());
+        }
 
-    @Tool(description = "Activate a savings account using the account number.")
-    JsonNode activateSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber)
-            throws JsonProcessingException {
-        SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
-        String command = "activate";
-        ObjectMapper ow = new ObjectMapper();
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-        String formattedDate = currentDate.format(dtf);
+        if (expectedDisbursementDate != null) {
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern(loanAccountApproval.getDateFormat());
+            LocalDate expectedDate = LocalDate.parse(expectedDisbursementDate, formatter);
+            LocalDate expectedDateTemplate = LocalDate.parse(loanAccountApprovalTemplate.getApprovalDate(), formatter);
+            if (expectedDate.isAfter(expectedDateTemplate)) {
+                loanAccountApproval.setExpectedDisbursementDate(expectedDisbursementDate);
+            }
+            else {
+                throw new IllegalArgumentException("The disbursement date cannot be earlier than the approval date.");
+            }
+        }
+        else {
+            loanAccountApproval.setExpectedDisbursementDate(loanAccountApprovalTemplate.getApprovalDate());
+        }
 
-        savingAccountActivation.setActivatedOnDate(formattedDate);
-        savingAccountActivation.setDateFormat("dd MMMM yyyy");
-        savingAccountActivation.setLocale("en");
+        loanAccountApproval.setApprovedLoanAmount(Optional.ofNullable(approvedLoanAmount).orElse(loanAccountApprovalTemplate.getApprovalAmount()));
+        loanAccountApproval.setNote(Optional.ofNullable(note).orElse(""));
+        loanAccountApproval.setLocale("en");
 
-        String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountActivation);
-        return mifosXClient.activateSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
+        String jsonLoanAccountActivation = ow.writeValueAsString(loanAccountApproval);
+        return mifosXClient.approveLoanAccount(accountNumber,command,jsonLoanAccountActivation);
     }
 
     private String getCurrencyCode (String currency) throws JsonProcessingException {
