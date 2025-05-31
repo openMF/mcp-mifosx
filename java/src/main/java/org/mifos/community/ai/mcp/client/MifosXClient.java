@@ -19,7 +19,6 @@
 package org.mifos.community.ai.mcp.client;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import jakarta.json.Json;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import org.eclipse.microprofile.config.Config;
@@ -27,9 +26,7 @@ import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.rest.client.annotation.ClientHeaderParam;
 import org.eclipse.microprofile.rest.client.inject.RegisterRestClient;
 import org.mifos.community.ai.mcp.SearchParameters;
-import org.mifos.community.ai.mcp.dto.Address;
-import org.mifos.community.ai.mcp.dto.Client;
-import org.mifos.community.ai.mcp.dto.FamilyMember;
+
 
 @RegisterRestClient(configKey = "mifosx")
 @ClientHeaderParam(name = "Authorization", value = "{getAuthorizationHeader}")
@@ -94,7 +91,7 @@ public interface MifosXClient {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     @Path("/fineract-provider/api/v1/savingsproducts")
-    JsonNode createDefaultSavingsProduct(String defaultSavingsProduct);
+    JsonNode createSavingsProduct(String savingsProduct);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
@@ -146,7 +143,7 @@ public interface MifosXClient {
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     @Path("fineract-provider/api/v1/loanproducts")
-    JsonNode createDefaultLoanProduct(String defaultLoanProduct);
+    JsonNode createLoanProduct(String loanProduct);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)

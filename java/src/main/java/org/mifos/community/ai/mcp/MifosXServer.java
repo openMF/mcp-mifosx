@@ -228,11 +228,11 @@ public class MifosXServer {
         return mifosXClient.addFamilyMember(clientId, jsonClient);
     }
 
-    @Tool(description = "Create a default savings product. " +
+    @Tool(description = "Create a savings product. " +
             "Provide only the following inputs: name, short name, description, and currency. " +
             "All other values will be automatically set with default configuration. " +
             "Use this to quickly initialize standard savings products.")
-    JsonNode createDefaultSavingProduct(@ToolArg(description = "Saving product name (e.g. WALLET)") String name,
+    JsonNode createSavingProduct(@ToolArg(description = "Saving product name (e.g. WALLET)") String name,
         @ToolArg(description = "Short name of the savings product (e.g. WL01)") String shortName,
         @ToolArg(description = "Short description of the savings product (e.g. WALLET PRODUCT)") String description,
         @ToolArg(description = "Currency for the savings product (e.g. USD)") String currency) throws JsonProcessingException{
@@ -271,7 +271,7 @@ public class MifosXServer {
         String jsonClient = ow.writeValueAsString(savingProduct);
         jsonClient = jsonClient.replace(":null", ":\"\"");
 
-        return mifosXClient.createDefaultSavingsProduct(jsonClient);
+        return mifosXClient.createSavingsProduct(jsonClient);
     }
 
 
@@ -405,12 +405,12 @@ public class MifosXServer {
         return mifosXClient.newSavingsTransaction(accountNumber, transaction.toLowerCase(), jsonSavingsTransaction);
     }
 
-    @Tool(description = "Create a default loan product. " +
+    @Tool(description = "Create a loan product. " +
             "Provide only the following inputs: name, short name, principal, number of repayments, nominal interest rate, " +
             "repayment frequency, repayment frequency type (valid values: DAYS, WEEKS, MONTHS...), and currency. " +
             "All other values will be automatically set with default configuration. " +
             "Use this to quickly initialize standard loan products.")
-    JsonNode createDefaultLoanProduct (@ToolArg(description = "Full name of the loan product (e.g. BRONZE).") String name,
+    JsonNode createLoanProduct (@ToolArg(description = "Full name of the loan product (e.g. BRONZE).") String name,
                                        @ToolArg(description = "Short code for the loan product (e.g. LB01).") String shortName,
                                        @ToolArg(description = "Total loan amount (e.g. 10000).") Double principal,
                                        @ToolArg(description = "Number of repayments (e.g. 5).") Integer numberOfRepayments,
@@ -463,7 +463,7 @@ public class MifosXServer {
 
         log.info("\n\n ******** Contenido de loanProduct enviado al backend ********\n" + jsonDefaultLoanProduct + "\n\n");
 
-        return mifosXClient.createDefaultLoanProduct(jsonDefaultLoanProduct);
+        return mifosXClient.createLoanProduct(jsonDefaultLoanProduct);
     }
 
     @Tool(description = "Create an application for a new loan account using a product ID and a client's account number. " +
