@@ -411,13 +411,13 @@ public class MifosXServer {
             "All other values will be automatically set with default configuration. " +
             "Use this to quickly initialize standard loan products.")
     JsonNode createLoanProduct (@ToolArg(description = "Full name of the loan product (e.g. BRONZE).") String name,
-                                       @ToolArg(description = "Short code for the loan product (e.g. LB01).") String shortName,
-                                       @ToolArg(description = "Total loan amount (e.g. 10000).") Double principal,
-                                       @ToolArg(description = "Number of repayments (e.g. 5).") Integer numberOfRepayments,
-                                       @ToolArg(description = "Nominal interest rate per period in percentage (e.g. 10.0).") Double nominalInterestRate,
-                                       @ToolArg(description = "Interval between repayments (e.g. 2).") Integer repaymentFrequency,
-                                       @ToolArg(description = "Unit of time for repayment (e.g. MONTHS).") String repaymentFrequencyType,
-                                       @ToolArg(description = "Currency to use, either code or name (e.g. USD or US Dollar).") String currency)
+                                       @ToolArg(description = "Short code of the loan product (e.g. LB01).") String shortName,
+                                       @ToolArg(description = "Principal amount (e.g. 10000).") Double principal,
+                                       @ToolArg(description = "Number of Repayments (e.g. 12).") Integer numberOfRepayments,
+                                       @ToolArg(description = "Nominal Interest Rate per period in percentage (e.g. 1.0).") Double nominalInterestRate,
+                                       @ToolArg(description = "Repayment Frequency is the interval between repayments (e.g. 1).") Integer repaymentFrequency,
+                                       @ToolArg(description = "Repayment Frequency Type is the unit of time for repayment (e.g. MONTHS).") String repaymentFrequencyType,
+                                       @ToolArg(description = "ISO Currency Code to use, either code or name (e.g. USD or US Dollar).") String currency)
         throws JsonProcessingException, IOException {
         ObjectMapper ow = new ObjectMapper();
 
