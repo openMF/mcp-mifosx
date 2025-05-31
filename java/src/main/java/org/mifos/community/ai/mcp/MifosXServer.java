@@ -410,11 +410,11 @@ public class MifosXServer {
             "repayment frequency, repayment frequency type (valid values: DAYS, WEEKS, MONTHS...), and currency. " +
             "All other values will be automatically set with default configuration. " +
             "Use this to quickly initialize standard loan products.")
-    JsonNode createLoanProduct (@ToolArg(description = "Full name of the loan product (e.g. BRONZE).") String name,
+    JsonNode createLoanProduct (@ToolArg(description = "Name of the loan product (e.g. BRONZE).") String name,
                                        @ToolArg(description = "Short code of the loan product (e.g. LB01).") String shortName,
                                        @ToolArg(description = "Principal amount (e.g. 10000).") Double principal,
                                        @ToolArg(description = "Number of Repayments (e.g. 12).") Integer numberOfRepayments,
-                                       @ToolArg(description = "Nominal Interest Rate per period in percentage (e.g. 1.0).") Double nominalInterestRate,
+                                       @ToolArg(description = "Nominal Interest Rate per period  (e.g. 1.0).") Double nominalInterestRate,
                                        @ToolArg(description = "Repayment Frequency is the interval between repayments (e.g. 1).") Integer repaymentFrequency,
                                        @ToolArg(description = "Repayment Frequency Type is the unit of time for repayment (e.g. MONTHS).") String repaymentFrequencyType,
                                        @ToolArg(description = "ISO Currency Code to use, either code or name (e.g. USD or US Dollar).") String currency)
