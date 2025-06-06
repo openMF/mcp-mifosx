@@ -176,6 +176,20 @@ public interface MifosXClient {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/loans/{accountNo}/transactions/template")
+    JsonNode getDisburseLoanAccount(@PathParam("accountNo") Integer accountNo,
+                                    @QueryParam("command") String command);
+
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/loans/{accountNo}")
+    JsonNode disburseLoanAccount(@PathParam("accountNo") Integer accountNo,
+                                 @QueryParam("command") String command,
+                                 String disburseLoanAccount);
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
     @Path("fineract-provider/api/v1/currencies")
     JsonNode getCurrencies();
 

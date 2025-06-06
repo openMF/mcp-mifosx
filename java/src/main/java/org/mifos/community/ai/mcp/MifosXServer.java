@@ -537,8 +537,6 @@ public class MifosXServer {
         String jsonLoanAccountApplication = ow.writeValueAsString(loanProductApplication);
         jsonLoanAccountApplication = jsonLoanAccountApplication.replace(":null", ":\"\"");
 
-        log.info("\n\n ******** JSON STRUCTURE FOR THE REQUEST ********\n\n" + jsonLoanAccountApplication + "\n\n");
-        log.info("\n\n ******** JSON STRUCTURE FOR THE REQUEST ********\n\n" );
         return mifosXClient.newLoanAccountApplication(jsonLoanAccountApplication);
     }
 
@@ -594,6 +592,55 @@ public class MifosXServer {
 
         String jsonLoanAccountActivation = ow.writeValueAsString(loanAccountApproval);
         return mifosXClient.approveLoanAccount(accountNumber,command,jsonLoanAccountActivation);
+    }
+
+    @Tool(description = "Disburse a loan account using the account number and payment type. " +
+            "Optionally, include the disbursement amount, external ID, note, and payment-related details.")
+    JsonNode disburseLoanAccount(
+            @ToolArg(description = "Loan account number (e.g. 1)") Integer loanAccountNumber,
+            @ToolArg(description = "Disbursement amount (e.g. 10000)", required = false) Double transactionAmount,
+            @ToolArg(description = "External identifier for the transaction (e.g. LDT01)", required = false) String externalId,
+            @ToolArg(description = "Name of the payment type (e.g. Money Transfer)") String paymentType,
+            @ToolArg(description = "Optional note related to the disbursement (e.g. FYI)", required = false) String note,
+            @ToolArg(description = "Payment account number (e.g. 100)", required = false) String paymentAccountNumber,
+            @ToolArg(description = "Check number if payment was made by check (e.g. 101)", required = false) String paymentCheckNumber,
+            @ToolArg(description = "Bank routing code (e.g. 102)", required = false) String paymentRoutingCode,
+            @ToolArg(description = "Receipt number provided for the payment (e.g. 103)", required = false) String paymentReceiptNumber,
+            @ToolArg(description = "Bank number related to the payment (e.g. 104)", required = false) String paymentBankNumber)
+            throws JsonProcessingException {
+        String command = "disburse";
+        PaymentType selectedPaymentType = null;
+
+        DisburseLoanAccount disburseLoanAccount = new DisburseLoanAccount();
+        JsonNode jsonNode = mifosXClient.getDisburseLoanAccount(loanAccountNumber,command);
+        ObjectMapper ow = new ObjectMapper();
+        DisburseLoanAccountTemplate template = ow.treeToValue(jsonNode, DisburseLoanAccountTemplate.class);
+
+        disburseLoanAccount.setActualDisbursementDate(template.getDate());
+        disburseLoanAccount.setTransactionAmount(Optional.ofNullable(transactionAmount).orElse(template.getAmount()));
+        disburseLoanAccount.setExternalId(Optional.ofNullable(externalId).orElse(""));
+
+        for(PaymentType pt : template.getPaymentTypeOptions()) {
+            if (pt.getName().equalsIgnoreCase(paymentType)) {
+                selectedPaymentType = pt;
+                break;
+            }
+        }
+        if (selectedPaymentType == null) {
+            throw new IllegalArgumentException("Invalid payment type: '" + paymentType + "'. Please provide a valid payment type.");
+        }
+
+        disburseLoanAccount.setPaymentTypeId(selectedPaymentType.getId());
+        disburseLoanAccount.setNote(Optional.ofNullable(note).orElse(""));
+        disburseLoanAccount.setAccountNumber(Optional.ofNullable(paymentAccountNumber).orElse(""));
+        disburseLoanAccount.setCheckNumber(Optional.ofNullable(paymentCheckNumber).orElse(""));
+        disburseLoanAccount.setRoutingCode(Optional.ofNullable(paymentRoutingCode).orElse(""));
+        disburseLoanAccount.setReceiptNumber(Optional.ofNullable(paymentReceiptNumber).orElse(""));
+        disburseLoanAccount.setBankNumber(Optional.ofNullable(paymentBankNumber).orElse(""));
+        disburseLoanAccount.setLocale("en");
+
+        String jsonDisburseLoanAccount = ow.writeValueAsString(disburseLoanAccount);
+        return mifosXClient.disburseLoanAccount(loanAccountNumber,command,jsonDisburseLoanAccount);
     }
 
     private String getCurrencyCode (String currency) throws JsonProcessingException {
