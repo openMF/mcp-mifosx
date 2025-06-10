@@ -51,7 +51,7 @@ public class LoanProductApplicationTemplate {
     List<Types> interestTypeOptions;
     List<Types> interestCalculationPeriodTypeOptions;
     List<Options> transactionProcessingStrategyOptions;
-    List<Charge> chargeOptions;
+    List<ChargeOption> chargeOptions;
     List<Object> loanCollateralOptions;
     List<Types> loanScheduleTypeOptions;
     List<Types> loanScheduleProcessingTypeOptions;

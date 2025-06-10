@@ -598,7 +598,7 @@ public class MifosXServer {
             "Optionally, include the disbursement amount, external ID, note, and payment-related details.")
     JsonNode disburseLoanAccount(
             @ToolArg(description = "Loan account number (e.g. 1)") Integer loanAccountNumber,
-            @ToolArg(description = "Disbursement amount (e.g. 10000)", required = false) Double transactionAmount,
+            @ToolArg(description = "Disbursement amount (e.g. 10000). If omitted, the system uses the default approved amount.", required = false) Double transactionAmount,
             @ToolArg(description = "External identifier for the transaction (e.g. LDT01)", required = false) String externalId,
             @ToolArg(description = "Name of the payment type (e.g. Money Transfer)") String paymentType,
             @ToolArg(description = "Optional note related to the disbursement (e.g. FYI)", required = false) String note,
