@@ -1,7 +1,6 @@
 package org.mifos.community.ai.mcp.dto;
 
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import com.fasterxml.jackson.databind.deser.std.DateDeserializers;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -14,10 +13,10 @@ public class LoanRepaymentTemplate {
     @JsonDeserialize(using = DateArrayDeserializer.class)
     String date;
     Currency currency;
-    ParsedAmount amount;
-    ParsedAmount netDisbursalAmount;
-    ParsedAmount principalPortion;
-    ParsedAmount interestPortion;
+    Double amount;
+    Double netDisbursalAmount;
+    Double principalPortion;
+    Double interestPortion;
     Integer feeChargesPortion;
     Integer penaltyChargesPortion;
     String manuallyReversed;

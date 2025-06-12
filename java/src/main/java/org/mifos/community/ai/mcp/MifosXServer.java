@@ -678,7 +678,7 @@ public class MifosXServer {
         }
 
         loanRepayment.setTransactionDate(Optional.ofNullable(transactionDate).orElse(template.getDate()));
-        loanRepayment.setTransactionAmount(Optional.ofNullable(amount).orElse(template.getAmount().getParsedValue()));
+        loanRepayment.setTransactionAmount(Optional.ofNullable(amount).orElse(template.getAmount()));
         loanRepayment.setExternalId(Optional.ofNullable(externalId).orElse(""));
         loanRepayment.setPaymentTypeId(selectedPaymentType.getId());
 
