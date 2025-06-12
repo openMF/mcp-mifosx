@@ -14,10 +14,10 @@ public class LoanRepaymentTemplate {
     @JsonDeserialize(using = DateArrayDeserializer.class)
     String date;
     Currency currency;
-    ParsedAmount amount;
-    ParsedAmount netDisbursalAmount;
-    ParsedAmount principalPortion;
-    ParsedAmount interestPortion;
+    Double amount;
+    Double netDisbursalAmount;
+    Double principalPortion;
+    Double interestPortion;
     Integer feeChargesPortion;
     Integer penaltyChargesPortion;
     String manuallyReversed;
