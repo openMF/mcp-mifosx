@@ -1,2 +1,0 @@
-mcp-agent @ file:///C:/Users/keshav/Downloads/Downloads/mcp-mifosx/mcp_experimentation_in_python #replace with your local path
-openai
