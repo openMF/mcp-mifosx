@@ -48,4 +48,6 @@ nb-configuration.xml
 .idea/
 java/backoffice/mifosx-mcpp.log*
 java/userrecommendation/mifosx-mcpp.log*
+java/backoffice/target/
+java/userrecommendation/target/
 java/target/
