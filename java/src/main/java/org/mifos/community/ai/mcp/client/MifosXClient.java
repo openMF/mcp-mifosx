@@ -74,6 +74,12 @@ public interface MifosXClient {
     JsonNode listClients(String searchText);
 
     @POST
+    @Consumes(MediaType.MULTIPART_FORM_DATA)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("")
+    JsonNode uploadIdentityDocument();
+
+    @POST
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
     @Path("/fineract-provider/api/v1/client/{clientId}/addresses")

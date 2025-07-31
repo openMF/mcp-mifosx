@@ -31,18 +31,22 @@ import io.quarkiverse.mcp.server.ToolArg;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.Set;
-import org.jboss.logging.Logger;
+import java.util.*;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
 
+import org.jboss.logging.Logger;
+import net.sourceforge.tess4j.TesseractException;
+import org.apache.tika.exception.TikaException;
+
+import org.mifos.community.ai.mcp.client.DocumentTextExtractor;
 import org.mifos.community.ai.mcp.client.MifosXClient;
 import org.mifos.community.ai.mcp.dto.*;
 import jakarta.inject.Inject;
 import jakarta.validation.Validator;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
+import org.mifos.community.ai.mcp.dto.Currency;
 
 public class MifosXServer {
 
@@ -55,6 +59,7 @@ public class MifosXServer {
     ObjectMapper mapper;
 
     private static final Logger log = Logger.getLogger(MifosXServer.class);
+    private final DocumentTextExtractor textExtractor = new DocumentTextExtractor();
 
     @Tool(description = "Search for a client account by account number or client full name")
     JsonNode getClientByAccount(@ToolArg(description = "Client account number (e.g. 00000001)") String clientAccountNumber) {
@@ -144,6 +149,43 @@ public class MifosXServer {
         String jsonActiveClient = ow.writeValueAsString(clientActivation);
         return mifosXClient.activateClient(clientId, "activate",jsonActiveClient);
     }
+
+    @Tool(description = "Analyze a document") //in base64 // and optionally extract names, emails, or phone numbers.
+    JsonNode analyzeDocument(
+            @ToolArg(description = "Base64 content of the file") String fileContentBase64,
+            @ToolArg(description = "Client Id (e.g. 1)") Integer clientId
+            //@ToolArg(description = "Comma-separated list of data types to extract (e.g. 'names,emails,phones')", required = false) String dataTypes
+    ) {
+        ObjectMapper ow = new ObjectMapper();
+        Map<String, Object> result = new HashMap<>();
+        try {
+            byte[] fileBytes = Base64.getDecoder().decode(fileContentBase64);
+            String text = textExtractor.extractText(fileBytes);
+
+            result.put("text", text);
+        } catch (IOException | TikaException | TesseractException e) {
+            throw new RuntimeException("Error processing file" + e.getMessage(), e);
+        }
+
+        String instruction = String.format("""
+            Extract all personally identifiable information of the person who owns the document.
+            
+            Then, call the Tool `getClientDetailsById` using the Id: %d.
+            
+            If the information obtained from the document matches the data retrieved from `getClientDetailsById`, call the Tool `uploadIdentityDocument`.
+            For its parameters:
+            - Assign a name and description based on the type of document being uploaded.
+            - Pass the same identity document that was analyzed in base64 format.
+            
+            If the data does NOT match, draft a message indicating that it was not possible to verify the identity and do not perform any further actions.
+            """, clientId);
+
+        result.put("prompt", instruction);
+
+        return ow.valueToTree(result);
+    }
+
+
 
     @Tool(description = "Add an address to a client by his account number. Required fields: address type, address, neighborhood, number, " +
             "city, country, postal code, state province")
@@ -461,7 +503,7 @@ public class MifosXServer {
         ObjectWriter owf = new ObjectMapper().writer().withDefaultPrettyPrinter();
         String jsonDefaultLoanProduct = ow.writeValueAsString(loanProduct);
 
-        log.info("\n\n ******** Contenido de loanProduct enviado al backend ********\n" + jsonDefaultLoanProduct + "\n\n");
+        //log.info("\n\n ******** Contenido de loanProduct enviado al backend ********\n" + jsonDefaultLoanProduct + "\n\n");
 
         return mifosXClient.createLoanProduct(jsonDefaultLoanProduct);
     }
@@ -677,7 +719,6 @@ public class MifosXServer {
             throw new IllegalArgumentException("Invalid payment type: '" + paymentType + "'. Please provide a valid payment type.");
         }
 
-        loanRepayment.setTransactionDate(Optional.ofNullable(transactionDate).orElse(template.getDate()));
         loanRepayment.setTransactionAmount(Optional.ofNullable(amount).orElse(template.getAmount()));
         loanRepayment.setExternalId(Optional.ofNullable(externalId).orElse(""));
         loanRepayment.setPaymentTypeId(selectedPaymentType.getId());
@@ -691,6 +732,12 @@ public class MifosXServer {
 
         loanRepayment.setDateFormat("dd MMMM yyyy");
         loanRepayment.setLocale("en");
+
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern(loanRepayment.getDateFormat());
+        String formattedDate = currentDate.format(dtf);
+
+        loanRepayment.setTransactionDate(Optional.ofNullable(transactionDate).orElse(formattedDate));
 
         String jsonLoanRepayment = ow.writeValueAsString(loanRepayment);
         return mifosXClient.loanRepayment(loanAccountNumber,command,jsonLoanRepayment);
