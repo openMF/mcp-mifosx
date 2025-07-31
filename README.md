@@ -1,6 +1,6 @@
 # Mifos X - AI - Model Context Protocol (MCP) 
 
-This project provides Model Context Protocol (MCP) servers for interacting with the Apache Fineract® API, enabling AI agents to access financial data and operations. Implementations are available in **Java (Quarkus)**.
+This project provides Model Context Protocol (MCP) for the Mifos X Ecosystem, enabling AI agents to access financial data and operations. Implementations is available in **Java (Quarkus)**.
 
 ---
 
