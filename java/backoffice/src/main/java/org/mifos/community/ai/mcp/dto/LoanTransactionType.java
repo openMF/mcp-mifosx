@@ -1,10 +1,12 @@
 package org.mifos.community.ai.mcp.dto;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import lombok.Getter;
 import lombok.Setter;
 
 @Getter
 @Setter
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class LoanTransactionType {
     Integer id;
     String code;
@@ -44,4 +46,9 @@ public class LoanTransactionType {
     String capitalizedIncomeAmortization;
     String capitalizedIncomeAdjustment;
     String capitalizedIncomeAmortizationAdjustment;
+    String contractTermination;
+    String buyDownFee;
+    String buyDownFeeAdjustment;
+    String buyDownFeeAmortization;
+    String buyDownFeeAmortizationAdjustment;
 }
