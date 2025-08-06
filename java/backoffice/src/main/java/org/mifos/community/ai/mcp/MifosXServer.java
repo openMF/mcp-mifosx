@@ -598,17 +598,17 @@ public class MifosXServer {
     @Tool(description = "Disburse a loan account using the loan account number and payment type. " +
             "Optionally, include the disbursement amount, external ID, note, and payment-related details.")
     JsonNode disburseLoanAccount(
-            @ToolArg(description = "Loan account number (e.g. 1)") Integer loanAccountNumber,
-            @ToolArg(description = "Disbursement amount (e.g. 10000). If omitted, the system uses the default approved amount.", required = false) Double transactionAmount,
-            @ToolArg(description = "External identifier for the transaction (e.g. LDT01)", required = false) String externalId,
-            @ToolArg(description = "Name of the payment type (e.g. Money Transfer)") String paymentType,
-            @ToolArg(description = "Optional note related to the disbursement (e.g. FYI)", required = false) String note,
-            @ToolArg(description = "Payment account number (e.g. 100)", required = false) String paymentAccountNumber,
-            @ToolArg(description = "Check number if payment was made by check (e.g. 101)", required = false) String paymentCheckNumber,
-            @ToolArg(description = "Bank routing code (e.g. 102)", required = false) String paymentRoutingCode,
-            @ToolArg(description = "Receipt number provided for the payment (e.g. 103)", required = false) String paymentReceiptNumber,
-            @ToolArg(description = "Bank number related to the payment (e.g. 104)", required = false) String paymentBankNumber)
-            throws JsonProcessingException {
+            @ToolArg(description = "Loan account number as a number (e.g. 1)") Integer loanAccountNumber,
+            @ToolArg(description = "Disbursement amount as a number (e.g. 10000.00). If omitted, the system uses the approved amount.", required = false) Double transactionAmount,
+            @ToolArg(description = "External ID for the transaction as a string (e.g. \"LDT01\")", required = false) String externalId,
+            @ToolArg(description = "Payment type name as a string (e.g. \"Money Transfer\")") String paymentType,
+            @ToolArg(description = "Optional note related to the disbursement as a string (e.g. \"FYI\")", required = false) String note,
+            @ToolArg(description = "Payment account number as a string (e.g. \"100\")", required = false) String paymentAccountNumber,
+            @ToolArg(description = "Check number as a string, if payment was made by check (e.g. \"101\")", required = false) String paymentCheckNumber,
+            @ToolArg(description = "Bank routing code as a string (e.g. \"102\")", required = false) String paymentRoutingCode,
+            @ToolArg(description = "Receipt number as a string provided for the payment (e.g. \"103\")", required = false) String paymentReceiptNumber,
+            @ToolArg(description = "Bank number related to the payment as a string (e.g. \"104\")", required = false) String paymentBankNumber
+    ) throws JsonProcessingException {
         String command = "disburse";
         PaymentType selectedPaymentType = null;
 
@@ -646,19 +646,19 @@ public class MifosXServer {
 
     @Tool(description = "Make a loan repayment using the loan account number and payment type. " +
             "Optionally, include the repayment amount, transaction date, external ID, a note, and payment details.")
-    JsonNode makeLoanRepayment (@ToolArg(description = "Loan account number (e.g. 1)") Integer loanAccountNumber,
-                                @ToolArg(description = "Name of the payment type (e.g. Money Transfer)") String paymentType,
-                                @ToolArg(description = "Repayment amount (e.g. 6687.59). " +
+    JsonNode makeLoanRepayment (@ToolArg(description = "Loan account number as a number (e.g. 1)") Integer loanAccountNumber,
+                                @ToolArg(description = "Name of the payment type as a string (e.g. \"Money Transfer\")") String paymentType,
+                                @ToolArg(description = "Repayment amount as a number (e.g. 6687.59). " +
                                         "If omitted, the system uses the expected repayment amount.", required = false) Double amount,
-                                @ToolArg(description = "Date of the repayment in format 'dd MMMM yyyy' (e.g. 10 June 2025). " +
+                                @ToolArg(description = "Date of the repayment in format 'dd MMMM yyyy' as a string (e.g. \"10 June 2025\"). " +
                                         "If omitted, the system uses the current date.", required = false) String transactionDate,
-                                @ToolArg(description = "External identifier for the transaction (e.g. RPT01)", required = false) String externalId,
-                                @ToolArg(description = "Optional note related to the disbursement (e.g. FYI)", required = false) String note,
-                                @ToolArg(description = "Payment account number (e.g. 100)", required = false) String paymentAccountNumber,
-                                @ToolArg(description = "Check number if payment was made by check (e.g. 101)", required = false) String paymentCheckNumber,
-                                @ToolArg(description = "Bank routing code (e.g. 102)", required = false) String paymentRoutingCode,
-                                @ToolArg(description = "Receipt number provided for the payment (e.g. 103)", required = false) String paymentReceiptNumber,
-                                @ToolArg(description = "Bank number related to the payment (e.g. 104)", required = false) String paymentBankNumber)
+                                @ToolArg(description = "External identifier for the transaction as a string (e.g. \"RPT01\")", required = false) String externalId,
+                                @ToolArg(description = "Optional note related to the disbursement as a string (e.g. \"FYI\")", required = false) String note,
+                                @ToolArg(description = "Payment account number as a string (e.g. \"100\")", required = false) String paymentAccountNumber,
+                                @ToolArg(description = "Check number if payment was made by check as a string (e.g. \"101\")", required = false) String paymentCheckNumber,
+                                @ToolArg(description = "Bank routing code as a string (e.g. \"102\")", required = false) String paymentRoutingCode,
+                                @ToolArg(description = "Receipt number provided for the payment as a string (e.g. \"103\")", required = false) String paymentReceiptNumber,
+                                @ToolArg(description = "Bank number related to the payment as a string (e.g. \"104\")", required = false) String paymentBankNumber)
             throws JsonProcessingException {
         String command = "repayment";
         LoanRepayment loanRepayment = new LoanRepayment();
