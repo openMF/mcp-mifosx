@@ -542,12 +542,13 @@ public class MifosXServer {
 
     @Tool(description = "Approve a loan account using the account number. " +
             "Optionally, include the approval date, expected disbursement date, approved loan amount, and a note.")
-    JsonNode approveLoanAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
-                                   @ToolArg(description = "Account approval date (e.g. 29 May 2025).", required = false) String approvalDate,
-                                   @ToolArg(description = "Expected disbursement date (e.g. Some observation)", required = false) String expectedDisbursementDate,
-                                   @ToolArg(description = "Approved loan amount for the account (e.g. Some 10000)", required = false) Double approvedLoanAmount,
-                                   @ToolArg(description = "Note for approval consideration (e.g. Some observation)", required = false) String note)
-            throws JsonProcessingException {
+    JsonNode approveLoanAccount(
+            @ToolArg(description = "Account number as a number (e.g. 2)") Integer accountNumber,
+            @ToolArg(description = "Account approval date in 'dd MMM yyyy' format (e.g. \"29 May 2025\")", required = false) String approvalDate,
+            @ToolArg(description = "Expected disbursement date in 'dd MMM yyyy' format (e.g. \"30 May 2025\")", required = false) String expectedDisbursementDate,
+            @ToolArg(description = "Approved loan amount as a number (e.g. 10000.00)", required = false) Double approvedLoanAmount,
+            @ToolArg(description = "Note for approval consideration (e.g. \"Urgent disbursement requested\")", required = false) String note
+    ) throws JsonProcessingException {
         LoanAccountApproval loanAccountApproval = new LoanAccountApproval();
         JsonNode jsonNode = mifosXClient.getLoanApprovalTemplate(accountNumber,"approval");
         ObjectMapper ow = new ObjectMapper();
