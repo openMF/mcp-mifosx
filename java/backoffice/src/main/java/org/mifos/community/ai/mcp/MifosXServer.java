@@ -595,13 +595,13 @@ public class MifosXServer {
         return mifosXClient.approveLoanAccount(accountNumber,command,jsonLoanAccountActivation);
     }
 
-    @Tool(description = "Disburse a loan account using the loan account number and payment type. " +
+    @Tool(description = "Disburse a loan account using the account number and payment type. " +
             "Optionally, include the disbursement amount, external ID, note, and payment-related details.")
     JsonNode disburseLoanAccount(
-            @ToolArg(description = "Loan account number as a number (e.g. 1)") Integer loanAccountNumber,
+            @ToolArg(description = "Account number as a number (e.g. 1)") Integer loanAccountNumber,
+            @ToolArg(description = "Payment type name as a string (e.g. \"Money Transfer\")") String paymentType,
             @ToolArg(description = "Disbursement amount as a number (e.g. 10000.00). If omitted, the system uses the approved amount.", required = false) Double transactionAmount,
             @ToolArg(description = "External ID for the transaction as a string (e.g. \"LDT01\")", required = false) String externalId,
-            @ToolArg(description = "Payment type name as a string (e.g. \"Money Transfer\")") String paymentType,
             @ToolArg(description = "Optional note related to the disbursement as a string (e.g. \"FYI\")", required = false) String note,
             @ToolArg(description = "Payment account number as a string (e.g. \"100\")", required = false) String paymentAccountNumber,
             @ToolArg(description = "Check number as a string, if payment was made by check (e.g. \"101\")", required = false) String paymentCheckNumber,
