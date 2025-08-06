@@ -683,12 +683,12 @@ public class MifosXServer {
         loanRepayment.setExternalId(Optional.ofNullable(externalId).orElse(""));
         loanRepayment.setPaymentTypeId(selectedPaymentType.getId());
 
-        loanRepayment.setNote(Optional.ofNullable(note).orElse(null));
-        loanRepayment.setAccountNumber(Optional.ofNullable(paymentAccountNumber).orElse(null));
-        loanRepayment.setCheckNumber(Optional.ofNullable(paymentCheckNumber).orElse(null));
-        loanRepayment.setRoutingCode(Optional.ofNullable(paymentRoutingCode).orElse(null));
-        loanRepayment.setReceiptNumber(Optional.ofNullable(paymentReceiptNumber).orElse(null));
-        loanRepayment.setBankNumber(Optional.ofNullable(paymentBankNumber).orElse(null));
+        loanRepayment.setNote(Optional.ofNullable(note).orElse(""));
+        loanRepayment.setAccountNumber(Optional.ofNullable(paymentAccountNumber).orElse(""));
+        loanRepayment.setCheckNumber(Optional.ofNullable(paymentCheckNumber).orElse(""));
+        loanRepayment.setRoutingCode(Optional.ofNullable(paymentRoutingCode).orElse(""));
+        loanRepayment.setReceiptNumber(Optional.ofNullable(paymentReceiptNumber).orElse(""));
+        loanRepayment.setBankNumber(Optional.ofNullable(paymentBankNumber).orElse(""));
 
         loanRepayment.setDateFormat("dd MMMM yyyy");
         loanRepayment.setLocale("en");
