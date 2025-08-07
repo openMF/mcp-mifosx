@@ -81,23 +81,14 @@ For Java (Quarkus), create a native executable:
 
 | Video URL | Title | Description | Prompt |
 | :--- | :--- | :--- | :--- |
-|  |  |  |  |
+| https://youtu.be/MDQKRoz5GKw?si=69X77C58nFhy6Ioh | Join and Try the Mifos MCP | Join and Try the Mifos MCP | N/A |
 
 ---
 
 ## Contact
 
-- Apache Fineract Community: [https://community.apache.org/](https://community.apache.org/)
-- MCP Specification: [https://modelcontextprotocol.org](https://modelcontextprotocol.org)
-
+- Mifos Community: [https://mifos.org/](https://mifos.org/)
 ---
-
-## Guides
-
-- **Java/Quarkus**: [Quarkus MCP Guide](https://docs.quarkiverse.io/quarkus-mcp-server/dev/index.html)
-
----
-
 
 ### Key Features:
 - **Standardized API access** via `fineract://` URIs
