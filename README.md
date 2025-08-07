@@ -77,9 +77,11 @@ For Java (Quarkus), create a native executable:
 
 ---
 
-## Contributing
+## Examples
 
-- **Java**: Extend `src/main/java/org/mifos/community/ai/...` for new endpoints.
+| Video URL | Title | Description | Prompt |
+| :--- | :--- | :--- | :--- |
+|  |  |  |  |
 
 ---
 
