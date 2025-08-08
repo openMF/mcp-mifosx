@@ -81,7 +81,7 @@ For Java (Quarkus), create a native executable:
 
 | Video URL | Title | Prompt |
 | :--- | :--- | :--- |
-| https://youtu.be/MDQKRoz5GKw?si=69X77C58nFhy6Ioh | Join and Try the Mifos MCP | N/A |
+| https://youtu.be/MDQKRoz5GKw?si=69X77C58nFhy6Ioh | Join and Try the Mifos MCP. Go to https://ai.mifos.community | N/A |
 | https://youtu.be/y5MR3j8EGM4?si=zXTurBNql4xF5CGY | Create Client | Create the client using first name: OCTAVIO, last name: PAZ, email address: octaviopaz@mifos.org, mobile number: 5518098299 and external id: OCPZ99 |
 | https://youtu.be/qJsC25cd-1g?si=qQzX8DeOe0_2qhfr | Activate Client   | Activate the client OCTAVIO PAZ |
 | https://youtu.be/X1g_nVDsRnM?si=K7vsAN7gOLEC2OG0 | Add Address to Client   | Add the address to the client OCTAVIO PAZ. Fields: address type: HOME, address: PLAZA DE LORETO, neighborhood: DOCTOR ALFONZO, number: NUMBER 10, city: CDMX, country: MÉXICO, postal code: 54440, state province: CDMX. |
