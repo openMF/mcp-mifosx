@@ -104,6 +104,7 @@ For Java (Quarkus), create a native executable:
 
 - Mifos Community: https://mifos.org
 - Mifos MCP (Docker): https://hub.docker.com/r/openmf/mifos-mcp
+- Chabot (Use the Groq provider and select the Mifos MCP): https://ai.mifos.community
 ---
 
 ### Key Features:
