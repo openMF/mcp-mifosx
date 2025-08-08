@@ -1,4 +1,4 @@
-# Mifos X - AI - Model Context Protocol (MCP) 
+# Mifos MCP - Model Context Protocol (MCP) 
 
 This project provides Model Context Protocol (MCP) for the Mifos X Ecosystem, enabling AI agents to access financial data and operations. Implementations is available in **Java (Quarkus)**.
 
