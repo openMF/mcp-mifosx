@@ -21,7 +21,7 @@ This starts a local web UI to connect to your MCP server via STDIO or SSE.
 ### 1. Choose Your Implementation
 
 #### **Java (Quarkus)**
-**Prerequisites**: JDK 17+, Maven
+**Prerequisites**: JDK 21+, Maven
 
 **Steps**:
 1. Configure environment variables in your shell or IDE:
