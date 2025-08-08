@@ -102,7 +102,8 @@ For Java (Quarkus), create a native executable:
 
 ## Contact
 
-- Mifos Community: [https://mifos.org/](https://mifos.org/)
+- Mifos Community: [https://mifos.org](https://mifos.org)
+- Mifos MCP (Docker): [https://mifos.org](https://hub.docker.com/r/openmf/mifos-mcp)
 ---
 
 ### Key Features:
