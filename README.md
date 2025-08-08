@@ -82,22 +82,22 @@ For Java (Quarkus), create a native executable:
 | Video URL | Title | Prompt |
 | :--- | :--- | :--- |
 | https://youtu.be/MDQKRoz5GKw?si=69X77C58nFhy6Ioh | Join and Try the Mifos MCP | N/A |
-| https://youtu.be/y5MR3j8EGM4?si=zXTurBNql4xF5CGY | Create Clients Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/qJsC25cd-1g?si=qQzX8DeOe0_2qhfr | Activate Clients Using Mifos MCP using AI (LLM) | |
-| https://youtu.be/X1g_nVDsRnM?si=K7vsAN7gOLEC2OG0 | Add Address to Clients Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/xeL9_sycwA8?si=AtV6F4WhTvcDspSp | Add Personal Reference to Clients Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/2ioN_8z_uaY?si=ZTB5rCrgS2jTpC4- | Approve Loan Application Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/5EdgUyLyP0w?si=L0UdYjXlyYF6faL5 | Create Loan Application Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/dDebmrn4lB0?si=0GTf4asCBHnsu27f | Disbursement of Loan Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/N3wnyJCh_Ik?si=gSy5LrJdFF2kfzHd | Make Loan Repayment Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/IKGMeAJBAOk?si=N27rE64dn7qxmMBk | Create a Loan Product Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/bOuTj97hyqU?si=9bpno4Kp0II1IfPY | Create Savings Product Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/l-Z7LlE3AnM?si=yQM4lloJL8Hu6yv8 | Create a Savings Account Application Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/DJgUiRYK-rE?si=YatfVgOgpbP4wV91 | Activate Savings Account Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/iQduVpiURK0?si=RlT7QPPEz_e37oBv | Activate Savings Account Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/Q5ExlhalG8U?si=TwbsUZX30G3JeNJy | Approve Savings Application Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/Od7KFqktUtI?si=gPJNlLOB_7D74QdS | Make a Deposit Transaction Using Mifos MCP + AI (LLM) | |
-| https://youtu.be/9OL6N5wKG7c?si=R50RjTK6GI_ODuUs | Make a Withdrawal Transaction Using Mifos MCP + AI (LLM) | |
+| https://youtu.be/y5MR3j8EGM4?si=zXTurBNql4xF5CGY | Create Clients   | |
+| https://youtu.be/qJsC25cd-1g?si=qQzX8DeOe0_2qhfr | Activate Clients   | |
+| https://youtu.be/X1g_nVDsRnM?si=K7vsAN7gOLEC2OG0 | Add Address to Clients   | |
+| https://youtu.be/xeL9_sycwA8?si=AtV6F4WhTvcDspSp | Add Personal Reference to Clients   | |
+| https://youtu.be/2ioN_8z_uaY?si=ZTB5rCrgS2jTpC4- | Approve Loan Application   | |
+| https://youtu.be/5EdgUyLyP0w?si=L0UdYjXlyYF6faL5 | Create Loan Application   | |
+| https://youtu.be/dDebmrn4lB0?si=0GTf4asCBHnsu27f | Disbursement of Loan   | |
+| https://youtu.be/N3wnyJCh_Ik?si=gSy5LrJdFF2kfzHd | Make Loan Repayment   | |
+| https://youtu.be/IKGMeAJBAOk?si=N27rE64dn7qxmMBk | Create a Loan Product   | |
+| https://youtu.be/bOuTj97hyqU?si=9bpno4Kp0II1IfPY | Create Savings Product   | |
+| https://youtu.be/l-Z7LlE3AnM?si=yQM4lloJL8Hu6yv8 | Create a Savings Account Application   | |
+| https://youtu.be/DJgUiRYK-rE?si=YatfVgOgpbP4wV91 | Activate Savings Account   | |
+| https://youtu.be/iQduVpiURK0?si=RlT7QPPEz_e37oBv | Activate Savings Account   | |
+| https://youtu.be/Q5ExlhalG8U?si=TwbsUZX30G3JeNJy | Approve Savings Application   | |
+| https://youtu.be/Od7KFqktUtI?si=gPJNlLOB_7D74QdS | Make a Deposit Transaction   | |
+| https://youtu.be/9OL6N5wKG7c?si=R50RjTK6GI_ODuUs | Make a Withdrawal Transaction   | |
 ---
 
 ## Contact
