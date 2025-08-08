@@ -77,7 +77,7 @@ For Java (Quarkus), create a native executable:
 
 ---
 
-## Examples
+## Examples - Backoffice Agent
 
 | Video URL | Title | Prompt |
 | :--- | :--- | :--- |
