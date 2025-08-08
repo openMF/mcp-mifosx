@@ -181,7 +181,7 @@ public class MifosXServer {
         return mifosXClient.addAddress(clientId,address.getAddressType(),jsonAddress);
     }
 
-    @Tool(description = "Add a family member to a client by his account number. Required fields: firstName, lastName, age, relationship, genderId, dateOfBirth," +
+    @Tool(description = "Add a personal reference to a client. Required fields: firstName, lastName, age, relationship, genderId, dateOfBirth," +
             " middleName, qualification, isDependent, professionId, maritalStatusId, dateFormat, locale")
     JsonNode addFamilyMember(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
             @ToolArg(description = "First Name (e.g. Jhon)") String firstName,
@@ -403,6 +403,52 @@ public class MifosXServer {
         jsonSavingsTransaction = jsonSavingsTransaction.replace(":null", ":\"\"");
 
         return mifosXClient.newSavingsTransaction(accountNumber, transaction.toLowerCase(), jsonSavingsTransaction);
+    }
+
+    @Tool(description = "Execute fund transfers from a savings account to another savings account or to a loan account. " +
+            "To execute the fund transfer, it is necessary to provide the source account details: " +
+            "office, client, account type (use 1 for loan accounts and 2 for savings accounts), " +
+            "account number, and transaction amount. " +
+            "To define the destination account, specify the office, client, " +
+            "account type (use 1 for loan accounts and 2 for savings accounts), and destination account number. " +
+            "To get all clients details, use the \"listClients\" Tool by searching with the client name. " +
+            "To get all accounts details, use the \"listAccounts\" Tool with the client ID as a query parameter. " +
+            "If the results from these tools do not match the provided information, do not execute this Tool. ")
+    JsonNode transferFunds (
+        @ToolArg(description = "Source office ID as an integer number (e.g. 1)") Integer fromOffice,
+        @ToolArg(description = "Source client ID as an integer number (e.g. 1)") Integer fromClient,
+        @ToolArg(description = "Source account type: \"1\" for savings, \"2\" for loans as a string (e.g. \"2\")") String fromAccountType,
+        @ToolArg(description = "Source account ID as a string (e.g. \"1\")") String fromAccountId,
+
+        @ToolArg(description = "Destination office ID as a integer number (e.g. 1)") Integer toOffice,
+        @ToolArg(description = "Destination client ID as a integer number (e.g. 1)") Integer toClient,
+        @ToolArg(description = "Destination account type: 1 for savings, 2 for loans as a integer number (e.g. 2)") Integer toAccountType,
+        @ToolArg(description = "Destination account ID as a integer number (e.g. 1)") Integer toAccountId,
+
+        @ToolArg(description = "Transfer amount as a decimal number (e.g. 984.76)") Double transferAmount,
+        @ToolArg(description = "Optional note describing the transfer as a string (e.g. \"Credit payment\"))", required = false) String transferDescription
+    ) throws JsonProcessingException {
+        TransferFunds tf = new TransferFunds();
+        ObjectMapper ow = new ObjectMapper();
+
+        LocalDate currentDate = LocalDate.now();
+        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+        String formattedDate = currentDate.format(dtf);
+
+        tf.setFromOfficeId(fromOffice);
+        tf.setFromClientId(fromClient);
+        tf.setFromAccountType(fromAccountType);
+        tf.setFromAccountId(fromAccountId);
+        tf.setToOfficeId(toOffice);
+        tf.setToClientId(toClient);
+        tf.setToAccountType(toAccountType);
+        tf.setToAccountId(toAccountId);
+        tf.setTransferDate(formattedDate);
+        tf.setTransferAmount(transferAmount);
+        tf.setTransferDescription(Optional.ofNullable(transferDescription).orElse(""));
+
+        String jsonTransferFunds = ow.writeValueAsString(tf);
+        return mifosXClient.transferFunds(jsonTransferFunds);
     }
 
     @Tool(description = "Create a loan product. " +

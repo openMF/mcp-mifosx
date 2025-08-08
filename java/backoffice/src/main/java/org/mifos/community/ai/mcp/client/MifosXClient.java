@@ -200,7 +200,13 @@ public interface MifosXClient {
     @Path("fineract-provider/api/v1/loans/{accountNo}/transactions")
     JsonNode loanRepayment(@PathParam("accountNo") Integer accountNo,
                            @QueryParam("command") String command,
-                           String LoanRepayment);
+                           String loanRepayment);
+
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/accounttransfers")
+    JsonNode transferFunds(String transferFunds);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
