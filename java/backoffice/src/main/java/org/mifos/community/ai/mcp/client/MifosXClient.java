@@ -52,6 +52,10 @@ public interface MifosXClient {
     @GET
     @Path("/fineract-provider/api/v1/clients/{clientId}")
     JsonNode getClientDetailsById(Integer clientId);
+
+    @GET
+    @Path("/fineract-provider/api/v1/clients/{clientId}/accounts")
+    JsonNode listClientAccounts(Integer clientId);
     
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
