@@ -83,7 +83,13 @@ public class MifosXServer {
         String jsonClientSearch = ow.writeValueAsString(clientSearch);
         return mifosXClient.listClients(jsonClientSearch);
     }
-       
+
+    @Tool(description = "List accounts for a client by client ID")
+    JsonNode listClientAccounts(@ToolArg(description = "Client ID as an integer number (e.g. 1)") Integer clientId
+    ) throws JsonProcessingException{
+        return mifosXClient.listClientAccounts(clientId);
+    }
+
     @Tool(description = "Create a client using first name, last name, email address, mobile number and external id")
     JsonNode createClient(@ToolArg(description = "First Name (e.g. Jhon)", required = true) String firstName, 
             @ToolArg(description = "Last Name (e.g. Doe)", required = true) String lastName,
@@ -412,7 +418,7 @@ public class MifosXServer {
             "To define the destination account, specify the office, client, " +
             "account type (use 1 for loan accounts and 2 for savings accounts), and destination account number. " +
             "To get all clients details, use the \"listClients\" Tool by searching with the client name. " +
-            "To get all accounts details, use the \"listAccounts\" Tool with the client ID as a query parameter. " +
+            "To get all accounts details, use the \"listClientAccounts\" Tool with the client ID as a query parameter. " +
             "If the results from these tools do not match the provided information, do not execute this Tool. ")
     JsonNode transferFunds (
         @ToolArg(description = "Source office ID as an integer number (e.g. 1)") Integer fromOffice,
