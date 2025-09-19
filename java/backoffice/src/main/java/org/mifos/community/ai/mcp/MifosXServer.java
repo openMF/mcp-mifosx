@@ -325,9 +325,21 @@ public class MifosXServer {
         return mifosXClient.newSavingAccountApplication(jsonSavingProductApplication);
     }
 
-    @Tool(description = "Approve a savings account using the account number. " +
+    @Tool(description = "Retrieve a savings account by its external ID. " +
+            "If the user does not specify which data to return, only show: accountNo, clientName, currencyCode, and accountBalance.")
+    JsonNode getSavingsAccountByExternalId(@ToolArg (description = "External Id of the savings account (e.g EXTH01)") String externalId)
+        throws IOException, JsonProcessingException {
+
+        return mifosXClient.getSavingsAccountByExternalId(externalId);
+    }
+
+    @Tool(description = "Approve a savings account. " +
+            "You must provide the account ID. " +
+            "If the account ID is not available but the external ID is provided, " +
+            "first call the Tool getSavingsAccountByExternalId with the external ID to retrieve the account ID. " +
+            "Then use that account ID to approve the savings account. " +
             "You can optionally include a note for approval consideration.")
-    JsonNode approveSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
+    JsonNode approveSavingsAccount(@ToolArg(description = "Account ID of the savings account (e.g. 1)") Integer accountId,
                                    @ToolArg(description = "Note for approval consideration (e.g. Some observation)", required = false) String note)
             throws JsonProcessingException {
         SavingAccountApproval savingAccountApproval = new SavingAccountApproval();
@@ -343,11 +355,15 @@ public class MifosXServer {
         savingAccountApproval.setNote(note);
 
         String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountApproval);
-        return mifosXClient.approveSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
+        return mifosXClient.approveSavingsAccount(accountId,command,jsonSavingsAccountActivation);
     }
 
-    @Tool(description = "Activate a savings account using the account number.")
-    JsonNode activateSavingsAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber)
+    @Tool(description = "Activate a savings account. " +
+            "You must provide the account ID. " +
+            "If the account ID is not available but the external ID is provided, " +
+            "first call the Tool getSavingsAccountByExternalId with the external ID to retrieve the account ID. " +
+            "Then use that account ID to approve the savings account. ")
+    JsonNode activateSavingsAccount(@ToolArg(description = "Account ID of the savings account (e.g. 1)") Integer accountId)
             throws JsonProcessingException {
         SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
         String command = "activate";
@@ -361,7 +377,7 @@ public class MifosXServer {
         savingAccountActivation.setLocale("en");
 
         String jsonSavingsAccountActivation = ow.writeValueAsString(savingAccountActivation);
-        return mifosXClient.activateSavingsAccount(accountNumber,command,jsonSavingsAccountActivation);
+        return mifosXClient.activateSavingsAccount(accountId,command,jsonSavingsAccountActivation);
     }
 
     @Tool(description = "Create a savings transaction (deposit or withdrawal) for a specific client. " +
