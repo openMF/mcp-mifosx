@@ -99,6 +99,11 @@ public interface MifosXClient {
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/savingsproducts")
+    JsonNode getSavingsProducts();
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
     @Path("/fineract-provider/api/v1/savingsaccounts/template")
     JsonNode getTemplateSavingsAccount(@QueryParam("clientId") Integer clientId,
                                        @QueryParam("productId") Integer productId);
