@@ -126,7 +126,11 @@ public class MifosXServer {
         return mifosXClient.createClient(jsonClient);
     }
 
-    @Tool(description = "Activate a client using his account number. " +
+    @Tool(description = "Activate a client. " +
+            "You must provide the client ID. " +
+            "If the client ID is not available but the client account is provided, " +
+            "first call the Tool getClientByAccount with the client account to retrieve the client ID. " +
+            "Then use that client ID to active the client. " +
             "Optionally provide an activation date. If omitted, today's date will be used.")
     JsonNode activateClient(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
                             @ToolArg(description = "Activation Date (e.g. 22 April 2025)", required = false) String activationDate)
@@ -151,7 +155,12 @@ public class MifosXServer {
         return mifosXClient.activateClient(clientId, "activate",jsonActiveClient);
     }
 
-    @Tool(description = "Add an address to a client by his account number. Required fields: address type, address, neighborhood, number, " +
+    @Tool(description = "Add an address to a client. " +
+            "You must provide the client ID where the address will be added. " +
+            "If the client ID is not available but the client account is provided, " +
+            "first call the Tool getClientByAccount with the client account to retrieve the client ID. " +
+            "Then use that client ID to add the family member. " +
+            "Required fields: address type, address, neighborhood, number, " +
             "city, country, postal code, state province")
     JsonNode addAddress(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
                         @ToolArg(description = "Address Type (e.g Home)") String addressType,
@@ -187,9 +196,14 @@ public class MifosXServer {
         return mifosXClient.addAddress(clientId,address.getAddressType(),jsonAddress);
     }
 
-    @Tool(description = "Add a personal reference to a client. Required fields: firstName, lastName, age, relationship, genderId, dateOfBirth," +
-            " middleName, qualification, isDependent, professionId, maritalStatusId, dateFormat, locale")
-    JsonNode addFamilyMember(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
+    @Tool(description = "Add a family member (personal reference) to a client. " +
+            "You must provide the client ID where the family member will be added. " +
+            "If the client ID is not available but the client account is provided, " +
+            "first call the Tool getClientByAccount with the client account to retrieve the client ID. " +
+            "Then use that client ID to add the family member. " +
+            "Required fields: first name, last name, age, relationship, gender, date of birth, " +
+            "optional fields: middle name, qualification, dependent status, profession, marital status, date format, locale.")
+    JsonNode addFamilyMember(@ToolArg(description = "Client Id as an integer number (e.g. 1)") Integer clientId,
             @ToolArg(description = "First Name (e.g. Jhon)") String firstName,
             @ToolArg(description = "Middle Name (e.g. Cena), replace with \"\" if not provided", required = false) String middleName,
             @ToolArg(description = "Last Name (e.g. Doe)") String lastName,
@@ -280,11 +294,21 @@ public class MifosXServer {
         return mifosXClient.createSavingsProduct(jsonClient);
     }
 
+    @Tool(description = "List out savings products")
+    JsonNode getSavingsProducts()
+            throws JsonProcessingException{
+        return mifosXClient.getSavingsProducts();
+    }
 
-    @Tool(description = "Create an application for a new saving account using a product ID and a client's account number." +
-            "You can optionally include an external ID)")
-    JsonNode newSavingsAccountApplication(@ToolArg(description = "Client Id (e.g. 1)") Integer clientId,
-                                          @ToolArg(description = "Saving product ID (e.g. 1)") Integer productId,
+    @Tool(description = "Create a new savings account application. " +
+            "You must provide the savings product ID and the client ID. " +
+            "If the product ID is not available but the product name or short name is provided, " +
+            "first call the Tool getSavingsProducts with the name or short name, and use the ID of the product that matches. " +
+            "If the client ID is not available but the client account is provided, " +
+            "first call the Tool getClientByAccount with the client account to retrieve the client ID. " +
+            "You can also provide an external ID as an optional field.")
+    JsonNode newSavingsAccountApplication(@ToolArg(description = "Client Id as an integer number (e.g. 1)") Integer clientId,
+                                          @ToolArg(description = "Saving product ID as an integer number (e.g. 1)") Integer productId,
                                           @ToolArg(description = "External Id (e.g CR03)", required = false) String externalId)
             throws IOException, JsonProcessingException {
         SavingProductApplication savingProductApplication = new SavingProductApplication();
@@ -339,7 +363,7 @@ public class MifosXServer {
             "first call the Tool getSavingsAccountByExternalId with the external ID to retrieve the account ID. " +
             "Then use that account ID to approve the savings account. " +
             "You can optionally include a note for approval consideration.")
-    JsonNode approveSavingsAccount(@ToolArg(description = "Account ID of the savings account (e.g. 1)") Integer accountId,
+    JsonNode approveSavingsAccount(@ToolArg(description = "Source the account ID of the savings account as an integer number (e.g. 1)") Integer accountId,
                                    @ToolArg(description = "Note for approval consideration (e.g. Some observation)", required = false) String note)
             throws JsonProcessingException {
         SavingAccountApproval savingAccountApproval = new SavingAccountApproval();
@@ -363,7 +387,7 @@ public class MifosXServer {
             "If the account ID is not available but the external ID is provided, " +
             "first call the Tool getSavingsAccountByExternalId with the external ID to retrieve the account ID. " +
             "Then use that account ID to approve the savings account. ")
-    JsonNode activateSavingsAccount(@ToolArg(description = "Account ID of the savings account (e.g. 1)") Integer accountId)
+    JsonNode activateSavingsAccount(@ToolArg(description = "Source the account ID of the savings account as an integer number  (e.g. 1)") Integer accountId)
             throws JsonProcessingException {
         SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
         String command = "activate";
@@ -380,13 +404,14 @@ public class MifosXServer {
         return mifosXClient.activateSavingsAccount(accountId,command,jsonSavingsAccountActivation);
     }
 
-    @Tool(description = "Create a savings transaction (deposit or withdrawal) for a specific client. " +
-            "Provide: account number, transaction, payment type, " +
+    @Tool(description = "Create a savings transaction (deposit or withdrawal) for a specific account. " +
+            "Provide: account ID, transaction (deposit or withdrawal), payment type, " +
             "transaction amount, and optionally a note and transaction date. " +
             "If no date is provided, the current date will be used. " +
-            "Use this to register client savings transactions.")
+            "If the account ID is not available but the external ID is provided, " +
+            "first call the Tool getSavingsAccountByExternalId with the external ID to retrieve the account ID. " )
     JsonNode newSavingsTransaction(
-            @ToolArg(description = "Account Number for whom the transaction is being made (e.g. 1).") Integer accountNumber,
+            @ToolArg(description = "Account ID for whom the transaction is being made as an integer number (e.g. 1).") Integer accountId,
             @ToolArg(description = "Type of transaction: either DEPOSIT or WITHDRAWAL. (e.g. deposit)") String transaction,
             @ToolArg(description = "Optional note or description for the transaction (e.g. NOTE).", required = false) String note,
             @ToolArg(description = "Payment method used (e.g. Money Transfer).") String paymentType,
@@ -394,7 +419,7 @@ public class MifosXServer {
             @ToolArg(description = "Optional transaction date in 'dd MMMM yyyy' format (e.g. 09 May 2025). " +
                     "If not provided, current date is used.", required = false) String transactionDate)
             throws JsonProcessingException{
-        JsonNode jsonTemplate = mifosXClient.getSavingsTransactionTemplate(accountNumber);
+        JsonNode jsonTemplate = mifosXClient.getSavingsTransactionTemplate(accountId);
         ObjectMapper ow = new ObjectMapper();
         SavingsTransactionTemplate template = ow.treeToValue(jsonTemplate, SavingsTransactionTemplate.class);
 
@@ -424,7 +449,7 @@ public class MifosXServer {
         String jsonSavingsTransaction = ow.writeValueAsString(savingsTransaction);
         jsonSavingsTransaction = jsonSavingsTransaction.replace(":null", ":\"\"");
 
-        return mifosXClient.newSavingsTransaction(accountNumber, transaction.toLowerCase(), jsonSavingsTransaction);
+        return mifosXClient.newSavingsTransaction(accountId, transaction.toLowerCase(), jsonSavingsTransaction);
     }
 
     @Tool(description = "Execute fund transfers from a savings account to another savings account or to a loan account. " +
