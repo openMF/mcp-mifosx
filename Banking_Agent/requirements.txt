@@ -1,0 +1,15 @@
+# HTTP client for Fineract API calls
+requests>=2.31.0
+
+# Load environment variables from .env
+python-dotenv>=1.0.0
+
+# MCP framework for exposing tools to LLM agents
+fastmcp>=0.1.0
+
+# Web framework and server
+fastapi>=0.100.0
+uvicorn>=0.23.0
+
+# Data validation
+pydantic>=2.0.0
