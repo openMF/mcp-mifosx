@@ -1,15 +1,18 @@
 import datetime
+from langchain_core.tools import tool
 from tools.mcp_adapter import fineract_client
 
 # ==========================================
 # 🔍 1. SAVINGS READ & SEARCH OPERATIONS
 # ==========================================
 
+@tool
 def get_savings_account(account_id: int):
     """Answers: 'What is the balance of savings account #123?'"""
     print(f"📡 [Tool] Fetching details for Savings Account #{account_id}...")
     return fineract_client.execute_get(f"savingsaccounts/{account_id}")
 
+@tool
 def get_savings_transactions(account_id: int):
     """Answers: 'Show me the transaction history for savings account #123'"""
     print(f"📡 [Tool] Fetching transaction history for Savings Account #{account_id}...")
@@ -23,6 +26,7 @@ def get_savings_transactions(account_id: int):
 # ✍️ 2. SAVINGS LIFECYCLE OPERATIONS (WRITE)
 # ==========================================
 
+@tool
 def create_savings_account(client_id: int, product_id: int = 1):
     """Answers: 'Open a new savings account for this client'"""
     print(f"📡 [Tool] Opening Savings Account for Client #{client_id}...")
@@ -37,6 +41,7 @@ def create_savings_account(client_id: int, product_id: int = 1):
     }
     return fineract_client.execute_post("savingsaccounts", payload)
 
+@tool
 def approve_and_activate_savings(account_id: int):
     """Answers: 'Approve and activate this pending savings account'"""
     print(f"📡 [Tool] Approving & Activating Savings Account #{account_id}...")
@@ -52,6 +57,7 @@ def approve_and_activate_savings(account_id: int):
     activate_payload = {**base_payload, "activatedOnDate": today}
     return fineract_client.execute_post(f"savingsaccounts/{account_id}?command=activate", activate_payload)
 
+@tool
 def close_savings_account(account_id: int):
     """Answers: 'Close this savings account'"""
     print(f"📡 [Tool] Closing Savings Account #{account_id}...")
@@ -69,6 +75,7 @@ def close_savings_account(account_id: int):
 # 💸 3. SAVINGS TRANSACTION OPERATIONS
 # ==========================================
 
+@tool
 def deposit_savings(account_id: int, amount: float):
     """Answers: 'Deposit $500 into this savings account'"""
     print(f"📡 [Tool] Depositing {amount} into Savings Account #{account_id}...")
@@ -83,6 +90,7 @@ def deposit_savings(account_id: int, amount: float):
     }
     return fineract_client.execute_post(f"savingsaccounts/{account_id}/transactions?command=deposit", payload)
 
+@tool
 def withdraw_savings(account_id: int, amount: float):
     """Answers: 'Withdraw $100 from this savings account'"""
     print(f"📡 [Tool] Withdrawing {amount} from Savings Account #{account_id}...")
@@ -97,6 +105,7 @@ def withdraw_savings(account_id: int, amount: float):
     }
     return fineract_client.execute_post(f"savingsaccounts/{account_id}/transactions?command=withdrawal", payload)
 
+@tool
 def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1):
     """Answers: 'Deduct a $15 account maintenance fee from this savings account'"""
     print(f"📡 [Tool] Applying charge of {amount} to Savings Account #{account_id}...")
@@ -112,6 +121,7 @@ def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1):
     }
     return fineract_client.execute_post(f"savingsaccounts/{account_id}/charges", payload)
 
+@tool
 def calculate_and_post_interest(account_id: int):
     """Answers: 'Calculate and post the accrued interest for this savings account'"""
     print(f"📡 [Tool] Posting interest for Savings Account #{account_id}...")

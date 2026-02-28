@@ -61,7 +61,9 @@ class FineractAdapter:
     def execute_post(self, endpoint: str, payload: dict):
         """Executes a POST request (for creating records)."""
         url = f"{self.base_url}/{endpoint}"
+        import json
         logger.info(f"Executing POST: {url}")
+        logger.info(f"Payload: {json.dumps(payload)}")
         try:
             response = requests.post(
                 url, headers=self._get_headers(), auth=(self.username, self.password), 

@@ -13,3 +13,8 @@ uvicorn>=0.23.0
 
 # Data validation
 pydantic>=2.0.0
+
+# LLM Agent framework
+langgraph>=1.0.0
+langchain-core>=0.1.0
+langchain-ollama>=1.0.0

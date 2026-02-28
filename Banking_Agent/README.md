@@ -1,12 +1,15 @@
 # 🏦 Banking Agent — Mifos Headless MCP Server
 
+![Integration Status: Fully Verified](https://img.shields.io/badge/Integration_Status-Fully_Verified-success)
+![Go CLI: Operational](https://img.shields.io/badge/Go_CLI-Operational-blue)
+
 A Python FastAPI server and Go CLI that expose Apache Fineract's banking operations (clients, loans, savings) as clean REST endpoints — designed for AI agents, Go CLIs, and any HTTP client to consume.
 
 ---
 
 ## 📁 Project Structure
 
-```
+```text
 Banking_Agent/
 ├── core/
 │   └── api_server.py          # FastAPI app — 27 REST endpoints
@@ -24,7 +27,7 @@ Banking_Agent/
 ├── docker-compose.yml         # Fineract + MariaDB containers
 ├── .env.example               # Environment variable template
 ├── requirements.txt           # Python dependencies
-└── CLI_WALKTHROUGH.md         # Proof of CLI working
+└── MCP_WALKTHROUGH.md         # Proof of Integration & CLI flow
 ```
 
 ---
@@ -74,6 +77,36 @@ python -m uvicorn core.api_server:app --host 0.0.0.0 --port 8000
 ```
 
 Interactive API docs: **http://localhost:8000/docs**
+
+---
+
+### Step 2: Start the Central API Server
+Run the FastAPI server to expose Fineract to both the CLI and external platforms.
+```bash
+PYTHONPATH=. python core/api_server.py
+```
+
+### Step 3: Connect AI Agents (New Dual Architecture)
+Mifos AI now features a **Dual-Head Architecture**. You can connect to it in two ways:
+
+#### Option A: Natural Language Go CLI (Built-in)
+You can directly ask the built-in LangGraph agent to perform tasks via the terminal:
+```bash
+cd cli
+go build -o mifos
+./mifos ask "Search for clients named John Doe"
+```
+
+#### Option B: Official MCP Server (Cursor, Claude Desktop)
+We natively support the **Model Context Protocol (MCP)**. You can attach this banking agent to any external AI IDE or chat interface.
+```bash
+# Start the FastMCP server on STDIO
+python mcp_server.py
+```
+> **To Test Locally using MCP Inspector:**
+> ```bash
+> npx @modelcontextprotocol/inspector python mcp_server.py
+> ```
 
 ---
 

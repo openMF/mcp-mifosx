@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"mifos-cli/internal/api"
+	"net/url"
 
 	"github.com/spf13/cobra"
 )
@@ -26,7 +27,7 @@ var clientSearchCmd = &cobra.Command{
 			fmt.Println("❌  --name is required")
 			return
 		}
-		api.Get(fmt.Sprintf("/api/clients/search?name=%s", name))
+		api.Get(fmt.Sprintf("/api/clients/search?name=%s", url.QueryEscape(name)))
 	},
 }
 
