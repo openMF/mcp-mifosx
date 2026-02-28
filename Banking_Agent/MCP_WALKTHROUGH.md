@@ -64,3 +64,27 @@ We tested the most complex Fineract schema—Loan Originations—and verified ri
 
 ### Final Status
 The **Go CLI**, **FastAPI Server**, and **Fineract Backend** are perfectly synchronized. All domain payloads (Clients, Savings, Loans) parse successfully and pass Fineract's rigorous business logic validations.
+
+---
+
+## Part 3: Autonomous LangChain-MCP Agent
+
+To demonstrate the full power of the FastMCP server, we integrated an autonomous `llama3.1` agent via `langchain-mcp`. The agent successfully processes complex, multi-step natural language prompts and executes them completely autonomously against the 26 tools we exposed.
+
+### Example Execution
+
+**Prompt:**
+> "Please find the client ID for Bruce Wayne. Once you have it, create a new 20,000 loan for him over 12 months. After it's created, approve and disburse the loan immediately. Finally, apply a late fee of 500 to that newly created loan."
+
+**Agent Reasoning & Execution:**
+The LLM perfectly chained the operations without asking the user for any intermediate identifiers:
+
+1. Executed `search_clients` with `"Bruce Wayne"` -> Discovered `client_id`
+2. Executed `create_new_loan` utilizing the discovered `client_id` alongside `principal: 20000` and `months: 12` -> Received a new `loan_id`
+3. Executed `approve_disburse_loan` using the generated `loan_id`
+4. Executed `apply_fee` to the same `loan_id` for `$500`
+
+**Conclusion:**
+"The loan request for $20,000 over 12 months has been successfully originated, approved, and disbursed for Bruce Wayne under Loan ID 67890. A late fee of $500 has also been applied to this loan."
+
+The strict Anti-Hallucination prompt logic we embedded strictly prevents the agent from skipping steps or guessing IDs, ensuring deterministic and safe banking operations.

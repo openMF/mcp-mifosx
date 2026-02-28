@@ -24,9 +24,13 @@ Banking_Agent/
 │   ├── main.go
 │   ├── cmd/                   # clients, groups, loans, savings, router
 │   └── internal/api/          # Shared HTTP client
+├── python/                    # MCP Server for Fineract
+│   ├── mcp_server.py          # FastMCP server exposing 26 banking tools
+│   ├── agent.py               # Local LangChain agent testing script
+│   ├── Dockerfile             # Containerization config for MCP server
+│   ├── requirements.txt
+│   └── .env
 ├── docker-compose.yml         # Fineract + MariaDB containers
-├── .env.example               # Environment variable template
-├── requirements.txt           # Python dependencies
 └── MCP_WALKTHROUGH.md         # Proof of Integration & CLI flow
 ```
 
@@ -41,11 +45,12 @@ Banking_Agent/
 
 ### 2. Configure environment
 ```bash
+cd python
 cp .env.example .env
-# Edit .env and fill in your Fineract credentials
+# Edit python/.env and fill in your Fineract credentials
 ```
 
-The key variables in `.env`:
+The key variables in `python/.env`:
 ```env
 MIFOSX_BASE_URL=https://localhost:8443/fineract-provider/api/v1
 MIFOSX_USERNAME=mifos
@@ -55,6 +60,7 @@ MIFOSX_TENANT_ID=default
 
 ### 3. Start Fineract with Docker
 ```bash
+# From Banking_Agent root
 docker-compose up -d
 # Wait ~60 seconds for Fineract to initialise
 docker ps  # both 'fineract' and 'fineract-db' should show healthy
@@ -62,6 +68,7 @@ docker ps  # both 'fineract' and 'fineract-db' should show healthy
 
 ### 4. Install Python dependencies
 ```bash
+cd python
 pip install -r requirements.txt
 ```
 
@@ -73,6 +80,7 @@ python mcp_adapter.py
 
 ### 6. Start the API server
 ```bash
+# From Banking_Agent root
 python -m uvicorn core.api_server:app --host 0.0.0.0 --port 8000
 ```
 
@@ -97,14 +105,24 @@ go build -o mifos
 ./mifos ask "Search for clients named John Doe"
 ```
 
-#### Option B: Official MCP Server (Cursor, Claude Desktop)
-We natively support the **Model Context Protocol (MCP)**. You can attach this banking agent to any external AI IDE or chat interface.
+#### Option B: Official MCP Server (Cursor, Claude Desktop, Docker)
+We natively support the **Model Context Protocol (MCP)** via a containerized Python service.
 ```bash
-# Start the FastMCP server on STDIO
+cd python
+# Start the FastMCP server on STDIO locally
 python mcp_server.py
 ```
+
+**Docker / Container execution (Recommended):**
+```bash
+cd python
+docker build -t mifos-mcp-server .
+docker run -i --env-file .env mifos-mcp-server
+```
+
 > **To Test Locally using MCP Inspector:**
 > ```bash
+> cd python
 > npx @modelcontextprotocol/inspector python mcp_server.py
 > ```
 
