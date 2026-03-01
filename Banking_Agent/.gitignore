@@ -1,0 +1,7 @@
+.env
+venv/
+__pycache__/
+*.pycmifos
+cli/mifos
+docker-compose.yml
+mysql-init/
