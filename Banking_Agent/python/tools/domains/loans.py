@@ -107,13 +107,13 @@ def make_loan_repayment(loan_id: int, amount: float):
     return fineract_client.execute_post(f"loans/{loan_id}/transactions?command=repayment", payload)
 
 @tool
-def apply_late_fee(loan_id: int, fee_amount: float):
+def apply_late_fee(loan_id: int, fee_amount: float, charge_id: int = 2):
     """Answers: 'Apply a late fee to the last missed installment'"""
     print(f"📡 [Tool] Applying late fee of {fee_amount} to Loan #{loan_id}...")
     today = datetime.datetime.now().strftime("%d %B %Y")
 
     payload = {
-        "chargeId": 1,  # Assuming 1 is the default Late Fee ID in Fineract
+        "chargeId": charge_id,
         "amount": fee_amount,
         "dueDate": today,
         "dateFormat": "dd MMMM yyyy",

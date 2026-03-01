@@ -35,7 +35,8 @@ mcp = FastMCP("Mifos-Banking-Agent")
 @mcp.tool()
 def search_clients(name_query: str) -> dict:
     """Find the client ID for a given name"""
-    return search_clients_by_name.func(name_query)
+    clients = search_clients_by_name.func(name_query)
+    return {"clients": clients} if isinstance(clients, list) else clients
 
 @mcp.tool()
 def get_client(client_id: int) -> dict:
@@ -110,8 +111,8 @@ def make_repayment(loan_id: int, amount: float) -> dict:
 
 @mcp.tool()
 def apply_fee(loan_id: int, fee_amount: float) -> dict:
-    """Apply a late fee to a loan"""
-    return apply_late_fee.func(loan_id, fee_amount)
+    """Apply a fee to a loan"""
+    return apply_late_fee.func(loan_id, fee_amount, 2)  # charge_id=2 (Flat Service Fee)
 
 @mcp.tool()
 def waive_loan_interest(loan_id: int, amount: float, note: str = "AI Authorized Waiver") -> dict:

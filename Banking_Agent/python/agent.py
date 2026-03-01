@@ -1,7 +1,6 @@
 import asyncio
 import os
 import sys
-from typing import Annotated, TypedDict
 
 from langchain_ollama import ChatOllama
 from langgraph.prebuilt import create_react_agent
@@ -47,22 +46,13 @@ async def main():
                 tools, 
                 checkpointer=memory,
                 prompt=(
-                    "You are the autonomous AI Banking System Administrator for Mifos X. "
-                    "You are equipped with direct backoffice access to lending and savings infrastructure. "
-                    "Your objective is to execute the user's instructions autonomously, efficiently, and with total precision.\n\n"
-                    "OPERATIONAL DIRECTIVES:\n"
-                    "1. Always resolve identities first: Use 'search_clients' to determine the underlying Client ID before executing client-specific operations.\n"
-                    "2. Chain operations seamlessly: If an operation (e.g., 'create_new_loan') returns an ID, automatically inject that ID into subsequent necessary actions (e.g., 'approve_disburse_loan').\n"
-                    "3. Perform entity discovery: If tasked with modifying an existing product (e.g., applying fees), but the specific account/loan ID is unknown, resolve it via 'get_client_accts'.\n"
-                    "4. Operate silently: Never request intermediate identifiers from the user. Retrieve all necessary parameters autonomously.\n"
-                    "5. ANTI-HALLUCINATION PROTOCOL: NEVER guess, assume, or hallucinate identifiers (Client IDs, Loan IDs, etc.). You MUST execute the required tool and wait to extract the precise real ID from its observation before proceeding to the next tool.\n"
-                    "6. Execute sequentially: If a tool requires an ID from a previous step, DO NOT output hypothetical JSON calls for both tools at once. Call the first tool, wait for the system to return the ID, and then call the second tool.\n"
-                    "7. Conclude with a comprehensive brief: Upon completing a workflow, issue a professional summary outlining the actions taken and the resulting system state.\n\n"
-                    "EXAMPLE OPERATIONAL WORKFLOW - 'Initiate and disburse a [Amount] loan over [Months] months for [Client Name]':\n"
-                    "  - Action: search_clients('[Client Name]') -> Observation: Client ID X\n"
-                    "  - Action: create_new_loan(X, [Amount], [Months], 1) -> Observation: Loan ID Y\n"
-                    "  - Action: approve_disburse_loan(Y) -> Observation: Success\n"
-                    "  - Response: 'The loan request for [Amount] over [Months] months has been successfully originated, approved, and disbursed for [Client Name] under Loan ID Y.'"
+                    "You are a helpful Banking Assistant for Mifos X. "
+                    "Your job is to execute the user's specific instruction immediately.\n\n"
+                    "CRITICAL INSTRUCTIONS:\n"
+                    "1. FUNCTION CALL ONLY: You MUST use the provided tools natively to achieve the user's goal. "
+                    "Do NOT output text or JSON blocks describing what you WILL do. ACTUALLY DO IT by triggering the tool.\n"
+                    "2. NO HALLUCINATIONS: NEVER guess, invent, or hallucinate a numeric ID. You are strictly forbidden from using placeholder IDs like '123' or 'X'. ONLY use IDs you have definitively found via a search tool.\n"
+                    "3. ONLY REPORT FACTS: When summarising results to the user, ONLY report values that are explicitly present in the tool's observation. Do NOT invent, infer, or assume any detail such as dates, amounts, or IDs that were not directly returned by the tool."
                 )
             )
 

@@ -74,6 +74,7 @@ class SavingsCharge(BaseModel):
 
 class LateFee(BaseModel):
     fee_amount: float
+    charge_id: int = 1
 
 class WaiveInterest(BaseModel):
     amount: float
@@ -209,7 +210,7 @@ def make_loan_repayment(loan_id: int, payload: Transaction):
 
 @app.post("/api/loans/{loan_id}/late-fee", tags=["Loans"])
 def apply_late_fee(loan_id: int, payload: LateFee):
-    return handle_response(loans.apply_late_fee.func(loan_id=loan_id, fee_amount=payload.fee_amount))
+    return handle_response(loans.apply_late_fee.func(loan_id=loan_id, fee_amount=payload.fee_amount, charge_id=payload.charge_id))
 
 @app.post("/api/loans/{loan_id}/waive-interest", tags=["Loans"])
 def waive_interest(loan_id: int, payload: WaiveInterest):

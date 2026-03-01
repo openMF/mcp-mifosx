@@ -100,6 +100,62 @@ For Java (Quarkus), create a native executable:
 
 ---
 
+## Python Banking Agent (`Banking_Agent/`)
+
+A locally-hosted AI banking teller powered by **Llama 3.1 via Ollama**, **LangGraph**, and **FastMCP**. The agent connects to your Apache Fineract instance and can autonomously execute banking operations through natural language instructions.
+
+### Architecture
+
+```
+User (Terminal) → LangGraph Agent (Llama 3.1) → FastMCP Server → Apache Fineract
+```
+
+### Setup
+
+**Prerequisites**: Python 3.11+, Ollama with `llama3.1` model, running Fineract instance.
+
+```bash
+cd Banking_Agent/python
+pip install -r requirements.txt
+ollama pull llama3.1
+python agent.py
+```
+
+Configure your Fineract connection in `.env`:
+```env
+FINERACT_BASE_URL=https://localhost:8443/fineract-provider/api/v1
+FINERACT_AUTH_TOKEN=your_base64_token
+FINERACT_TENANT_ID=default
+```
+
+### Available Tools (26)
+
+| Category | Tools |
+|----------|-------|
+| **Clients** | `search_clients`, `get_client`, `get_client_accts`, `create_new_client`, `activate_pending_client`, `update_mobile`, `close_client_profile` |
+| **Groups** | `create_lending_group`, `get_group` |
+| **Loans** | `get_loan`, `get_repayment_sched`, `create_new_loan`, `approve_disburse_loan`, `reject_loan`, `make_repayment`, `apply_fee`, `waive_loan_interest` |
+| **Savings** | `get_savings`, `get_savings_txns`, `create_savings`, `approve_activate_savings`, `close_savings`, `deposit`, `withdraw`, `apply_savings_fee`, `calc_post_interest` |
+
+### Verified Step-by-Step Workflow
+
+The agent operates best with one instruction at a time (tested with Llama 3.1 8B):
+
+```
+Prompt 1: "Find the client ID for Bruce Wayne."
+Prompt 2: "Create a new 20,000 loan for Client ID X over 12 months."
+Prompt 3: "Approve and disburse Loan ID Y immediately."
+Prompt 4: "Apply a late fee of 500 to Loan ID Y."
+```
+
+### Key Implementation Notes
+
+- **Charge Products**: Fineract requires a pre-configured charge before fees can be applied. The agent uses `chargeId=2` (Flat Service Fee, Specified Due Date type) which allows fees on any active loan at any time.
+- **Anti-Hallucination**: The system prompt enforces that the agent only reports values explicitly returned by tool observations.
+- **Tool Schema**: Internal parameters like `charge_id` are hidden from the LLM to prevent it from overriding backend defaults.
+
+---
+
 ## Contact
 
 - Mifos Community: https://mifos.org
