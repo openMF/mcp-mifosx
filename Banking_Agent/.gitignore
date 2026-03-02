@@ -1,0 +1,21 @@
+.env
+venv/
+__pycache__/
+*.pyc
+cli/
+docker-compose.yml
+mysql-init/
+
+# Documentation / walkthroughs (not tracked)
+README.md
+*.md
+CLI_WALKTHROUGH.md
+MCP_WALKTHROUGH.md
+
+# Assets / binary media
+*.webp
+*.png
+*.jpg
+*.jpeg
+*.gif
+assets/
