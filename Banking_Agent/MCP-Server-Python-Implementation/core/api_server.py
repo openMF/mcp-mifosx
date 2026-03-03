@@ -60,6 +60,11 @@ class LoanCreate(BaseModel):
     months: int
     product_id: int = 1
 
+class GroupLoanCreate(BaseModel):
+    principal: float
+    months: int
+    product_id: int = 1
+
 class LoanDisburse(BaseModel):
     amount: Optional[float] = None
 
@@ -194,6 +199,11 @@ def get_loan(loan_id: int):
 def get_repayment_schedule(loan_id: int):
     return handle_response(loans.get_repayment_schedule.func(loan_id=loan_id))
 
+@app.get("/api/loans/{loan_id}/history", tags=["Loans"])
+def get_loan_history(loan_id: int):
+    """Full transaction history for a loan: repayments, disbursements, charges, outstanding balance"""
+    return handle_response(loans.get_loan_history.func(loan_id=loan_id))
+
 @app.post("/api/loans", tags=["Loans"])
 def create_loan(payload: LoanCreate):
     return handle_response(loans.create_loan.func(
@@ -220,6 +230,19 @@ def apply_late_fee(loan_id: int, payload: LateFee):
 @app.post("/api/loans/{loan_id}/waive-interest", tags=["Loans"])
 def waive_interest(loan_id: int, payload: WaiveInterest):
     return handle_response(loans.waive_interest.func(loan_id=loan_id, amount=payload.amount, note=payload.note))
+
+@app.get("/api/clients/{client_id}/overdue-loans", tags=["Loans"])
+def get_overdue_loans(client_id: int):
+    """Get all overdue/in-arrears loans for a specific client"""
+    return handle_response(loans.get_overdue_loans.func(client_id=client_id))
+
+@app.post("/api/groups/{group_id}/loans", tags=["Loans"])
+def create_group_loan(group_id: int, payload: GroupLoanCreate):
+    """Create a new group loan application"""
+    return handle_response(loans.create_group_loan.func(
+        group_id=group_id, principal=payload.principal,
+        months=payload.months, product_id=payload.product_id
+    ))
 
 
 # ==========================================

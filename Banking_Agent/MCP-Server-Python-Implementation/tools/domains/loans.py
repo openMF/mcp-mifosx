@@ -25,6 +25,90 @@ def get_repayment_schedule(loan_id: int):
     if "error" in response: return response
     return response.get("repaymentSchedule", {})
 
+@tool
+def get_loan_history(loan_id: int):
+    """Answers: 'Show me the full transaction history for Loan #12345', 'What was the last repayment?', 'How much has been paid so far on this loan?', 'Create a loan with the same terms as the previous cycle'"""
+    print(f"📡 [Tool] Fetching full transaction history for Loan #{loan_id}...")
+    response = fineract_client.execute_get(
+        f"loans/{loan_id}?associations=transactions,repaymentSchedule,charges"
+    )
+    if "error" in response:
+        return response
+
+    # ── Extract core loan metadata ──────────────────────────────────────────
+    summary   = response.get("summary", {})
+    timeline  = response.get("timeline", {})
+    status    = response.get("status", {}).get("value", "Unknown")
+
+    # ── Extract and clean each transaction ─────────────────────────────────
+    raw_txns = response.get("transactions", [])
+    transactions = []
+    for t in raw_txns:
+        if t.get("reversed", False):          # skip reversed/voided entries
+            continue
+        transactions.append({
+            "id":           t.get("id"),
+            "type":         t.get("type", {}).get("value"),          # e.g. "Repayment", "Disbursement"
+            "date":         "-".join(str(d) for d in t.get("date", [])),
+            "amount":       t.get("amount"),
+            "principalPortion":  t.get("principalPortion"),
+            "interestPortion":   t.get("interestPortion"),
+            "feeChargesPortion": t.get("feeChargesPortion"),
+            "outstandingLoanBalance": t.get("outstandingLoanBalance"),
+        })
+
+    # ── Extract applied charges ─────────────────────────────────────────────
+    charges = [
+        {
+            "chargeId":   c.get("chargeId"),
+            "name":       c.get("name"),
+            "amount":     c.get("amount"),
+            "amountPaid": c.get("amountPaid"),
+            "dueDate":    "-".join(str(d) for d in c.get("dueDate", [])),
+            "paid":       c.get("paid"),
+            "waived":     c.get("waived"),
+        }
+        for c in response.get("charges", [])
+    ]
+
+    return {
+        "loanId":             loan_id,
+        "accountNo":          response.get("accountNo"),
+        "status":             status,
+        "principal":          response.get("principal"),
+        "interestRate":       response.get("interestRatePerPeriod"),
+        "termMonths":         response.get("termFrequency"),
+        "product":            response.get("loanProductName"),
+        "disbursedOn":        "-".join(str(d) for d in timeline.get("actualDisbursementDate", [])),
+        "totalRepaid":        summary.get("totalRepaymentTransaction"),
+        "totalOutstanding":   summary.get("totalOutstanding"),
+        "totalOverdue":       summary.get("totalOverdue", 0),
+        "transactions":       transactions,
+        "charges":            charges,
+        "transactionCount":   len(transactions),
+    }
+
+@tool
+def get_overdue_loans(client_id: int):
+    """Answers: 'Show me all overdue loans for this client' or 'Which loans are in arrears?'"""
+    print(f"📡 [Tool] Fetching overdue loans for Client #{client_id}...")
+    response = fineract_client.execute_get(f"loans?clientId={client_id}&loanStatus=300&inArrears=true&associations=repaymentSchedule")
+    if "error" in response:
+        return response
+    loans = response.get("pageItems", response) if isinstance(response, dict) else response
+    overdue = []
+    for loan in (loans if isinstance(loans, list) else []):
+        summary = loan.get("summary", {})
+        if summary.get("totalOverdue", 0) > 0 or loan.get("inArrears", False):
+            overdue.append({
+                "loanId": loan.get("id"),
+                "accountNo": loan.get("accountNo"),
+                "principal": summary.get("principalOutstanding"),
+                "totalOverdue": summary.get("totalOverdue"),
+                "status": loan.get("status", {}).get("value"),
+            })
+    return {"overdueLoans": overdue, "count": len(overdue)}
+
 
 # ==========================================
 # ✍️ 2. LOAN LIFECYCLE OPERATIONS (WRITE)
@@ -55,6 +139,34 @@ def create_loan(client_id: int, principal: float, months: int, product_id: int =
         "locale": "en",
         "dateFormat": "dd MMMM yyyy",
         "loanType": "individual"
+    }
+    return fineract_client.execute_post("loans", payload)
+
+@tool
+def create_group_loan(group_id: int, principal: float, months: int, product_id: int = 1):
+    """Answers: 'Create a group loan for Group #5 for $10,000 over 6 months'"""
+    print(f"📡 [Tool] Creating {principal} group loan for Group #{group_id}...")
+    today = datetime.datetime.now().strftime("%d %B %Y")
+
+    payload = {
+        "groupId": group_id,
+        "productId": product_id,
+        "principal": str(principal),
+        "loanTermFrequency": months,
+        "loanTermFrequencyType": 2,
+        "numberOfRepayments": months,
+        "repaymentEvery": 1,
+        "repaymentFrequencyType": 2,
+        "interestRatePerPeriod": 5.0,
+        "amortizationType": 1,
+        "interestType": 0,
+        "interestCalculationPeriodType": 1,
+        "transactionProcessingStrategyCode": "mifos-standard-strategy",
+        "expectedDisbursementDate": today,
+        "submittedOnDate": today,
+        "locale": "en",
+        "dateFormat": "dd MMMM yyyy",
+        "loanType": "group"
     }
     return fineract_client.execute_post("loans", payload)
 

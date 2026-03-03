@@ -17,7 +17,8 @@ from tools.domains.clients import (
     close_client, create_group, get_group_details
 )
 from tools.domains.loans import (
-    get_loan_details, get_repayment_schedule, create_loan, 
+    get_loan_details, get_repayment_schedule, get_loan_history, get_overdue_loans,
+    create_loan, create_group_loan,
     approve_and_disburse_loan, reject_loan_application, 
     make_loan_repayment, apply_late_fee, waive_interest
 )
@@ -38,137 +39,202 @@ mcp = FastMCP("Mifos-Banking-Agent")
 
 # -> CLIENTS & GROUPS
 @mcp.tool()
-def search_clients(name_query: str) -> dict:
-    """Find the client ID for a given name"""
-    clients = search_clients_by_name.func(name_query)
-    return {"clients": clients} if isinstance(clients, list) else clients
+def search_clients(nameQuery: str) -> dict:
+    """Find the client ID for a given name. Returns clientId — use this for all subsequent client and loan tool calls."""
+    result = search_clients_by_name.func(nameQuery)
+    clients = result if isinstance(result, list) else result.get("pageItems", [])
+    return {
+        "clients": [
+            {
+                "clientId":    c.get("entityId") or c.get("id"),   # USE THIS in all follow-up calls
+                "displayName": c.get("entityName") or c.get("displayName"),
+                "accountNo":   c.get("entityAccountNo") or c.get("accountNo"),
+                "status":      c.get("entityStatus", {}).get("value") if isinstance(c.get("entityStatus"), dict) else c.get("entityStatus"),
+            }
+            for c in clients
+        ]
+    }
 
 @mcp.tool()
-def get_client(client_id: int) -> dict:
+def get_client(clientId: int) -> dict:
     """Show details for a specific client ID"""
-    return get_client_details.func(client_id)
+    return get_client_details.func(clientId)
 
 @mcp.tool()
-def get_client_accts(client_id: int) -> dict:
-    """Show all loans and savings accounts for a client"""
-    return get_client_accounts.func(client_id)
+def get_client_accts(clientId: int = None, clientIds: list = None, id: int = None) -> dict:
+    """Show all loans and savings accounts for a client. IMPORTANT: use the returned 'loanId' (not 'accountNo') when calling loan tools."""
+    # Accept any variation the LLM might send
+    actual_id = clientId or id or (clientIds[0] if clientIds else None)
+    if not actual_id:
+        return {"error": "No client ID provided"}
+    result = get_client_accounts.func(int(actual_id))
+    if not isinstance(result, dict):
+        return result
+    loans = result.get("loanAccounts", [])
+    savings = result.get("savingsAccounts", [])
+    return {
+        "loanAccounts": [
+            {
+                "loanId":    l.get("id"),
+                "accountNo": l.get("accountNo"),
+                "status":    l.get("status", {}).get("value"),
+                "balance":   l.get("loanBalance"),
+            }
+            for l in loans
+        ],
+        "savingsAccounts": [
+            {
+                "savingsId": s.get("id"),
+                "accountNo": s.get("accountNo"),
+                "status":    s.get("status", {}).get("value"),
+                "balance":   s.get("accountBalance"),
+            }
+            for s in savings
+        ],
+    }
 
 @mcp.tool()
-def create_new_client(firstname: str, lastname: str, mobile_no: str = None, office_id: int = 1, is_active: bool = True) -> dict:
+def create_new_client(firstname: str, lastname: str, mobileNo: str = None, officeId: int = 1, isActive: bool = True) -> dict:
     """Create a new banking client"""
-    return create_client.func(firstname, lastname, mobile_no, office_id, is_active)
+    return create_client.func(firstname, lastname, mobileNo, officeId, isActive)
 
 @mcp.tool()
-def activate_pending_client(client_id: int) -> dict:
+def activate_pending_client(clientId: int) -> dict:
     """Activate a pending client profile"""
-    return activate_client.func(client_id)
+    return activate_client.func(clientId)
 
 @mcp.tool()
-def update_mobile(client_id: int, new_mobile_no: str) -> dict:
+def update_mobile(clientId: int, newMobileNo: str) -> dict:
     """Update a client's phone number"""
-    return update_client_mobile.func(client_id, new_mobile_no)
+    return update_client_mobile.func(clientId, newMobileNo)
 
 @mcp.tool()
-def close_client_profile(client_id: int, closure_reason_id: int = 17) -> dict:
+def close_client_profile(clientId: int, closureReasonId: int = 17) -> dict:
     """Close a client's profile"""
-    return close_client.func(client_id, closure_reason_id)
+    return close_client.func(clientId, closureReasonId)
 
 @mcp.tool()
-def create_lending_group(name: str, office_id: int = 1, client_members: list[int] = None) -> dict:
-    """Create a new lending group"""
-    return create_group.func(name, office_id, client_members)
+def create_lending_group(name: str, officeId: int = None, clientMembers: list = None) -> dict:
+    """Create a new lending group. clientMembers should be a flat list of integer client IDs e.g. [8, 9]"""
+    office = int(officeId) if officeId and str(officeId) not in ("<nil>", "nil", "null", "") else 1
+    # Normalize clientMembers: accept [8, 9] or [{"clientId": 8}, {"clientId": 9}]
+    members = None
+    if clientMembers:
+        members = []
+        for m in clientMembers:
+            if isinstance(m, dict):
+                members.append(int(m.get("clientId") or m.get("id") or 0))
+            else:
+                members.append(int(m))
+        members = [m for m in members if m > 0]  # filter out zeros
+    return create_group.func(name, office, members)
 
 @mcp.tool()
-def get_group(group_id: int) -> dict:
+def get_group(groupId: int) -> dict:
     """Show details and members of a lending group"""
-    return get_group_details.func(group_id)
+    return get_group_details.func(groupId)
 
 # -> LOANS
 @mcp.tool()
-def get_loan(loan_id: int) -> dict:
+def get_loan(loanId: int) -> dict:
     """Get details of a specific loan"""
-    return get_loan_details.func(loan_id)
+    return get_loan_details.func(loanId)
 
 @mcp.tool()
-def get_repayment_sched(loan_id: int) -> dict:
+def get_repayment_sched(loanId: int) -> dict:
     """Get the repayment schedule for a loan"""
-    return get_repayment_schedule.func(loan_id)
+    return get_repayment_schedule.func(loanId)
 
 @mcp.tool()
-def create_new_loan(client_id: int, principal: float, months: int, product_id: int = 1) -> dict:
+def get_loan_hist(loanId: int) -> dict:
+    """Get the full transaction history for a loan including repayments, disbursements, charges, and outstanding balance — useful for context memory and recreating previous loan terms"""
+    return get_loan_history.func(loanId)
+
+@mcp.tool()
+def create_new_loan(clientId: int, principal: float, months: int, productId: int = 1) -> dict:
     """Create a new loan application"""
-    return create_loan.func(client_id, principal, months, product_id)
+    return create_loan.func(clientId, principal, months, productId)
 
 @mcp.tool()
-def approve_disburse_loan(loan_id: int, amount: float = None) -> dict:
+def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
     """Approve and disburse a pending loan"""
-    return approve_and_disburse_loan.func(loan_id, amount)
+    return approve_and_disburse_loan.func(loanId, amount)
 
 @mcp.tool()
-def reject_loan(loan_id: int, note: str = "Rejected via AI Agent due to risk profile") -> dict:
+def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk profile") -> dict:
     """Reject a pending loan application"""
-    return reject_loan_application.func(loan_id, note)
+    return reject_loan_application.func(loanId, note)
 
 @mcp.tool()
-def make_repayment(loan_id: int, amount: float) -> dict:
+def make_repayment(loanId: int, amount: float) -> dict:
     """Make a repayment on an active loan"""
-    return make_loan_repayment.func(loan_id, amount)
+    return make_loan_repayment.func(loanId, amount)
 
 @mcp.tool()
-def apply_fee(loan_id: int, fee_amount: float) -> dict:
+def apply_fee(loanId: int, feeAmount: float) -> dict:
     """Apply a fee to a loan"""
-    return apply_late_fee.func(loan_id, fee_amount, 2)  # charge_id=2 (Flat Service Fee)
+    return apply_late_fee.func(loanId, feeAmount, 2)  # charge_id=2 (Flat Service Fee)
 
 @mcp.tool()
-def waive_loan_interest(loan_id: int, amount: float, note: str = "AI Authorized Waiver") -> dict:
+def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized Waiver") -> dict:
     """Waive interest on a loan"""
-    return waive_interest.func(loan_id, amount, note)
+    return waive_interest.func(loanId, amount, note)
+
+@mcp.tool()
+def get_overdue_loans_for_client(clientId: int) -> dict:
+    """Get all overdue or in-arrears loans for a client"""
+    return get_overdue_loans.func(clientId)
+
+@mcp.tool()
+def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
+    """Create a group loan application for an existing lending group"""
+    return create_group_loan.func(groupId, principal, months, productId)
 
 # -> SAVINGS
 @mcp.tool()
-def get_savings(account_id: int) -> dict:
+def get_savings(accountId: int) -> dict:
     """Get details of a savings account"""
-    return get_savings_account.func(account_id)
+    return get_savings_account.func(accountId)
 
 @mcp.tool()
-def get_savings_txns(account_id: int) -> dict:
+def get_savings_txns(accountId: int) -> dict:
     """Get transactions for a savings account"""
-    return get_savings_transactions.func(account_id)
+    return get_savings_transactions.func(accountId)
 
 @mcp.tool()
-def create_savings(client_id: int, product_id: int = 1) -> dict:
+def create_savings(clientId: int, productId: int = 1) -> dict:
     """Create a new savings account"""
-    return create_savings_account.func(client_id, product_id)
+    return create_savings_account.func(clientId, productId)
 
 @mcp.tool()
-def approve_activate_savings(account_id: int) -> dict:
+def approve_activate_savings(accountId: int) -> dict:
     """Approve and activate a savings account"""
-    return approve_and_activate_savings.func(account_id)
+    return approve_and_activate_savings.func(accountId)
 
 @mcp.tool()
-def close_savings(account_id: int) -> dict:
+def close_savings(accountId: int) -> dict:
     """Close a savings account"""
-    return close_savings_account.func(account_id)
+    return close_savings_account.func(accountId)
 
 @mcp.tool()
-def deposit(account_id: int, amount: float) -> dict:
+def deposit(accountId: int, amount: float) -> dict:
     """Deposit money into a savings account"""
-    return deposit_savings.func(account_id, amount)
+    return deposit_savings.func(accountId, amount)
 
 @mcp.tool()
-def withdraw(account_id: int, amount: float) -> dict:
+def withdraw(accountId: int, amount: float) -> dict:
     """Withdraw money from a savings account"""
-    return withdraw_savings.func(account_id, amount)
+    return withdraw_savings.func(accountId, amount)
 
 @mcp.tool()
-def apply_savings_fee(account_id: int, amount: float, charge_id: int = 1) -> dict:
+def apply_savings_fee(accountId: int, amount: float, chargeId: int = 1) -> dict:
     """Apply a charge/block to a savings account"""
-    return apply_savings_charge.func(account_id, amount, charge_id)
+    return apply_savings_charge.func(accountId, amount, chargeId)
 
 @mcp.tool()
-def calc_post_interest(account_id: int) -> dict:
+def calc_post_interest(accountId: int) -> dict:
     """Calculate and post interest to a savings account"""
-    return calculate_and_post_interest.func(account_id)
+    return calculate_and_post_interest.func(accountId)
 
 
 # 5. START SERVER
