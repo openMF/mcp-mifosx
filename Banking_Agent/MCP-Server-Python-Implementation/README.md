@@ -1,14 +1,29 @@
 # MCP Server - Python Implementation
 
-The **Python MCP Server** connects an AI agent (Llama 3.1 via Ollama) to your **Apache Fineract** banking backend. It wraps the Fineract REST API into 31 tools the AI can call directly using natural language.
+The **Python MCP Server** connects an AI agent (Qwen 2.5 7B via Ollama) to your **Apache Fineract** banking backend. It wraps the Fineract REST API into 29 tools the AI can call directly using natural language.
 
 ---
 
-## How It Works
+## Architecture
 
+This project implements a **Decoupled, API-First Architecture**. It establishes a deterministic, hallucination-free integration tier between any AI Agent and Apache Fineract.
+
+```text
+[Apache Fineract / Mifos X] 
+             ↕️
+[mcp_server.py] (Universal, Stateless MCP Server exposing 29 safe tools)
+             ↕️
+========================= (The MCP Standard Protocol Boundary) =========================
+             ↕️
+[Local AI Agent (agent.py)]
+(Powered by Qwen 2.5 7B via Ollama)
 ```
-You (natural language) → AI Agent → MCP Server → Apache Fineract
-```
+
+### Why this Architecture?
+1. **Universal Reusability:** The MCP Server (`mcp_server.py`) is completely standalone. It does not contain any LLM logic. It can be paired with any local inference engine or agent framework.
+2. **Anti-Hallucination Guardrails:** The server safely slims down verbose Fineract responses and pre-validates all IDs and statuses before executing dangerous mutations.
+3. **Data Privacy & Sovereignty:** By connecting local Open-Source models (like Qwen 2.5 7B) directly to the MCP Server via Ollama, all sensitive banking data, PII, and financial records stay strictly within your local infrastructure. No data is sent to third-party AI providers or external APIs.
+4. **Deterministic execution:** All banking actions are mapped to typed tools, ensuring the AI performs operations reliably without free-form hallucination of API calls.
 
 ---
 
@@ -32,7 +47,9 @@ MIFOSX_PASSWORD=password
 python agent.py
 ```
 
-> Requires [Ollama](https://ollama.com) with `llama3.1`: `ollama pull llama3.1`
+> Requires [Ollama](https://ollama.com) with `qwen2.5:7b`: `ollama pull qwen2.5:7b`
+> 
+> To switch models, set `OLLAMA_MODEL=<model-name>` in your `.env` file (e.g. `llama3.1` or `qwen2.5:7b`).
 
 ---
 
@@ -49,9 +66,11 @@ python agent.py
 
 ---
 
-## Conversational Memory
+## Historical Context Memory
 
-The agent uses **SQLite-backed persistent memory** (`~/.mifos/agent_memory.db`). Each session gets a unique ID so tellers can resume past conversations.
+The agent implements **Persistent Historical Context Memory** backed by SQLite (`~/.mifos/agent_memory.db`). This allows the agent to remember all previous interactions, client context, and multi-step workflows across different sessions. 
+
+Tellers can resume past conversations or start fresh threads instantly:
 
 | Command | Action |
 |---------|--------|
@@ -63,46 +82,18 @@ The agent uses **SQLite-backed persistent memory** (`~/.mifos/agent_memory.db`).
 
 ---
 
-## Verified Workflows
-
-### Individual Loan
-```
-1. "Find Bruce Wayne."
-2. "Get his loan accounts."
-3. "Show me the history for Loan ID 8."
-4. "Apply a late fee of 500 to Loan ID 8."
-```
-
-### Group Loan (A7X)
-```
-1. "Create a lending group called A7X. The members are Matt Shadows (client ID 8) and Syn Gates (client ID 9)."
-2. "Create a group loan for Group ID 2 for $25,000 over 12 months."
-3. "Approve and disburse Loan ID 10."
-4. "Get the details for Group ID 2."
-```
-
-### Overdue Check
-```
-"Show me all overdue loans for client ID 7."
-```
-
 ---
 
-## Docker
+## Development & Docker
 
+### Building the Image
 ```bash
 docker build -t mifos-mcp-server .
+```
+
+### Running with .env
+```bash
 docker run -i --env-file .env mifos-mcp-server
 ```
 
-**Claude Desktop config:**
-```json
-{
-  "mcpServers": {
-    "mifos-banking": {
-      "command": "docker",
-      "args": ["run", "-i", "--rm", "--env-file", "/path/to/.env", "mifos-mcp-server"]
-    }
-  }
-}
-```
+> **Privacy Note:** When running via Docker, the container still communicates with your local Ollama instance or Fineract server, ensuring the internal data loop remains intact.

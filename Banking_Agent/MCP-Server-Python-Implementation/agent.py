@@ -16,9 +16,12 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from langchain_mcp_adapters.tools import load_mcp_tools
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+from dotenv import load_dotenv
+
+load_dotenv(dotenv_path=Path(__file__).parent / ".env")
 
 # ─── 1. Configuration ──────────────────────────────────────────────────────────
-MODEL_NAME      = "llama3.1"
+MODEL_NAME      = os.getenv("OLLAMA_MODEL", "qwen2.5:7b")
 MCP_SERVER_SCRIPT = os.path.join(os.path.dirname(__file__), "mcp_server.py")
 
 # Persistent memory database — survives restarts
@@ -29,9 +32,10 @@ MEMORY_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 llm = ChatOllama(
     model=MODEL_NAME,
     temperature=0,
-    num_ctx=4096,        # Keep context tight — forces focus on current step
-    num_predict=256,     # Short response window — discourages planning ahead
-    repeat_penalty=1.2,  # Penalise repetitive JSON text blocks
+    num_ctx=4096,        # Safe on 8GB RAM regardless of model chosen
+    num_predict=1024,    # Qwen generates efficiently so 1024 should be problem-free
+    repeat_penalty=1.0,  # Qwen 2.5 handles repetition natively — leave at neutral
+    num_gpu=20,          # CRITICAL: Offload 13/33 layers to CPU to fit in 8GB RAM with Docker
 )
 
 # ─── 3. System Prompt ──────────────────────────────────────────────────────────
@@ -52,6 +56,12 @@ CRITICAL RULES — NEVER BREAK THESE:
 4. FACTS ONLY: Only report values that were explicitly returned by a tool. Never infer, assume, or invent dates, amounts, or IDs not present in the tool response.
 
 5. MEMORY: Reuse IDs already established earlier in this conversation. If a client or loan was already looked up, use that ID directly without searching again.
+
+6. ONE TOOL AT A TIME: Call ONE tool, wait for its result, then call the next. NEVER write pseudo-code like search_clients(name)["id"] or chain calls in text. Each tool call must use only literal values, never expressions.
+
+7. COMPLETE LISTS: When a tool returns a list (loans, accounts, transactions), report EVERY item including its outstandingBalance_USD. Never summarise or truncate. If the summary says 8 loans, list all 8 with their balances.
+
+8. ALWAYS REPORT CLIENT ID: When search_clients returns a result, always state the client's full name and clientId at the start of your response. Example: "Found [Client Name] — clientId: [ID]."
 """
 
 

@@ -31,22 +31,45 @@ from tools.domains.savings import (
 # 3. Initialize the FastMCP Server
 mcp = FastMCP("Mifos-Banking-Agent")
 
-# 4. Register all 26 existing LangChain tools as MCP-native tools using decorators
-# -------------------------------------------------------------------------
-# FastMCP reads python type hints and docstrings from these wrappers to 
-# generate the JSON Schema automatically.
-# -------------------------------------------------------------------------
+# ── Shared helpers ────────────────────────────────────────────────────────────
 
-# -> CLIENTS & GROUPS
+def _fmt_date(d) -> str:
+    """Format Fineract dates to '2 March 2026'. Handles list [YYYY,M,D] and string 'YYYY-M-D'."""
+    months = ["","January","February","March","April","May","June",
+              "July","August","September","October","November","December"]
+    if isinstance(d, list) and len(d) >= 3:
+        return f"{d[2]} {months[d[1]]} {d[0]}"
+    if isinstance(d, str) and "-" in d:
+        parts = d.split("-")
+        if len(parts) == 3:
+            try:
+                return f"{int(parts[2])} {months[int(parts[1])]} {parts[0]}"
+            except (ValueError, IndexError):
+                pass
+    return d
+
+def _resolve_client_id(name: str):
+    """Search for a client by name and return their numeric ID, or None."""
+    result = search_clients_by_name.func(name)
+    clients = result if isinstance(result, list) else result.get("pageItems", [])
+    if not clients:
+        return None
+    return clients[0].get("entityId") or clients[0].get("id")
+
+# 4. Register all MCP-native tools
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── CLIENTS & GROUPS ─────────────────────────────────────────────────────────
+
 @mcp.tool()
 def search_clients(nameQuery: str) -> dict:
-    """Find the client ID for a given name. Returns clientId — use this for all subsequent client and loan tool calls."""
+    """Find the client ID for a given name. Returns clientId — use this for all subsequent tool calls."""
     result = search_clients_by_name.func(nameQuery)
     clients = result if isinstance(result, list) else result.get("pageItems", [])
     return {
         "clients": [
             {
-                "clientId":    c.get("entityId") or c.get("id"),   # USE THIS in all follow-up calls
+                "clientId":    c.get("entityId") or c.get("id"),
                 "displayName": c.get("entityName") or c.get("displayName"),
                 "accountNo":   c.get("entityAccountNo") or c.get("accountNo"),
                 "status":      c.get("entityStatus", {}).get("value") if isinstance(c.get("entityStatus"), dict) else c.get("entityStatus"),
@@ -57,37 +80,65 @@ def search_clients(nameQuery: str) -> dict:
 
 @mcp.tool()
 def get_client(clientId: int) -> dict:
-    """Show details for a specific client ID"""
-    return get_client_details.func(clientId)
+    """Show key details for a specific client."""
+    data = get_client_details.func(clientId)
+    if not isinstance(data, dict):
+        return data
+    return {
+        "clientId":       data.get("id"),
+        "displayName":    data.get("displayName"),
+        "firstname":      data.get("firstname"),
+        "lastname":       data.get("lastname"),
+        "accountNo":      data.get("accountNo"),
+        "mobileNo":       data.get("mobileNo"),
+        "status":         data.get("status", {}).get("value"),
+        "activationDate": _fmt_date(data.get("activationDate")),
+        "officeName":     data.get("officeName"),
+    }
 
 @mcp.tool()
-def get_client_accts(clientId: int = None, clientIds: list = None, id: int = None) -> dict:
-    """Show all loans and savings accounts for a client. IMPORTANT: use the returned 'loanId' (not 'accountNo') when calling loan tools."""
-    # Accept any variation the LLM might send
-    actual_id = clientId or id or (clientIds[0] if clientIds else None)
-    if not actual_id:
-        return {"error": "No client ID provided"}
+def get_client_accts(clientId: int = None, clientIds: list = None, id: int = None, nameQuery: str = None, name: str = None) -> dict:
+    """Show all loans and savings accounts for a client. Accepts either a clientId (int) or a client name via nameQuery."""
+    # Resolve by name if no ID was given (Qwen may pass nameQuery directly)
+    if not clientId and not id and not clientIds:
+        search_name = nameQuery or name
+        if search_name:
+            actual_id = _resolve_client_id(search_name)
+            if not actual_id:
+                return {"error": f"No client found for name '{search_name}'. Please verify the name and try again."}
+        else:
+            return {"error": "No client ID or name provided. Pass clientId (int) or nameQuery (str)."}
+    else:
+        actual_id = clientId or id or (clientIds[0] if clientIds else None)
+
     result = get_client_accounts.func(int(actual_id))
-    if not isinstance(result, dict):
-        return result
+    if not isinstance(result, dict) or result.get("httpStatusCode") == 404:
+        return {"error": f"Client ID {actual_id} not found. Call search_clients(name) first."}
+
     loans = result.get("loanAccounts", [])
     savings = result.get("savingsAccounts", [])
+
+    # Catch hallucinated IDs where Fineract returns 200 OK but empty data
+    if not loans and not savings and int(actual_id) > 1000:
+        return {"error": f"Client ID {actual_id} returned no accounts — likely hallucinated. Call search_clients(name) first."}
+
     return {
+        "resolvedClientId": actual_id,
         "loanAccounts": [
             {
-                "loanId":    l.get("id"),
-                "accountNo": l.get("accountNo"),
-                "status":    l.get("status", {}).get("value"),
-                "balance":   l.get("loanBalance"),
+                "loanId":                l.get("id"),
+                "accountNo":             l.get("accountNo"),
+                "status":                l.get("status", {}).get("value"),
+                "outstandingBalance_USD": l.get("loanBalance") if l.get("loanBalance") is not None else 0.00,
             }
             for l in loans
         ],
         "savingsAccounts": [
             {
-                "savingsId": s.get("id"),
-                "accountNo": s.get("accountNo"),
-                "status":    s.get("status", {}).get("value"),
-                "balance":   s.get("accountBalance"),
+                "savingsId":             s.get("id"),
+                "accountNo":             s.get("accountNo"),
+                "status":                s.get("status", {}).get("value"),
+                "outstandingBalance_USD": s.get("accountBalance") if s.get("accountBalance") is not None else 0.00,
             }
             for s in savings
         ],
@@ -117,7 +168,6 @@ def close_client_profile(clientId: int, closureReasonId: int = 17) -> dict:
 def create_lending_group(name: str, officeId: int = None, clientMembers: list = None) -> dict:
     """Create a new lending group. clientMembers should be a flat list of integer client IDs e.g. [8, 9]"""
     office = int(officeId) if officeId and str(officeId) not in ("<nil>", "nil", "null", "") else 1
-    # Normalize clientMembers: accept [8, 9] or [{"clientId": 8}, {"clientId": 9}]
     members = None
     if clientMembers:
         members = []
@@ -126,29 +176,106 @@ def create_lending_group(name: str, officeId: int = None, clientMembers: list = 
                 members.append(int(m.get("clientId") or m.get("id") or 0))
             else:
                 members.append(int(m))
-        members = [m for m in members if m > 0]  # filter out zeros
+        members = [m for m in members if m > 0]
     return create_group.func(name, office, members)
 
 @mcp.tool()
 def get_group(groupId: int) -> dict:
     """Show details and members of a lending group"""
-    return get_group_details.func(groupId)
+    data = get_group_details.func(groupId)
+    if not isinstance(data, dict):
+        return data
+    members = data.get("clientMembers", [])
+    return {
+        "groupId":        data.get("id"),
+        "name":           data.get("name"),
+        "status":         data.get("status", {}).get("value"),
+        "activationDate": _fmt_date(data.get("activationDate")),
+        "officeName":     data.get("officeName"),
+        "clientMembers": [
+            {
+                "clientId":    m.get("id"),
+                "displayName": m.get("displayName"),
+                "firstname":   m.get("firstname"),
+                "lastname":    m.get("lastname"),
+                "accountNo":   m.get("accountNo"),
+                "status":      m.get("status", {}).get("value"),
+            }
+            for m in members
+        ],
+    }
 
-# -> LOANS
+# ── LOANS ─────────────────────────────────────────────────────────────────────
+
 @mcp.tool()
 def get_loan(loanId: int) -> dict:
-    """Get details of a specific loan"""
-    return get_loan_details.func(loanId)
+    """Get key details of a specific loan."""
+    data = get_loan_details.func(loanId)
+    if not isinstance(data, dict):
+        return data
+    tl = data.get("timeline", {})
+    return {
+        "loanId":              data.get("id"),
+        "accountNo":           data.get("accountNo"),
+        "productName":         data.get("loanProductName"),
+        "status":              data.get("status", {}).get("value"),
+        "loanType":            data.get("loanType", {}).get("value"),
+        "principal_USD":       data.get("approvedPrincipal"),
+        "outstandingBalance_USD": data.get("summary", {}).get("totalOutstanding"),
+        "interestRate_pct":    data.get("annualInterestRate"),
+        "submittedDate":       _fmt_date(tl.get("submittedOnDate")),
+        "approvedDate":        _fmt_date(tl.get("approvedOnDate")),
+        "disbursedDate":       _fmt_date(tl.get("actualDisbursementDate")),
+        "expectedMaturityDate": _fmt_date(tl.get("expectedMaturityDate")),
+        "numberOfRepayments":  data.get("numberOfRepayments"),
+        "repaymentFrequency":  f"Every {data.get('repaymentEvery')} {data.get('repaymentFrequencyType', {}).get('value','')}",
+    }
 
 @mcp.tool()
 def get_repayment_sched(loanId: int) -> dict:
-    """Get the repayment schedule for a loan"""
-    return get_repayment_schedule.func(loanId)
+    """Get the repayment schedule for a loan."""
+    data = get_repayment_schedule.func(loanId)
+    if not isinstance(data, dict):
+        return data
+    periods = data.get("periods", [])
+    return {
+        "loanId": loanId,
+        "periods": [
+            {
+                "period":           p.get("period"),
+                "dueDate":          _fmt_date(p.get("dueDate")),
+                "principalDue_USD": p.get("principalDue", 0),
+                "interestDue_USD":  p.get("interestDue", 0),
+                "feesDue_USD":      p.get("feeChargesDue", 0),
+                "totalDue_USD":     p.get("totalDueForPeriod", 0),
+                "totalPaid_USD":    p.get("totalPaidForPeriod", 0),
+                "isComplete":       p.get("complete", False),
+            }
+            for p in periods if p.get("period")  # skip the header period (period=None)
+        ],
+    }
 
 @mcp.tool()
 def get_loan_hist(loanId: int) -> dict:
-    """Get the full transaction history for a loan including repayments, disbursements, charges, and outstanding balance — useful for context memory and recreating previous loan terms"""
-    return get_loan_history.func(loanId)
+    """Get the transaction history for a loan (repayments, disbursements, charges)."""
+    data = get_loan_history.func(loanId)
+    if not isinstance(data, dict):
+        return data
+    txns = data.get("transactions", [])
+    return {
+        "loanId": loanId,
+        "transactions": [
+            {
+                "transactionId": t.get("id"),
+                "type":          t.get("type") if isinstance(t.get("type"), str) else (t.get("type") or {}).get("value"),
+                "date":          _fmt_date(t.get("date")),
+                "amount_USD":    t.get("amount"),
+                "runningBalance_USD": t.get("outstandingLoanBalance"),
+                "note":          t.get("noteText"),
+            }
+            for t in txns
+        ],
+    }
 
 @mcp.tool()
 def create_new_loan(clientId: int, principal: float, months: int, productId: int = 1) -> dict:
@@ -157,27 +284,51 @@ def create_new_loan(clientId: int, principal: float, months: int, productId: int
 
 @mcp.tool()
 def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
-    """Approve and disburse a pending loan"""
+    """Approve and disburse a pending loan. Validates loanId exists before executing."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+    status = check.get("status", {}).get("value", "")
+    if "pending" not in status.lower() and "submitted" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}' and cannot be approved. Only 'Submitted and pending approval' loans can be approved."}
     return approve_and_disburse_loan.func(loanId, amount)
 
 @mcp.tool()
 def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk profile") -> dict:
-    """Reject a pending loan application"""
+    """Reject a pending loan application. Validates loanId exists before executing."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+    status = check.get("status", {}).get("value", "")
+    if "pending" not in status.lower() and "submitted" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}' and cannot be rejected. Only pending loans can be rejected."}
     return reject_loan_application.func(loanId, note)
 
 @mcp.tool()
 def make_repayment(loanId: int, amount: float) -> dict:
-    """Make a repayment on an active loan"""
+    """Make a repayment on an active loan. Validates loanId and status before executing."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+    status = check.get("status", {}).get("value", "")
+    if "active" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}'. Only Active loans can receive repayments."}
     return make_loan_repayment.func(loanId, amount)
 
 @mcp.tool()
 def apply_fee(loanId: int, feeAmount: float) -> dict:
-    """Apply a fee to a loan"""
-    return apply_late_fee.func(loanId, feeAmount, 2)  # charge_id=2 (Flat Service Fee)
+    """Apply a fee to a loan. Validates loanId exists before executing."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+    return apply_late_fee.func(loanId, feeAmount, 2)
 
 @mcp.tool()
 def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized Waiver") -> dict:
-    """Waive interest on a loan"""
+    """Waive interest on a loan. Validates loanId exists before executing."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     return waive_interest.func(loanId, amount, note)
 
 @mcp.tool()
@@ -190,16 +341,48 @@ def create_group_loan_app(groupId: int, principal: float, months: int, productId
     """Create a group loan application for an existing lending group"""
     return create_group_loan.func(groupId, principal, months, productId)
 
-# -> SAVINGS
+# ── SAVINGS ───────────────────────────────────────────────────────────────────
+
 @mcp.tool()
 def get_savings(accountId: int) -> dict:
-    """Get details of a savings account"""
-    return get_savings_account.func(accountId)
+    """Get key details of a savings account."""
+    data = get_savings_account.func(accountId)
+    if not isinstance(data, dict):
+        return data
+    tl = data.get("timeline", {})
+    summary = data.get("summary", {})
+    return {
+        "savingsId":             data.get("id"),
+        "accountNo":             data.get("accountNo"),
+        "clientName":            data.get("clientName"),
+        "productName":           data.get("savingsProductName"),
+        "status":                data.get("status", {}).get("value"),
+        "balance_USD":           summary.get("accountBalance"),
+        "availableBalance_USD":  summary.get("availableBalance"),
+        "activationDate":        _fmt_date(tl.get("activatedOnDate")),
+        "nominalAnnualInterestRate": data.get("nominalAnnualInterestRate"),
+    }
 
 @mcp.tool()
 def get_savings_txns(accountId: int) -> dict:
-    """Get transactions for a savings account"""
-    return get_savings_transactions.func(accountId)
+    """Get transactions for a savings account."""
+    data = get_savings_transactions.func(accountId)
+    if not isinstance(data, dict):
+        return data
+    txns = data.get("transactions", [])
+    return {
+        "savingsId": accountId,
+        "transactions": [
+            {
+                "transactionId":   t.get("id"),
+                "type":            t.get("transactionType", {}).get("value"),
+                "date":            _fmt_date(t.get("date")),
+                "amount_USD":      t.get("amount"),
+                "runningBalance_USD": t.get("runningBalance"),
+            }
+            for t in txns
+        ],
+    }
 
 @mcp.tool()
 def create_savings(clientId: int, productId: int = 1) -> dict:
@@ -218,12 +401,27 @@ def close_savings(accountId: int) -> dict:
 
 @mcp.tool()
 def deposit(accountId: int, amount: float) -> dict:
-    """Deposit money into a savings account"""
+    """Deposit money into a savings account. Validates accountId exists before executing."""
+    check = get_savings_account.func(accountId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds."}
+    status = check.get("status", {}).get("value", "")
+    if "active" not in status.lower():
+        return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can accept deposits."}
     return deposit_savings.func(accountId, amount)
 
 @mcp.tool()
 def withdraw(accountId: int, amount: float) -> dict:
-    """Withdraw money from a savings account"""
+    """Withdraw money from a savings account. Validates accountId and balance before executing."""
+    check = get_savings_account.func(accountId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds."}
+    status = check.get("status", {}).get("value", "")
+    if "active" not in status.lower():
+        return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can be withdrawn from."}
+    balance = (check.get("summary") or {}).get("availableBalance", 0) or 0
+    if amount > balance:
+        return {"error": f"Insufficient funds: requested ${amount:.2f} but available balance is ${balance:.2f} in account {accountId}."}
     return withdraw_savings.func(accountId, amount)
 
 @mcp.tool()

@@ -64,7 +64,13 @@ class DomainRegistry:
             return self.domain_map["clients"]
 
         # Deduplicate the list (in case a word triggered multiple domains) and return
-        return list(set(active_tools))
+        seen = set()
+        unique_tools = []
+        for tool in active_tools:
+            if tool.name not in seen:
+                unique_tools.append(tool)
+                seen.add(tool.name)
+        return unique_tools
 
 # Global router instance
 router = DomainRegistry()
