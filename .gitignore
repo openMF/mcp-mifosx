@@ -38,6 +38,14 @@ nb-configuration.xml
 
 # Local environment
 .env
+Python/MCP-Server-Python-Implementation/agent.py
+Python/MCP-Server-Python-Implementation/__pycache__/
+Python/MCP-Server-Python-Implementation/tools/domains/__pycache__/
+
+# Documentation
+*.md
+!README.md
+**/README.md
 
 # Plugin directory
 /.quarkus/cli/plugins/
