@@ -1,0 +1,31 @@
+.env
+venv/
+__pycache__/
+*.pyc
+cli/
+mysql-init/
+
+# MCP Client / Agent code — belongs in a separate client repository
+MCP-Server-Python-Implementation/
+agent.py
+test_*.py
+
+# Docker Compose — use the official Mifos X platform repo instead
+docker-compose.yml
+
+# Documentation / walkthroughs (not tracked in this repo)
+CLI_WALKTHROUGH.md
+MCP_WALKTHROUGH.md
+*.md
+!README.md
+
+# Assets / binary media
+*.webp
+*.png
+*.jpg
+*.jpeg
+*.gif
+assets/
+
+# Build artifacts
+mifos
