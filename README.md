@@ -1,113 +1,169 @@
 # Mifos MCP - Model Context Protocol (MCP) 
 
-This project provides Model Context Protocol (MCP) for the Mifos X Ecosystem, enabling AI agents to access financial data and operations. Implementations is available in **Java (Quarkus)**.
+This project provides Model Context Protocol (MCP) for the Mifos X Ecosystem, enabling AI agents to access financial data and operations. 
+
+Implementations are available in:
+- **Java (Quarkus)** — 38 typed tools (across Backoffice and Recommendations).
+- **Python (FastMCP)** — 49 typed tools (modular domain-driven design).
 
 ---
 
-## MCP Developer Tools
+## 🏗️ Architecture Overview
 
-Use the **MCP Inspector** to test and debug your server:
+The Mifos MCP Server acts as a standalone, stateless integration tier that bridges any AI assistant or agent framework to the **Apache Fineract** banking backend.
 
-```bash
-npx @modelcontextprotocol/inspector
+```text
+┌──────────────────────────────────────────────┐
+│            Apache Fineract / Mifos X          │
+└───────────────────────┬──────────────────────┘
+                        │ REST API
+┌───────────────────────▼──────────────────────┐
+│        mcp-mifosx  (Primary Repo)            │
+│  ┌────────────────────┴───────────────────┐  │
+│  │   /java (Quarkus)   │   /python (FastMCP) │  │
+│  │    - Backoffice     │    - 49 Tools       │  │
+│  │    - Recommendations│    - Modular Design │  │
+│  └────────────────────┬───────────────────┘  │
+└───────────────────────┼──────────────────────┘
+                        │ MCP Protocol (stdio / SSE)
+          ┌─────────────┼──────────────┐
+          ▼             ▼              ▼
+    Mifos X WebApp   Claude Code     n8n / Custom
+    AI Assistant     (claude.ai)     Workflow Agent
+    (your client)   (external)       (your client)
 ```
 
-This starts a local web UI to connect to your MCP server via STDIO or SSE.
+This repository is **framework-agnostic**. The client (LLM brain, UI, memory) lives in a separate repository. Any MCP-compatible system can plug in.
 
 ---
 
-## Getting Started
+## 🔄 Implementation Synchronization
+
+While this repository hosts two different programming languages, they are kept in **functional parity** where possible to ensure a consistent experience.
+
+### How they "Sync":
+1. **Tool Specification**: Both implementations aim to expose the same core banking tools. 
+   - **Python** currently leads with **49 tools**.
+   - **Java** provides **38 tools** (21 for Backoffice operations and 17 for User Recommendations).
+2. **API Alignment**: Both implementations are built against the same **Apache Fineract REST API**. They share identical business logic for field validation and error handling.
+3. **Stateless Parity**: Both implementations follow a strictly **stateless** design. Neither implementation stores user data or AI memory.
+4. **Testing Protocol**: We use a shared set of "Smoke Tests" to verify that both implementations return identical JSON structures to the LLM.
+
+---
+
+## 📂 Project Structure
+
+This repository is structured to support multiple implementations and client integrations.
+
+```
+.
+├── README.md               # Root entry point & cross-implementation guide
+├── python/                 # Python Implementation (FastMCP)
+│   ├── mcp_server.py       # Main entry point for the MCP server
+│   ├── tools/              # Domain-specific banking tools (Loans, Clients, etc.)
+│   └── core/               # API Server & WebSocket gateway
+└── java/                   # Java Implementation (Quarkus)
+    ├── backoffice/         # Core banking tools (21 tools)
+    └── userrecommendation/ # Recommendation engine tools (17 tools)
+```
+
+---
+
+## 🚀 Getting Started
 
 ### 1. Choose Your Implementation
 
-#### **Java (Quarkus)**
+#### ☕ **Java (Quarkus)**
 **Prerequisites**: JDK 21+, Maven
 
 **Steps**:
-1. Configure environment variables in your shell or IDE:
+1. **Configure Environment Variables**:
    ```bash
    export MIFOSX_BASE_URL="https://your-fineract-instance"
    export MIFOSX_BASIC_AUTH_TOKEN="your_api_token"
    export MIFOS_TENANT_ID="default"
    ```
-2. Run via JBang (for quick execution):
+2. **Run via JBang**:
    ```bash
    jbang --quiet org.mifos.community.ai:mcp-server:1.0.0-SNAPSHOT:runner
    ```
-3. (Optional) Build a native executable:
+3. **Build Native Executable** (Optional):
    ```bash
+   cd java/backoffice
    ./mvnw package -Dnative
    ./target/mcp-server-1.0.0-SNAPSHOT-runner
    ```
 
+#### 🐍 **Python (FastMCP)**
+**Prerequisites**: Python 3.10+, pip
+
+**Steps**:
+1. **Navigate to the Python directory**:
+   ```bash
+   cd python
+   ```
+2. **Install dependencies**:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. **Configure Environment**:
+   Copy `.env.example` to `.env` and fill in your details.
+4. **Run the Server**:
+   ```bash
+   python mcp_server.py
+   ```
+
 ---
 
-## Configuration
+## 🛠️ Available Tools Summary
 
-All implementations require the following environment variables:
+The server exposes tools across multiple banking domains.
 
-| Variable               | Description                          |
-|------------------------|--------------------------------------|
-| `FINERACT_BASE_URL`    | Base URL of your Fineract instance   |
-| `FINERACT_BASIC_AUTH_TOKEN` | API authentication token |
-| `FINERACT_TENANT_ID`   | Tenant identifier (default: `default`) |
-
-**Note**: Java uses `MIFOSX_` prefixed variables (e.g., `MIFOSX_BASE_URL`).
+| Domain | Python Tools | Java Tools |
+| :--- | :---: | :---: |
+| **Clients & Groups** | 16 | Included |
+| **Loans & Savings** | 20 | Included |
+| **Staff & Accounting**| 13 | Included |
+| **Recommendations** | - | 17 |
+| **Total** | **49** | **38** |
 
 ---
 
-## Building Native Executables (Java Only)
+## 🔍 Testing with MCP Inspector
 
-For Java (Quarkus), create a native executable:
+Use the **MCP Inspector** to test and debug your server interactively:
+
 ```bash
-./mvnw package -Dnative -Dquarkus.native.container-build=true
-./target/mcp-server-1.0.0-SNAPSHOT-runner
+npx @modelcontextprotocol/inspector <command_to_run_yours_server>
+```
+
+**For Python**:
+```bash
+npx @modelcontextprotocol/inspector python python/mcp_server.py
 ```
 
 ---
 
-## Testing with MCP Inspector
-
-1. Start your MCP server (Python/Java/Node.js).
-2. Run the inspector:
-   ```bash
-   npx @modelcontextprotocol/inspector
-   ```
-3. Connect to the server using the `STDIO` transport.
-
----
-
-## Examples - Backoffice Agent
+## 📺 Examples - Backoffice Agent
 
 | Video URL | Title | Prompt |
 | :--- | :--- | :--- |
-| https://youtu.be/MDQKRoz5GKw?si=69X77C58nFhy6Ioh | Join and Try the Mifos MCP. Go to https://ai.mifos.community | N/A |
-| https://youtu.be/y5MR3j8EGM4?si=zXTurBNql4xF5CGY | Create Client | Create the client using first name: OCTAVIO, last name: PAZ, email address: octaviopaz@mifos.org, mobile number: 5518098299 and external id: OCPZ99 |
-| https://youtu.be/qJsC25cd-1g?si=qQzX8DeOe0_2qhfr | Activate Client   | Activate the client OCTAVIO PAZ |
-| https://youtu.be/X1g_nVDsRnM?si=K7vsAN7gOLEC2OG0 | Add Address to Client   | Add the address to the client OCTAVIO PAZ. Fields: address type: HOME, address: PLAZA DE LORETO, neighborhood: DOCTOR ALFONZO, number: NUMBER 10, city: CDMX, country: MÉXICO, postal code: 54440, state province: CDMX. |
-| https://youtu.be/xeL9_sycwA8?si=AtV6F4WhTvcDspSp | Add Personal Reference to Client   | Add the family member to the client OCTAVIO PAZ. First name: Maria, middle name: Elena, last name: Ramírez, age: 27, relationship: Sister, gender: FEMALE, date of birth: 15 March 1998, qualification: Bachelor’s Degree, is dependent, profession: STUDENT, marital status: SINGLE. |
-| https://youtu.be/IKGMeAJBAOk?si=N27rE64dn7qxmMBk | Create a Loan Product   | Create a default loan product named "SILVER" with short name "ST01", principal 10000, 5 repayments, nominal interest rate 10.0%, repayment frequency 2 MONTHS, currency USD. |
-| https://youtu.be/5EdgUyLyP0w?si=L0UdYjXlyYF6faL5 | Create Loan Application   | Apply for an individual loan account for the client OCTAVIO PAZ using loan product SILVER. |
-| https://youtu.be/2ioN_8z_uaY?si=ZTB5rCrgS2jTpC4- | Approve Loan Application   | Approve the loan account  |
-| https://youtu.be/dDebmrn4lB0?si=0GTf4asCBHnsu27f | Disbursement of Loan   | Disburse the loan account using payment type Money Transfer. |
-| https://youtu.be/N3wnyJCh_Ik?si=gSy5LrJdFF2kfzHd | Make Loan Repayment   | Make a repayment for loan account 6 using Money Transfer. Set the amount to 6687.59, the date to 06 AUGUST 2025, and use external ID RT33. Add the note “FYI” and include payment account number 100, check number 101, routing code 102, receipt number 103, and bank number 1 |
-| https://youtu.be/bOuTj97hyqU?si=9bpno4Kp0II1IfPY | Create Savings Product   |  Create a default savings product with the name "WALLET", short name "TSWL", description "WALLET PRODUCT", and currency code "USD". |
-| https://youtu.be/l-Z7LlE3AnM?si=yQM4lloJL8Hu6yv8 | Create a Savings Account Application   | Apply for a savings account for the client OCTAVIO PAZ using savings product WALLET and external ID STP1. |
-| https://youtu.be/Q5ExlhalG8U?si=TwbsUZX30G3JeNJy | Approve Savings Application   | Approve the savings account and include the note: "MY FIRST APPROVAL". |
-| https://youtu.be/DJgUiRYK-rE?si=YatfVgOgpbP4wV91 | Activate Savings Account   | Activate the savings account |
-| https://youtu.be/Od7KFqktUtI?si=gPJNlLOB_7D74QdS | Make a Deposit Transaction   | Create a savings transaction for client with the account number 1. It's a DEPOSIT of 5000 using Money Transfer. The note should be "Monthly saving". |
-| https://youtu.be/9OL6N5wKG7c?si=R50RjTK6GI_ODuUs | Make a Withdrawal Transaction   | Create a savings transaction for client with the account number 1. It's a WITHDRAWAL of 2000 using Money Transfer. Add the note "Emergency expense". |
+| https://youtu.be/MDQKRoz5GKw | Join and Try the Mifos MCP | N/A |
+| https://youtu.be/y5MR3j8EGM4 | Create Client | "Create client OCTAVIO PAZ" |
+| https://youtu.be/2ioN_8z_uaY | Approve Loan Application | "Approve the loan account" |
+| https://youtu.be/Od7KFqktUtI | Make a Deposit Transaction | "DEPOSIT of 5000 into account 1" |
 
 ---
 
-## Contact
+## 🔒 Security & Guardrails
+- **Universal Compatibility** — Works with Claude, GPT-4, Qwen, or any MCP client.
+- **Data Sovereignty** — The server makes no external calls. 
+- **RBAC Enforced** — Every action is validated against Fineract's native permissions.
+
+---
+
+## 🔗 Contact & Community
 
 - Mifos Community: https://mifos.org
 - Mifos MCP (Docker): https://hub.docker.com/r/openmf/mifos-mcp
-- Chabot (Use the Groq provider and select the Mifos MCP): https://ai.mifos.community
----
-
-### Key Features:
-- **MCP-compliant** with STDIO/SSE transports
-- **Environment-agnostic** configuration
-
+- Chatbot Demo: https://ai.mifos.community
