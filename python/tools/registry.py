@@ -32,6 +32,13 @@ from tools.domains.staff import (
 from tools.domains.accounting import (
     list_gl_accounts, get_journal_entries, create_journal_entry
 )
+from tools.domains.reports import (
+    list_reports, get_report, run_report, create_report, update_report
+)
+from tools.domains.products import (
+    list_loan_products, get_loan_product,
+    list_savings_products, get_savings_product
+)
 
 
 class DomainRegistry:
@@ -54,6 +61,8 @@ class DomainRegistry:
         router.domain_map["savings"]    - 9 savings tools
         router.domain_map["staff"]      - 4 staff & office tools
         router.domain_map["accounting"] - 3 accounting tools
+        router.domain_map["reports"]    - 5 report definition & execution tools
+        router.domain_map["products"]   - 4 loan & savings product tools
     """
 
     def __init__(self):
@@ -85,7 +94,14 @@ class DomainRegistry:
             ],
             "accounting": [
                 list_gl_accounts, get_journal_entries, create_journal_entry
-            ]
+            ],
+            "reports": [
+                list_reports, get_report, run_report, create_report, update_report
+            ],
+            "products": [
+                list_loan_products, get_loan_product,
+                list_savings_products, get_savings_product
+            ],
         }
 
     def get_domain(self, domain: str) -> list:
@@ -96,7 +112,7 @@ class DomainRegistry:
         return self.domain_map.get(domain, [])
 
     def get_all_tools(self) -> list:
-        """Return the full flat list of all 49 tools across all domains."""
+        """Return the full flat list of all 57 tools across all domains."""
         all_tools = []
         seen = set()
         for tools in self.domain_map.values():
@@ -137,6 +153,14 @@ class DomainRegistry:
         # Accounting
         if any(w in query for w in ["journal", "ledger", "account", "gl account", "debit", "credit", "accounting"]):
             active_domains.add("accounting")
+
+        # Reports
+        if any(w in query for w in ["report", "run report", "report template", "portfolio report", "generate report", "sql report"]):
+            active_domains.add("reports")
+
+        # Products
+        if any(w in query for w in ["product", "loan product", "savings product", "product type", "available products"]):
+            active_domains.add("products")
 
         # Default: return clients for basic lookup if nothing matched
         if not active_domains:
