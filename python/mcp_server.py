@@ -44,9 +44,17 @@ from tools.domains.loans import (
     make_loan_repayment, apply_late_fee, waive_interest
 )
 from tools.domains.savings import (
-    get_savings_account, get_savings_transactions, create_savings_account, 
-    approve_and_activate_savings, close_savings_account, deposit_savings, 
+    get_savings_account, get_savings_transactions, create_savings_account,
+    approve_and_activate_savings, close_savings_account, deposit_savings,
     withdraw_savings, apply_savings_charge, calculate_and_post_interest
+)
+from tools.domains.charges import (
+    list_charges as list_charges_domain, get_charge as get_charge_domain,
+    create_charge as create_charge_domain, update_charge as update_charge_domain
+)
+from tools.domains.codetables import (
+    list_codes as list_codes_domain, get_code_values as get_code_values_domain,
+    list_datatables as list_datatables_domain
 )
 
 # 3. Initialize the FastMCP Server
@@ -583,6 +591,55 @@ def list_available_savings_products() -> dict:
 def get_savings_product_details(productId: int) -> dict:
     """Get full details for a savings product including interest compounding rules and charges."""
     return get_savings_product.func(productId)
+
+
+# --- CHARGES ---
+
+@mcp.tool()
+def list_all_charges() -> dict:
+    """List all available charge definitions (fees and penalties) in the system"""
+    return list_charges_domain.func()
+
+@mcp.tool()
+def get_charge(chargeId: int) -> dict:
+    """Get details of a specific charge by its ID"""
+    return get_charge_domain.func(chargeId)
+
+@mcp.tool()
+def create_new_charge(name: str, amount: float, currencyCode: str = "USD",
+                      chargeAppliesTo: int = 1, chargeTimeType: int = 2,
+                      chargeCalculationType: int = 1, isPenalty: bool = False,
+                      isActive: bool = True) -> dict:
+    """Create a new charge definition.
+    chargeAppliesTo: 1=Loan, 2=Savings, 3=Client
+    chargeTimeType: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee
+    chargeCalculationType: 1=Flat, 2=% of Amount"""
+    return create_charge_domain.func(name, amount, currencyCode, chargeAppliesTo,
+                                     chargeTimeType, chargeCalculationType, isPenalty, isActive)
+
+@mcp.tool()
+def update_existing_charge(chargeId: int, name: str = None, amount: float = None,
+                           isActive: bool = None) -> dict:
+    """Update an existing charge definition"""
+    return update_charge_domain.func(chargeId, name, amount, isActive)
+
+
+# --- CODE TABLES ---
+
+@mcp.tool()
+def list_system_codes() -> dict:
+    """List all system codes (dropdown categories like Gender, Client Type, ID Type, etc.)"""
+    return list_codes_domain.func()
+
+@mcp.tool()
+def get_code_values(codeId: int) -> dict:
+    """Get the dropdown values for a specific code. Use list_system_codes() first to find the code ID."""
+    return get_code_values_domain.func(codeId)
+
+@mcp.tool()
+def list_all_datatables() -> dict:
+    """List all registered data tables (custom fields, additional data extensions)"""
+    return list_datatables_domain.func()
 
 
 # 5. START SERVER
