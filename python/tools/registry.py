@@ -39,6 +39,12 @@ from tools.domains.products import (
     list_loan_products, get_loan_product,
     list_savings_products, get_savings_product
 )
+from tools.domains.charges import (
+    list_charges, get_charge, create_charge, update_charge
+)
+from tools.domains.codetables import (
+    list_codes, get_code_values, list_datatables
+)
 
 
 class DomainRegistry:
@@ -63,6 +69,8 @@ class DomainRegistry:
         router.domain_map["accounting"] - 3 accounting tools
         router.domain_map["reports"]    - 5 report definition & execution tools
         router.domain_map["products"]   - 4 loan & savings product tools
+        router.domain_map["charges"]    - 4 charge/fee tools
+        router.domain_map["codetables"] - 3 code table & datatable tools
     """
 
     def __init__(self):
@@ -102,12 +110,18 @@ class DomainRegistry:
                 list_loan_products, get_loan_product,
                 list_savings_products, get_savings_product
             ],
+            "charges": [
+                list_charges, get_charge, create_charge, update_charge
+            ],
+            "codetables": [
+                list_codes, get_code_values, list_datatables
+            ]
         }
 
     def get_domain(self, domain: str) -> list:
         """
         Return all tools for a specific domain by name.
-        Valid names: 'clients', 'groups', 'loans', 'savings', 'staff', 'accounting'
+        Valid names: 'clients', 'groups', 'loans', 'savings', 'staff', 'accounting', 'charges', 'codetables'
         """
         return self.domain_map.get(domain, [])
 
@@ -161,6 +175,14 @@ class DomainRegistry:
         # Products
         if any(w in query for w in ["product", "loan product", "savings product", "product type", "available products"]):
             active_domains.add("products")
+
+        # Charges
+        if any(w in query for w in ["charge", "fee", "penalty", "late fee", "disbursement fee"]):
+            active_domains.add("charges")
+
+        # Code Tables
+        if any(w in query for w in ["code", "dropdown", "code value", "gender", "id type", "datatable", "custom field"]):
+            active_domains.add("codetables")
 
         # Default: return clients for basic lookup if nothing matched
         if not active_domains:

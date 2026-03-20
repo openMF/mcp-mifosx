@@ -790,6 +790,84 @@ public class MifosXServer {
         return mifosXClient.loanRepayment(loanAccountNumber,command,jsonLoanRepayment);
     }
 
+    // --- Charges Domain ---
+
+    @Tool(description = "List all available charges (fees and penalties) configured in the system")
+    JsonNode listCharges() {
+        return mifosXClient.getCharges();
+    }
+
+    @Tool(description = "Get details of a specific charge by its ID")
+    JsonNode getChargeById(@ToolArg(description = "Charge ID as an integer (e.g. 1)") Integer chargeId) {
+        return mifosXClient.getChargeById(chargeId);
+    }
+
+    @Tool(description = "Create a new charge definition. chargeAppliesTo: 1=Loan, 2=Savings, 3=Client. " +
+            "chargeTimeType: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee. " +
+            "chargeCalculationType: 1=Flat, 2=% of Amount")
+    JsonNode createCharge(
+            @ToolArg(description = "Name of the charge (e.g. \"Late Payment Fee\")", required = true) String name,
+            @ToolArg(description = "Amount of the charge (e.g. \"100\")", required = true) String amount,
+            @ToolArg(description = "Currency code (e.g. \"USD\")", required = true) String currencyCode,
+            @ToolArg(description = "What the charge applies to: 1=Loan, 2=Savings, 3=Client", required = true) Integer chargeAppliesTo,
+            @ToolArg(description = "When the charge is applied: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee", required = true) Integer chargeTimeType,
+            @ToolArg(description = "How the charge is calculated: 1=Flat, 2=% of Amount", required = true) Integer chargeCalculationType,
+            @ToolArg(description = "Whether the charge is a penalty (true/false)", required = false) String penalty,
+            @ToolArg(description = "Whether the charge is active (true/false)", required = false) String active
+    ) throws JsonProcessingException {
+        Charge charge = new Charge();
+        charge.setName(name);
+        charge.setAmount(amount);
+        charge.setCurrencyCode(currencyCode);
+        charge.setChargeAppliesTo(chargeAppliesTo);
+        charge.setChargeTimeType(chargeTimeType);
+        charge.setChargeCalculationType(chargeCalculationType);
+        charge.setPenalty(Optional.ofNullable(penalty).orElse("false"));
+        charge.setActive(Optional.ofNullable(active).orElse("true"));
+        charge.setLocale("en");
+        charge.setMonthDayFormat("dd MMM");
+
+        ObjectWriter ow = new ObjectMapper().writer().withDefaultPrettyPrinter();
+        String jsonCharge = ow.writeValueAsString(charge);
+        return mifosXClient.createCharge(jsonCharge);
+    }
+
+    @Tool(description = "Update an existing charge definition by its ID")
+    JsonNode updateCharge(
+            @ToolArg(description = "Charge ID to update (e.g. 1)", required = true) Integer chargeId,
+            @ToolArg(description = "New name for the charge", required = false) String name,
+            @ToolArg(description = "New amount for the charge", required = false) String amount,
+            @ToolArg(description = "Whether the charge is active (true/false)", required = false) String active
+    ) throws JsonProcessingException {
+        Charge charge = new Charge();
+        if (name != null) charge.setName(name);
+        if (amount != null) charge.setAmount(amount);
+        if (active != null) charge.setActive(active);
+        charge.setLocale("en");
+
+        ObjectWriter ow = new ObjectMapper().writer().withDefaultPrettyPrinter();
+        String jsonCharge = ow.writeValueAsString(charge);
+        return mifosXClient.updateCharge(chargeId, jsonCharge);
+    }
+
+    // --- Code Tables Domain ---
+
+    @Tool(description = "List all system codes (dropdown categories like Gender, Client Type, etc.)")
+    JsonNode listCodes() {
+        return mifosXClient.getCodes();
+    }
+
+    @Tool(description = "Get the dropdown values for a specific code by its code ID. " +
+            "Use listCodes first to find the code ID, then use this to get its values.")
+    JsonNode getCodeValuesById(@ToolArg(description = "Code ID as an integer (e.g. 1 for Customer Identifier)") Integer codeId) {
+        return mifosXClient.getCodeValues(codeId);
+    }
+
+    @Tool(description = "List all registered data tables in the system (custom fields, additional data)")
+    JsonNode listDatatables() {
+        return mifosXClient.getDatatables();
+    }
+
     private String getCurrencyCode (String currency) throws JsonProcessingException {
         JsonNode jsonResponse = mifosXClient.getCurrencies();
 
