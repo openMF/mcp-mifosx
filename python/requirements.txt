@@ -7,6 +7,10 @@ python-dotenv>=1.0.0
 # MCP framework for exposing tools to LLM agents
 fastmcp>=0.1.0
 
+# REST API server (used by core/api_server.py)
+fastapi>=0.110.0
+uvicorn>=0.29.0
+
 # Data validation
 pydantic>=2.0.0
 
