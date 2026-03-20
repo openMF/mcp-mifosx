@@ -8,7 +8,7 @@ mysql-init/
 # MCP Client / Agent code — belongs in a separate client repository
 MCP-Server-Python-Implementation/
 agent.py
-test_*.py
+/test_*.py
 
 # Docker Compose — use the official Mifos X platform repo instead
 docker-compose.yml
