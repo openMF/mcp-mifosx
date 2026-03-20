@@ -21,7 +21,7 @@ def test_list_reports_by_type(mock_client):
     from tools.domains.reports import list_reports
 
     mock_client.execute_get.return_value = []
-    result = list_reports.func(report_type="Table")
+    list_reports.func(report_type="Table")
     mock_client.execute_get.assert_called_once_with("reports", params={"type": "Table"})
 
 
