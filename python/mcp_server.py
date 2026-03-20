@@ -30,6 +30,13 @@ from tools.domains.staff import (
 from tools.domains.accounting import (
     list_gl_accounts, get_journal_entries, create_journal_entry
 )
+from tools.domains.reports import (
+    list_reports, get_report, run_report, create_report, update_report
+)
+from tools.domains.products import (
+    list_loan_products, get_loan_product,
+    list_savings_products, get_savings_product
+)
 from tools.domains.loans import (
     get_loan_details, get_repayment_schedule, get_loan_history, get_overdue_loans,
     create_loan, create_group_loan,
@@ -521,6 +528,61 @@ def list_journal_entries(glAccountId: int = None, transactionId: str = None) -> 
 def record_journal_entry(officeId: int, date: str, credits: list, debits: list, comment: str = "") -> dict:
     """Record a manual journal entry. Date format: 'dd MMMM yyyy' e.g. '10 March 2026'"""
     return create_journal_entry.func(officeId, date, credits, debits, comment)
+
+
+# --- REPORTS ---
+
+@mcp.tool()
+def list_all_reports(reportType: str = None) -> dict:
+    """List all Fineract report definitions. Optionally filter by type: 'Table', 'Chart', 'SMS', 'Text', 'Pentaho'."""
+    return list_reports.func(reportType)
+
+@mcp.tool()
+def get_report_definition(reportId: int) -> dict:
+    """Get the full definition (SQL, parameters, type) for a specific report by ID."""
+    return get_report.func(reportId)
+
+@mcp.tool()
+def run_fineract_report(reportName: str, params: dict = None) -> dict:
+    """Run a Fineract report by its exact name and return the results.
+    Example: run_fineract_report('Active Loans - Summary', {'officeId': '1'})"""
+    return run_report.func(reportName, params)
+
+@mcp.tool()
+def create_report_definition(reportName: str, reportType: str, reportSql: str, description: str = "") -> dict:
+    """Register a new report definition in Fineract.
+    reportType: 'Table' | 'Chart' | 'SMS' | 'Text' | 'Pentaho'"""
+    return create_report.func(reportName, reportType, reportSql, description)
+
+@mcp.tool()
+def update_report_definition(reportId: int, reportName: str = None, reportType: str = None, reportSql: str = None, description: str = None) -> dict:
+    """Update an existing report definition. Only provided fields are changed."""
+    return update_report.func(reportId, reportName, reportType, reportSql, description)
+
+
+# --- PRODUCTS ---
+
+@mcp.tool()
+def list_available_loan_products() -> dict:
+    """List all loan products with their principal ranges, interest rates, and repayment terms.
+    Call this before create_new_loan to find a valid productId."""
+    return list_loan_products.func()
+
+@mcp.tool()
+def get_loan_product_details(productId: int) -> dict:
+    """Get full details for a loan product including charges, interest rules, and amortization type."""
+    return get_loan_product.func(productId)
+
+@mcp.tool()
+def list_available_savings_products() -> dict:
+    """List all savings products with their interest rates and minimum balances.
+    Call this before create_savings to find a valid productId."""
+    return list_savings_products.func()
+
+@mcp.tool()
+def get_savings_product_details(productId: int) -> dict:
+    """Get full details for a savings product including interest compounding rules and charges."""
+    return get_savings_product.func(productId)
 
 
 # 5. START SERVER
