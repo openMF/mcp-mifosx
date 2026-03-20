@@ -19,7 +19,8 @@ from tools.domains.loans import (
     get_loan_details, get_repayment_schedule, create_loan,
     approve_and_disburse_loan, reject_loan_application,
     make_loan_repayment, apply_late_fee, waive_interest,
-    get_overdue_loans, create_group_loan
+    get_overdue_loans, create_group_loan,
+    undo_loan_approval, undo_loan_disbursal, get_loan_template, reschedule_loan
 )
 from tools.domains.savings import (
     get_savings_account, get_savings_transactions, create_savings_account,
@@ -63,7 +64,7 @@ class DomainRegistry:
     Full domain map:
         router.domain_map["clients"]    - 15 client & KYC tools
         router.domain_map["groups"]     - 6 group & center tools
-        router.domain_map["loans"]      - 10 loan tools
+        router.domain_map["loans"]      - 14 loan tools
         router.domain_map["savings"]    - 9 savings tools
         router.domain_map["staff"]      - 4 staff & office tools
         router.domain_map["accounting"] - 3 accounting tools
@@ -90,7 +91,8 @@ class DomainRegistry:
                 get_loan_details, get_repayment_schedule, create_loan,
                 approve_and_disburse_loan, reject_loan_application,
                 make_loan_repayment, apply_late_fee, waive_interest,
-                get_overdue_loans, create_group_loan
+                get_overdue_loans, create_group_loan,
+                undo_loan_approval, undo_loan_disbursal, get_loan_template, reschedule_loan
             ],
             "savings": [
                 get_savings_account, get_savings_transactions, create_savings_account,
@@ -126,7 +128,7 @@ class DomainRegistry:
         return self.domain_map.get(domain, [])
 
     def get_all_tools(self) -> list:
-        """Return the full flat list of all 57 tools across all domains."""
+        """Return the full flat list of all 61 tools across all domains."""
         all_tools = []
         seen = set()
         for tools in self.domain_map.values():
@@ -145,7 +147,7 @@ class DomainRegistry:
         active_domains = set()
 
         # Loans
-        if any(w in query for w in ["loan", "repayment", "disburse", "overdue", "arrear", "reject", "waive", "installment"]):
+        if any(w in query for w in ["loan", "repayment", "disburse", "overdue", "arrear", "reject", "waive", "installment", "undo", "reschedule", "template"]):
             active_domains.add("loans")
 
         # Clients
