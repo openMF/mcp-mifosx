@@ -217,8 +217,7 @@ All tools are registered in `mcp_server.py` with `@mcp.tool()` and are discovera
 
 ```
 MCP-Server-Python-Implementation/
-├── mcp_server.py          # Main server — registers all 49 MCP tools
-├── mcp_adapter.py         # Root-level HTTP adapter for Fineract API
+├── mcp_server.py          # Main server - registers all MCP tools
 ├── requirements.txt       # Minimal dependencies (no LLM frameworks)
 ├── Dockerfile             # Container image for the MCP server
 ├── .env.example           # Environment variable template
