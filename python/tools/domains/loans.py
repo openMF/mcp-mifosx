@@ -4,7 +4,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import datetime
+
 from langchain_core.tools import tool
+
 from tools.mcp_adapter import fineract_client
 
 # --- LOAN READ OPERATIONS ---
@@ -25,7 +27,8 @@ def get_repayment_schedule(loan_id: int):
 
 @tool
 def get_loan_history(loan_id: int):
-    """Answers: 'Show me the full transaction history for Loan #12345', 'What was the last repayment?', 'How much has been paid so far on this loan?', 'Create a loan with the same terms as the previous cycle'"""
+    """Answers: 'Show me the full transaction history for Loan #12345', 'What was the last repayment?',
+    'How much has been paid so far on this loan?', 'Create a loan with the same terms as the previous cycle'"""
     print(f"[Tool] Fetching full transaction history for Loan #{loan_id}...")
     response = fineract_client.execute_get(
         f"loans/{loan_id}?associations=transactions,repaymentSchedule,charges"
@@ -246,3 +249,63 @@ def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waive
         "locale": "en"
     }
     return fineract_client.execute_post(f"loans/{loan_id}/transactions?command=waiveinterest", payload)
+
+
+# --- LOAN LIFECYCLE CORRECTION OPERATIONS ---
+
+@tool
+def undo_loan_approval(loan_id: int):
+    """Answers: 'Undo the approval for Loan #123' or 'Reverse loan approval so we can modify terms'"""
+    print(f"[Tool] Undoing approval for Loan #{loan_id}...")
+    payload = {
+        "note": "Approval undone via AI Agent"
+    }
+    return fineract_client.execute_post(f"loans/{loan_id}?command=undoapproval", payload)
+
+@tool
+def undo_loan_disbursal(loan_id: int):
+    """Answers: 'Undo the disbursal for Loan #123' or 'Reverse the disbursement so we can correct the amount'"""
+    print(f"[Tool] Undoing disbursal for Loan #{loan_id}...")
+    payload = {
+        "note": "Disbursal undone via AI Agent"
+    }
+    return fineract_client.execute_post(f"loans/{loan_id}?command=undodisbursal", payload)
+
+@tool
+def get_loan_template(client_id: int, product_id: int = None):
+    """Answers: 'What are the default loan terms for this client?' or 'Show loan application template for client 5'
+    Returns the pre-filled template for creating a loan application, including product defaults and charge options."""
+    print(f"[Tool] Fetching loan template for Client #{client_id}...")
+    params = f"templateType=individual&clientId={client_id}"
+    if product_id:
+        params += f"&productId={product_id}"
+    return fineract_client.execute_get(f"loans/template?{params}")
+
+@tool
+def reschedule_loan(loan_id: int, reschedule_from_date: str, adjusted_due_date: str = None,
+                    new_interest_rate: float = None, grace_on_principal: int = None,
+                    extra_terms: int = None, reason: str = "Rescheduled via AI Agent"):
+    """Answers: 'Reschedule loan 123 starting from 15 March 2026' or 'Give client 2 extra months on their loan'
+    Submits a loan reschedule request. Dates must be in 'dd MMMM yyyy' format (e.g. '15 March 2026').
+    At least one modification (adjusted_due_date, new_interest_rate, grace_on_principal, or extra_terms) is required."""
+    print(f"[Tool] Submitting reschedule request for Loan #{loan_id}...")
+    today = datetime.datetime.now().strftime("%d %B %Y")
+
+    payload = {
+        "loanId": loan_id,
+        "rescheduleFromDate": reschedule_from_date,
+        "submittedOnDate": today,
+        "rescheduleReasonComment": reason,
+        "dateFormat": "dd MMMM yyyy",
+        "locale": "en"
+    }
+    if adjusted_due_date:
+        payload["adjustedDueDate"] = adjusted_due_date
+    if new_interest_rate is not None:
+        payload["newInterestRate"] = new_interest_rate
+    if grace_on_principal is not None:
+        payload["graceOnPrincipal"] = grace_on_principal
+    if extra_terms is not None:
+        payload["extraTerms"] = extra_terms
+
+    return fineract_client.execute_post("rescheduleloans", payload)

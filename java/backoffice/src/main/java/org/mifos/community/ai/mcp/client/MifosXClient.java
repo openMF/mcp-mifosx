@@ -235,10 +235,37 @@ public interface MifosXClient {
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Path("fineract-provider/api/v1/codes/{codeId}")
-    JsonNode getCodeById(Integer codeId);
+    JsonNode getCodeById(@PathParam("codeId") Integer codeId);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
     @Path("fineract-provider/api/v1/codes/{codeId}/codevalues")
-    JsonNode getCodeValues(Integer codeId);
+    JsonNode getCodeValues(@PathParam("codeId") Integer codeId);
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/datatables")
+    JsonNode getDatatables();
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/charges")
+    JsonNode getCharges();
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/charges/{chargeId}")
+    JsonNode getChargeById(@PathParam("chargeId") Integer chargeId);
+
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/charges")
+    JsonNode createCharge(String charge);
+
+    @PUT
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("fineract-provider/api/v1/charges/{chargeId}")
+    JsonNode updateCharge(@PathParam("chargeId") Integer chargeId, String charge);
 }

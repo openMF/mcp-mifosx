@@ -3,9 +3,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import datetime
 from langchain_core.tools import tool
+
 from tools.mcp_adapter import fineract_client
+
 
 @tool
 def list_gl_accounts(type: int = None):
@@ -14,7 +15,7 @@ def list_gl_accounts(type: int = None):
     """
     endpoint = "glaccounts"
     if type: endpoint += f"?type={type}"
-    print(f"[Tool] Fetching GL Accounts...")
+    print("[Tool] Fetching GL Accounts...")
     return fineract_client.execute_get(endpoint)
 
 @tool
@@ -25,8 +26,8 @@ def get_journal_entries(account_id: int = None, transaction_id: str = None):
     if account_id: params.append(f"glAccountId={account_id}")
     if transaction_id: params.append(f"transactionId={transaction_id}")
     if params: endpoint += "?" + "&".join(params)
-    
-    print(f"[Tool] Fetching Journal Entries...")
+
+    print("[Tool] Fetching Journal Entries...")
     return fineract_client.execute_get(endpoint)
 
 @tool
@@ -34,7 +35,7 @@ def create_journal_entry(office_id: int, date: str, credits: list, debits: list,
     """Answers: 'Record a manual journal entry'
     credits/debits format: [{"glAccountId": 1, "amount": 100}]
     """
-    print(f"[Tool] Creating Journal Entry...")
+    print("[Tool] Creating Journal Entry...")
     payload = {
         "officeId": office_id,
         "transactionDate": date,

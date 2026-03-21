@@ -3,9 +3,10 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import os
-import requests
 import logging
+import os
+
+import requests
 from dotenv import load_dotenv
 
 # 1. Set up enterprise-grade logging
@@ -21,7 +22,7 @@ class FineractAdapter:
         self.tenant_id = os.getenv("MIFOSX_TENANT_ID", "default")
         self.username = os.getenv("MIFOSX_USERNAME")
         self.password = os.getenv("MIFOSX_PASSWORD")
-        
+
         # STOP: Suppress SSL warnings for local self-signed certs (Docker)
         requests.packages.urllib3.disable_warnings(
             requests.packages.urllib3.exceptions.InsecureRequestWarning
@@ -53,7 +54,7 @@ class FineractAdapter:
         logger.info(f"Executing GET: {url}")
         try:
             response = requests.get(
-                url, headers=self._get_headers(), auth=(self.username, self.password), 
+                url, headers=self._get_headers(), auth=(self.username, self.password),
                 params=params, verify=False
             )
             response.raise_for_status()
@@ -71,7 +72,7 @@ class FineractAdapter:
         logger.info(f"Payload: {json.dumps(payload)}")
         try:
             response = requests.post(
-                url, headers=self._get_headers(), auth=(self.username, self.password), 
+                url, headers=self._get_headers(), auth=(self.username, self.password),
                 json=payload, verify=False
             )
             response.raise_for_status()
@@ -87,7 +88,7 @@ class FineractAdapter:
         logger.info(f"Executing PUT: {url}")
         try:
             response = requests.put(
-                url, headers=self._get_headers(), auth=(self.username, self.password), 
+                url, headers=self._get_headers(), auth=(self.username, self.password),
                 json=payload, verify=False
             )
             response.raise_for_status()
@@ -123,11 +124,11 @@ if __name__ == "__main__":
     print("\n" + "="*50)
     print(" INITIATING FINERACT ADAPTER DIAGNOSTICS")
     print("="*50)
-    
+
     # Test 1: Ping the Users endpoint to verify auth and SSL bypass
     print("\n[Test 1] Fetching System Users...")
     result = fineract_client.execute_get("users")
-    
+
     if "error" in result:
         logger.error(f"Diagnostics Failed: {result['error']}")
         print("\nERROR: Make sure your Docker container is fully running and .env is correct.")

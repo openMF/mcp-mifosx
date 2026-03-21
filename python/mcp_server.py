@@ -3,44 +3,76 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from fastmcp import FastMCP
 import logging
+
+from fastmcp import FastMCP
 
 # 1. Provide an MCP-specific Logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MCP Server] %(message)s')
 logger = logging.getLogger(__name__)
 
 # 2. Import all the available domain functions from the existing codebase
+from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
+from tools.domains.charges import create_charge as create_charge_domain
+from tools.domains.charges import get_charge as get_charge_domain
+from tools.domains.charges import list_charges as list_charges_domain
+from tools.domains.charges import update_charge as update_charge_domain
 from tools.domains.clients import (
-    search_clients_by_name, get_client_details, get_client_accounts, 
-    create_client, activate_client, update_client_mobile, 
+    activate_client,
+    apply_client_charge,
     close_client,
-    get_client_identifiers, create_client_identifier, get_client_documents,
-    get_client_charges, apply_client_charge, get_client_transactions,
-    get_client_addresses
+    create_client,
+    create_client_identifier,
+    get_client_accounts,
+    get_client_addresses,
+    get_client_charges,
+    get_client_details,
+    get_client_documents,
+    get_client_identifiers,
+    get_client_transactions,
+    search_clients_by_name,
+    update_client_mobile,
 )
-from tools.domains.groups import (
-    list_groups, get_group as get_group_domain, create_group as create_group_domain,
-    activate_group as activate_group_domain, add_group_member,
-    list_centers, get_center as get_center_domain, create_center as create_center_domain
-)
-from tools.domains.staff import (
-    list_staff, get_staff_details, list_offices, get_office_details
-)
-from tools.domains.accounting import (
-    list_gl_accounts, get_journal_entries, create_journal_entry
-)
+from tools.domains.codetables import get_code_values as get_code_values_domain
+from tools.domains.codetables import list_codes as list_codes_domain
+from tools.domains.codetables import list_datatables as list_datatables_domain
+from tools.domains.groups import activate_group as activate_group_domain
+from tools.domains.groups import add_group_member, list_centers, list_groups
+from tools.domains.groups import create_center as create_center_domain
+from tools.domains.groups import create_group as create_group_domain
+from tools.domains.groups import get_center as get_center_domain
+from tools.domains.groups import get_group as get_group_domain
 from tools.domains.loans import (
-    get_loan_details, get_repayment_schedule, get_loan_history, get_overdue_loans,
-    create_loan, create_group_loan,
-    approve_and_disburse_loan, reject_loan_application, 
-    make_loan_repayment, apply_late_fee, waive_interest
+    apply_late_fee,
+    approve_and_disburse_loan,
+    create_group_loan,
+    create_loan,
+    get_loan_details,
+    get_loan_history,
+    get_loan_template,
+    get_overdue_loans,
+    get_repayment_schedule,
+    make_loan_repayment,
+    reject_loan_application,
+    reschedule_loan,
+    undo_loan_approval,
+    undo_loan_disbursal,
+    waive_interest,
 )
+from tools.domains.products import get_loan_product, get_savings_product, list_loan_products, list_savings_products
+from tools.domains.reports import create_report, get_report, list_reports, run_report, update_report
 from tools.domains.savings import (
-    get_savings_account, get_savings_transactions, create_savings_account, 
-    approve_and_activate_savings, close_savings_account, deposit_savings, 
-    withdraw_savings, apply_savings_charge, calculate_and_post_interest
+    apply_savings_charge,
+    approve_and_activate_savings,
+    calculate_and_post_interest,
+    close_savings_account,
+    create_savings_account,
+    deposit_savings,
+    get_savings_account,
+    get_savings_transactions,
+    withdraw_savings,
 )
+from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
 
 # 3. Initialize the FastMCP Server
 mcp = FastMCP("Mifos-Banking-Agent")
@@ -139,12 +171,12 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
         "resolvedClientId": actual_id,
         "loanAccounts": [
             {
-                "loanId":                l.get("id"),
-                "accountNo":             l.get("accountNo"),
-                "status":                l.get("status", {}).get("value"),
-                "outstandingBalance_USD": l.get("loanBalance") if l.get("loanBalance") is not None else 0.00,
+                "loanId":                loan.get("id"),
+                "accountNo":             loan.get("accountNo"),
+                "status":                loan.get("status", {}).get("value"),
+                "outstandingBalance_USD": loan.get("loanBalance") if loan.get("loanBalance") is not None else 0.00,
             }
-            for l in loans
+            for loan in loans
         ],
         "savingsAccounts": [
             {
@@ -337,7 +369,10 @@ def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     status = check.get("status", {}).get("value", "")
     if "pending" not in status.lower() and "submitted" not in status.lower():
-        return {"error": f"Loan {loanId} is in status '{status}' and cannot be approved. Only 'Submitted and pending approval' loans can be approved."}
+        return {
+            "error": f"Loan {loanId} is in status '{status}' and cannot be approved. "
+            "Only 'Submitted and pending approval' loans can be approved."
+        }
     return approve_and_disburse_loan.func(loanId, amount)
 
 @mcp.tool()
@@ -387,6 +422,50 @@ def get_overdue_loans_for_client(clientId: int) -> dict:
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
     """Create a group loan application for an existing lending group"""
     return create_group_loan.func(groupId, principal, months, productId)
+
+@mcp.tool()
+def undo_approval(loanId: int) -> dict:
+    """Undo a loan approval so terms can be modified. Only works on approved (not yet disbursed) loans."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found."}
+    status = check.get("status", {}).get("value", "")
+    if "approved" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}'. Only approved loans can have their approval undone."}
+    return undo_loan_approval.func(loanId)
+
+@mcp.tool()
+def undo_disbursal(loanId: int) -> dict:
+    """Undo a loan disbursal to reverse funds and return the loan to approved status."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found."}
+    status = check.get("status", {}).get("value", "")
+    if "active" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}'. Only active (disbursed) loans can have their disbursal undone."}
+    return undo_loan_disbursal.func(loanId)
+
+@mcp.tool()
+def get_loan_app_template(clientId: int, productId: int = None) -> dict:
+    """Get the pre-filled loan application template for a client, including product defaults and available charge options.
+    Call this before create_new_loan to see what fields and products are available."""
+    return get_loan_template.func(clientId, productId)
+
+@mcp.tool()
+def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: str = None,
+                        newInterestRate: float = None, graceOnPrincipal: int = None,
+                        extraTerms: int = None, reason: str = "Rescheduled via AI Agent") -> dict:
+    """Submit a loan reschedule request. Use when a client needs modified repayment terms.
+    Dates must be in 'dd MMMM yyyy' format (e.g. '15 March 2026').
+    At least one modification (adjustedDueDate, newInterestRate, graceOnPrincipal, or extraTerms) is required."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found."}
+    status = check.get("status", {}).get("value", "")
+    if "active" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}'. Only active loans can be rescheduled."}
+    return reschedule_loan.func(loanId, rescheduleFromDate, adjustedDueDate,
+                                newInterestRate, graceOnPrincipal, extraTerms, reason)
 
 # --- SAVINGS ---
 
@@ -521,6 +600,110 @@ def list_journal_entries(glAccountId: int = None, transactionId: str = None) -> 
 def record_journal_entry(officeId: int, date: str, credits: list, debits: list, comment: str = "") -> dict:
     """Record a manual journal entry. Date format: 'dd MMMM yyyy' e.g. '10 March 2026'"""
     return create_journal_entry.func(officeId, date, credits, debits, comment)
+
+
+# --- REPORTS ---
+
+@mcp.tool()
+def list_all_reports(reportType: str = None) -> dict:
+    """List all Fineract report definitions. Optionally filter by type: 'Table', 'Chart', 'SMS', 'Text', 'Pentaho'."""
+    return list_reports.func(reportType)
+
+@mcp.tool()
+def get_report_definition(reportId: int) -> dict:
+    """Get the full definition (SQL, parameters, type) for a specific report by ID."""
+    return get_report.func(reportId)
+
+@mcp.tool()
+def run_fineract_report(reportName: str, params: dict = None) -> dict:
+    """Run a Fineract report by its exact name and return the results.
+    Example: run_fineract_report('Active Loans - Summary', {'officeId': '1'})"""
+    return run_report.func(reportName, params)
+
+@mcp.tool()
+def create_report_definition(reportName: str, reportType: str, reportSql: str, description: str = "") -> dict:
+    """Register a new report definition in Fineract.
+    reportType: 'Table' | 'Chart' | 'SMS' | 'Text' | 'Pentaho'"""
+    return create_report.func(reportName, reportType, reportSql, description)
+
+@mcp.tool()
+def update_report_definition(reportId: int, reportName: str = None, reportType: str = None, reportSql: str = None, description: str = None) -> dict:
+    """Update an existing report definition. Only provided fields are changed."""
+    return update_report.func(reportId, reportName, reportType, reportSql, description)
+
+
+# --- PRODUCTS ---
+
+@mcp.tool()
+def list_available_loan_products() -> dict:
+    """List all loan products with their principal ranges, interest rates, and repayment terms.
+    Call this before create_new_loan to find a valid productId."""
+    return list_loan_products.func()
+
+@mcp.tool()
+def get_loan_product_details(productId: int) -> dict:
+    """Get full details for a loan product including charges, interest rules, and amortization type."""
+    return get_loan_product.func(productId)
+
+@mcp.tool()
+def list_available_savings_products() -> dict:
+    """List all savings products with their interest rates and minimum balances.
+    Call this before create_savings to find a valid productId."""
+    return list_savings_products.func()
+
+@mcp.tool()
+def get_savings_product_details(productId: int) -> dict:
+    """Get full details for a savings product including interest compounding rules and charges."""
+    return get_savings_product.func(productId)
+
+
+# --- CHARGES ---
+
+@mcp.tool()
+def list_all_charges() -> dict:
+    """List all available charge definitions (fees and penalties) in the system"""
+    return list_charges_domain.func()
+
+@mcp.tool()
+def get_charge(chargeId: int) -> dict:
+    """Get details of a specific charge by its ID"""
+    return get_charge_domain.func(chargeId)
+
+@mcp.tool()
+def create_new_charge(name: str, amount: float, currencyCode: str = "USD",
+                      chargeAppliesTo: int = 1, chargeTimeType: int = 2,
+                      chargeCalculationType: int = 1, isPenalty: bool = False,
+                      isActive: bool = True) -> dict:
+    """Create a new charge definition.
+    chargeAppliesTo: 1=Loan, 2=Savings, 3=Client
+    chargeTimeType: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee
+    chargeCalculationType: 1=Flat, 2=% of Amount"""
+    return create_charge_domain.func(name, amount, currencyCode, chargeAppliesTo,
+                                     chargeTimeType, chargeCalculationType, isPenalty, isActive)
+
+@mcp.tool()
+def update_existing_charge(chargeId: int, name: str = None, amount: float = None,
+                           isActive: bool = None) -> dict:
+    """Update an existing charge definition"""
+    return update_charge_domain.func(chargeId, name, amount, isActive)
+
+
+# --- CODE TABLES ---
+
+@mcp.tool()
+def list_system_codes() -> dict:
+    """List all system codes (dropdown categories like Gender, Client Type, ID Type, etc.)"""
+    return list_codes_domain.func()
+
+@mcp.tool()
+def get_code_values(codeId: int) -> dict:
+    """Get the dropdown values for a specific code. Use list_system_codes() first to find the code ID."""
+    return get_code_values_domain.func(codeId)
+
+@mcp.tool()
+def list_all_datatables() -> dict:
+    """List all registered data tables (custom fields, additional data extensions)"""
+    return list_datatables_domain.func()
 
 
 # 5. START SERVER

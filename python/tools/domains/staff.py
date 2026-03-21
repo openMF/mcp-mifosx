@@ -4,7 +4,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 from langchain_core.tools import tool
+
 from tools.mcp_adapter import fineract_client
+
 
 @tool
 def list_staff(office_id: int = None, status: str = "all"):
@@ -14,8 +16,8 @@ def list_staff(office_id: int = None, status: str = "all"):
     if office_id: params.append(f"officeId={office_id}")
     if status: params.append(f"status={status}")
     if params: endpoint += "?" + "&".join(params)
-    
-    print(f"[Tool] Fetching Staff...")
+
+    print("[Tool] Fetching Staff...")
     return fineract_client.execute_get(endpoint)
 
 @tool
@@ -27,7 +29,7 @@ def get_staff_details(staff_id: int):
 @tool
 def list_offices():
     """Answers: 'Show me all bank branches/offices'"""
-    print(f"[Tool] Fetching Offices...")
+    print("[Tool] Fetching Offices...")
     return fineract_client.execute_get("offices")
 
 @tool

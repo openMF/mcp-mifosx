@@ -4,7 +4,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import datetime
+
 from langchain_core.tools import tool
+
 from tools.mcp_adapter import fineract_client
 
 # --- CLIENT SEARCH & READ OPERATIONS ---

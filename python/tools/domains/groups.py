@@ -4,7 +4,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import datetime
+
 from langchain_core.tools import tool
+
 from tools.mcp_adapter import fineract_client
 
 # --- GROUP OPERATIONS ---
@@ -15,7 +17,7 @@ def list_groups(office_id: int = None):
     endpoint = "groups"
     if office_id:
         endpoint += f"?officeId={office_id}"
-    print(f"[Tool] Fetching Groups...")
+    print("[Tool] Fetching Groups...")
     return fineract_client.execute_get(endpoint)
 
 @tool
@@ -63,7 +65,7 @@ def list_centers(office_id: int = None):
     endpoint = "centers"
     if office_id:
         endpoint += f"?officeId={office_id}"
-    print(f"[Tool] Fetching Centers...")
+    print("[Tool] Fetching Centers...")
     return fineract_client.execute_get(endpoint)
 
 @tool
