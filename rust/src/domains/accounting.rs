@@ -24,7 +24,7 @@ pub struct GetJournalEntriesReq { pub account_id: Option<i64>, pub transaction_i
 
 #[derive(Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct JournalEntryLine {
-    pub glAccountId: i64,
+    pub gl_account_id: i64,
     pub amount: f64,
 }
 

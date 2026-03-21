@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use anyhow::{Result, Error as AnyErr};
+use anyhow::Result;
 use reqwest::{Client, Method, RequestBuilder};
 use serde_json::Value;
 use std::env;
@@ -111,6 +111,7 @@ impl FineractAdapter {
         Self::handle_response(res).await
     }
 
+    #[allow(dead_code)]
     pub async fn execute_delete(&self, endpoint: &str) -> Result<Value> {
         tracing::info!("Executing DELETE: {}/{}", self.base_url, endpoint);
         let req = self.prepare_request(Method::DELETE, endpoint);

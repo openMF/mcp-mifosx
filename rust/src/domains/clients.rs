@@ -113,3 +113,30 @@ pub async fn get_client_addresses(adapter: &FineractAdapter, req: ClientIdReq) -
     let res = adapter.execute_get(&format!("clients/{}/addresses", req.client_id), None).await.map_err(to_err)?;
     to_result(res)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_today_format() {
+        let date = today();
+        assert!(date.contains(' '));
+        assert!(date.split(' ').count() == 3);
+    }
+
+    #[test]
+    fn test_to_result_success() {
+        let val = json!({"id": 1, "name": "Test"});
+        let result = to_result(val).unwrap();
+        assert!(result.is_error.unwrap_or(false) == false);
+    }
+
+    #[test]
+    fn test_to_err() {
+        let err = anyhow::anyhow!("test error");
+        let mcp_err = to_err(err);
+        assert_eq!(mcp_err.message, "test error");
+    }
+}
