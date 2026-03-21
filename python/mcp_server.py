@@ -40,8 +40,9 @@ from tools.domains.products import (
 from tools.domains.loans import (
     get_loan_details, get_repayment_schedule, get_loan_history, get_overdue_loans,
     create_loan, create_group_loan,
-    approve_and_disburse_loan, reject_loan_application, 
-    make_loan_repayment, apply_late_fee, waive_interest
+    approve_and_disburse_loan, reject_loan_application,
+    make_loan_repayment, apply_late_fee, waive_interest,
+    undo_loan_approval, undo_loan_disbursal, get_loan_template, reschedule_loan
 )
 from tools.domains.savings import (
     get_savings_account, get_savings_transactions, create_savings_account,
@@ -402,6 +403,50 @@ def get_overdue_loans_for_client(clientId: int) -> dict:
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
     """Create a group loan application for an existing lending group"""
     return create_group_loan.func(groupId, principal, months, productId)
+
+@mcp.tool()
+def undo_approval(loanId: int) -> dict:
+    """Undo a loan approval so terms can be modified. Only works on approved (not yet disbursed) loans."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found."}
+    status = check.get("status", {}).get("value", "")
+    if "approved" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}'. Only approved loans can have their approval undone."}
+    return undo_loan_approval.func(loanId)
+
+@mcp.tool()
+def undo_disbursal(loanId: int) -> dict:
+    """Undo a loan disbursal to reverse funds and return the loan to approved status."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found."}
+    status = check.get("status", {}).get("value", "")
+    if "active" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}'. Only active (disbursed) loans can have their disbursal undone."}
+    return undo_loan_disbursal.func(loanId)
+
+@mcp.tool()
+def get_loan_app_template(clientId: int, productId: int = None) -> dict:
+    """Get the pre-filled loan application template for a client, including product defaults and available charge options.
+    Call this before create_new_loan to see what fields and products are available."""
+    return get_loan_template.func(clientId, productId)
+
+@mcp.tool()
+def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: str = None,
+                        newInterestRate: float = None, graceOnPrincipal: int = None,
+                        extraTerms: int = None, reason: str = "Rescheduled via AI Agent") -> dict:
+    """Submit a loan reschedule request. Use when a client needs modified repayment terms.
+    Dates must be in 'dd MMMM yyyy' format (e.g. '15 March 2026').
+    At least one modification (adjustedDueDate, newInterestRate, graceOnPrincipal, or extraTerms) is required."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found."}
+    status = check.get("status", {}).get("value", "")
+    if "active" not in status.lower():
+        return {"error": f"Loan {loanId} is in status '{status}'. Only active loans can be rescheduled."}
+    return reschedule_loan.func(loanId, rescheduleFromDate, adjustedDueDate,
+                                newInterestRate, graceOnPrincipal, extraTerms, reason)
 
 # --- SAVINGS ---
 
