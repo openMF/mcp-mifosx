@@ -4,7 +4,9 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import datetime
+
 from langchain_core.tools import tool
+
 from tools.mcp_adapter import fineract_client
 
 # --- LOAN READ OPERATIONS ---
@@ -25,7 +27,8 @@ def get_repayment_schedule(loan_id: int):
 
 @tool
 def get_loan_history(loan_id: int):
-    """Answers: 'Show me the full transaction history for Loan #12345', 'What was the last repayment?', 'How much has been paid so far on this loan?', 'Create a loan with the same terms as the previous cycle'"""
+    """Answers: 'Show me the full transaction history for Loan #12345', 'What was the last repayment?',
+    'How much has been paid so far on this loan?', 'Create a loan with the same terms as the previous cycle'"""
     print(f"[Tool] Fetching full transaction history for Loan #{loan_id}...")
     response = fineract_client.execute_get(
         f"loans/{loan_id}?associations=transactions,repaymentSchedule,charges"
@@ -254,7 +257,6 @@ def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waive
 def undo_loan_approval(loan_id: int):
     """Answers: 'Undo the approval for Loan #123' or 'Reverse loan approval so we can modify terms'"""
     print(f"[Tool] Undoing approval for Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
     payload = {
         "note": "Approval undone via AI Agent",
         "dateFormat": "dd MMMM yyyy",
@@ -266,7 +268,6 @@ def undo_loan_approval(loan_id: int):
 def undo_loan_disbursal(loan_id: int):
     """Answers: 'Undo the disbursal for Loan #123' or 'Reverse the disbursement so we can correct the amount'"""
     print(f"[Tool] Undoing disbursal for Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
     payload = {
         "note": "Disbursal undone via AI Agent",
         "dateFormat": "dd MMMM yyyy",

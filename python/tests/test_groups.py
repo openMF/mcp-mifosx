@@ -21,7 +21,7 @@ def test_list_groups_with_office(mock_client):
     from tools.domains.groups import list_groups
 
     mock_client.execute_get.return_value = []
-    result = list_groups.func(office_id=1)
+    list_groups.func(office_id=1)
     mock_client.execute_get.assert_called_once_with("groups?officeId=1")
 
 

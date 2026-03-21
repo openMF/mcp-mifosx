@@ -3,14 +3,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from typing import Optional
+
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
 
 # Import our custom banking domains and AI router
-from tools.domains import clients, loans, savings, groups, staff, accounting
+from tools.domains import accounting, clients, groups, loans, savings, staff
 from tools.registry import router
 
 # --- SERVER INITIALIZATION ---
@@ -22,7 +23,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -145,29 +146,29 @@ async def chat_with_agent(req: ChatRequest):
     """Send a string to the LangGraph AI copilot and get the response back."""
     if banking_agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialized")
-    
+
     print(f"\n[API] Received chat request: '{req.message}'")
-    
+
     # In a real app, thread_id should come from the request/session
     thread_id = "default-web-session"
     config = {"configurable": {"thread_id": thread_id}}
-    
+
     try:
         # Get final response from stream
         final_msg = None
         async for chunk in banking_agent.astream(
-            {"messages": [("human", req.message)]}, 
+            {"messages": [("human", req.message)]},
             config=config,
             stream_mode="values"
         ):
             final_msg = chunk["messages"][-1]
-            
+
         if final_msg and final_msg.type == "ai" and not final_msg.tool_calls:
             return {"reply": final_msg.content}
-            
+
         if final_msg:
             return {"reply": final_msg.content or "Finished tool execution."}
-            
+
         return {"reply": "Failed to get AI response"}
     except Exception as e:
         print(f"Error in chat_with_agent: {e}")
@@ -190,7 +191,7 @@ def get_client_accounts(client_id: int):
 @app.post("/api/clients", tags=["Clients"])
 def create_client(payload: ClientCreate):
     return handle_response(clients.create_client.func(
-        firstname=payload.firstname, lastname=payload.lastname, 
+        firstname=payload.firstname, lastname=payload.lastname,
         mobile_no=payload.mobile_no, office_id=payload.office_id, is_active=payload.is_active
     ))
 
@@ -295,7 +296,7 @@ def get_loan_history(loan_id: int):
 @app.post("/api/loans", tags=["Loans"])
 def create_loan(payload: LoanCreate):
     return handle_response(loans.create_loan.func(
-        client_id=payload.client_id, principal=payload.principal, 
+        client_id=payload.client_id, principal=payload.principal,
         months=payload.months, product_id=payload.product_id
     ))
 
@@ -404,7 +405,7 @@ def create_journal_entry(payload: JournalEntryCreate):
     credits_dict = [item.dict() for item in payload.credits]
     debits_dict = [item.dict() for item in payload.debits]
     return handle_response(accounting.create_journal_entry.func(
-        office_id=payload.office_id, date=payload.date, 
+        office_id=payload.office_id, date=payload.date,
         credits=credits_dict, debits=debits_dict, comment=payload.comment
     ))
 
