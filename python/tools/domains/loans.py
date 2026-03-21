@@ -254,11 +254,8 @@ def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waive
 def undo_loan_approval(loan_id: int):
     """Answers: 'Undo the approval for Loan #123' or 'Reverse loan approval so we can modify terms'"""
     print(f"[Tool] Undoing approval for Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
     payload = {
-        "note": "Approval undone via AI Agent",
-        "dateFormat": "dd MMMM yyyy",
-        "locale": "en"
+        "note": "Approval undone via AI Agent"
     }
     return fineract_client.execute_post(f"loans/{loan_id}?command=undoapproval", payload)
 
@@ -266,11 +263,8 @@ def undo_loan_approval(loan_id: int):
 def undo_loan_disbursal(loan_id: int):
     """Answers: 'Undo the disbursal for Loan #123' or 'Reverse the disbursement so we can correct the amount'"""
     print(f"[Tool] Undoing disbursal for Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
     payload = {
-        "note": "Disbursal undone via AI Agent",
-        "dateFormat": "dd MMMM yyyy",
-        "locale": "en"
+        "note": "Disbursal undone via AI Agent"
     }
     return fineract_client.execute_post(f"loans/{loan_id}?command=undodisbursal", payload)
 
