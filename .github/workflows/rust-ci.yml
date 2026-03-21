@@ -51,7 +51,10 @@ jobs:
         python-version: '3.11'
 
     - name: Install Python CLI tools
-      run: pip install ruff bandit pytest
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f "python/requirements.txt" ]; then pip install -r python/requirements.txt; fi
+        pip install ruff bandit pytest
 
     - name: Python Lint (ruff)
       run: ruff check python/ --ignore E501,E741 --exit-zero
