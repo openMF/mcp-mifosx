@@ -1,0 +1,71 @@
+name: Rust CI
+
+on:
+  push:
+    branches: [ "rust-mcp", "rust-ci-cd" ]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-ci.yml'
+  pull_request:
+    branches: [ "rust-mcp" ]
+    paths:
+      - 'rust/**'
+      - '.github/workflows/rust-ci.yml'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y cmake perl
+
+    - name: Rust Cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: "rust -> target"
+
+    - name: Check
+      run: cargo check
+      working-directory: ./rust
+
+    - name: Run tests
+      run: cargo test --verbose
+      working-directory: ./rust
+
+    - name: Build
+      run: cargo build --verbose
+      working-directory: ./rust
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Python CLI tools
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f "python/requirements.txt" ]; then pip install -r python/requirements.txt; fi
+        pip install ruff bandit pytest
+
+    - name: Python Lint (ruff)
+      run: ruff check python/ --ignore E501,E741 --exit-zero
+
+    - name: Python Security (bandit)
+      run: bandit -r python/ -ll -q --skip B501,B113 --exit-zero
+
+    - name: Python Tests (pytest)
+      run: |
+        if [ -d "python/tests" ]; then
+          pytest python/tests/ -v
+        else
+          echo "No Python tests found. Skipping."
+        fi

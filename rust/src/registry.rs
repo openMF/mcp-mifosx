@@ -12,6 +12,7 @@ pub struct DomainRegistry {
 }
 
 impl DomainRegistry {
+    #[allow(dead_code)]
     pub fn new() -> Self {
         let mut map = HashMap::new();
         map.insert("clients", vec![
@@ -52,10 +53,12 @@ impl DomainRegistry {
         Self { domain_map: map }
     }
 
+    #[allow(dead_code)]
     pub fn get_domain(&self, domain: &str) -> Vec<&'static str> {
         self.domain_map.get(domain).cloned().unwrap_or_default()
     }
 
+    #[allow(dead_code)]
     pub fn get_all_tools(&self) -> Vec<&'static str> {
         let mut tools = Vec::new();
         let mut seen = HashSet::new();
@@ -69,6 +72,7 @@ impl DomainRegistry {
         tools
     }
 
+    #[allow(dead_code)]
     /// Analyzes a user query and returns tool names required.
     pub fn route_intent(&self, user_query: &str) -> Vec<&'static str> {
         let query = user_query.to_lowercase();
@@ -112,5 +116,40 @@ impl DomainRegistry {
             }
         }
         result
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_route_intent_loans() {
+        let registry = DomainRegistry::new();
+        let tools = registry.route_intent("I want to apply for a loan");
+        assert!(tools.contains(&"create_loan"));
+        assert!(tools.contains(&"get_loan_details"));
+    }
+
+    #[test]
+    fn test_route_intent_savings() {
+        let registry = DomainRegistry::new();
+        let tools = registry.route_intent("deposit money into my savings");
+        assert!(tools.contains(&"deposit_savings"));
+        assert!(tools.contains(&"get_savings_account"));
+    }
+
+    #[test]
+    fn test_route_intent_bulk() {
+        let registry = DomainRegistry::new();
+        let tools = registry.route_intent("bulk search for Matt and Syn");
+        assert!(tools.contains(&"bulk_search_clients"));
+    }
+
+    #[test]
+    fn test_route_intent_default_clients() {
+        let registry = DomainRegistry::new();
+        let tools = registry.route_intent("hello world");
+        assert!(tools.contains(&"search_clients_by_name"));
     }
 }
