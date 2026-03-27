@@ -103,7 +103,7 @@ Add this to your `claude_desktop_config.json`:
 
 ---
 
-## Available Tools (61)
+## Available Tools (66)
 
 The Rust server categorizes tools into domains for easier discovery.
 
@@ -126,13 +126,18 @@ The Rust server categorizes tools into domains for easier discovery.
 | `get_client_transactions` | List financial transactions for a client |
 | `get_client_addresses` | Show a client's registered addresses |
 
-### 👥 Groups & Centers (6 tools)
+### 👥 Groups & Centers (11 tools)
 
 | Tool | Description |
 |---|---|
 | `list_groups` | List all lending groups |
 | `activate_group` | Activate a pending lending group |
 | `add_group_member` | Add a client to a group |
+| `remove_group_member` | Remove a client from a group |
+| `get_group_accounts` | List all loan and savings accounts for a group |
+| `create_group_savings_account` | Create a new savings account for a group |
+| `update_group` | Update a group's details (name, external ID) |
+| `close_group` | Close a lending group |
 | `list_centers` | List all centers |
 | `get_center` | Show details for a center |
 | `create_center` | Create a new center |

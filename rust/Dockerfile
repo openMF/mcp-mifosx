@@ -1,5 +1,5 @@
 # Build stage
-FROM rustlang/rust:nightly-slim AS builder
+FROM rust:1-slim-bookworm AS builder
 WORKDIR /usr/src/app
 
 # Install OpenSSL/TLS dependencies required for Reqwest

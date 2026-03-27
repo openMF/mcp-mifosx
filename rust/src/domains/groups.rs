@@ -23,6 +23,14 @@ pub struct CreateGroupReq { pub name: String, pub office_id: i64, pub external_i
 pub struct AddGroupMemberReq { pub group_id: i64, pub client_id: i64 }
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CenterIdReq { pub center_id: i64 }
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreateGroupSavingsReq { pub group_id: i64, pub product_id: i64 }
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct UpdateGroupReq { pub group_id: i64, pub name: String, pub external_id: Option<String> }
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CloseGroupReq { pub group_id: i64, pub closure_reason_id: i64 }
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveGroupMemberReq { pub group_id: i64, pub client_id: i64 }
 
 pub async fn list_groups(adapter: &FineractAdapter, req: ListGroupsReq) -> Result<CallToolResult, McpError> {
     let mut endpoint = "groups".to_string();
@@ -52,6 +60,47 @@ pub async fn activate_group(adapter: &FineractAdapter, req: GroupIdReq) -> Resul
 pub async fn add_group_member(adapter: &FineractAdapter, req: AddGroupMemberReq) -> Result<CallToolResult, McpError> {
     let payload = json!({ "clientMembers": [req.client_id] });
     let res = adapter.execute_post(&format!("groups/{}?command=associateClients", req.group_id), &payload).await.map_err(to_err)?;
+    to_result(res)
+}
+
+pub async fn remove_group_member(adapter: &FineractAdapter, req: RemoveGroupMemberReq) -> Result<CallToolResult, McpError> {
+    let payload = json!({ "clientMembers": [req.client_id] });
+    let res = adapter.execute_post(&format!("groups/{}?command=disassociateClients", req.group_id), &payload).await.map_err(to_err)?;
+    to_result(res)
+}
+
+pub async fn get_group_accounts(adapter: &FineractAdapter, req: GroupIdReq) -> Result<CallToolResult, McpError> {
+    let res = adapter.execute_get(&format!("groups/{}/accounts", req.group_id), None).await.map_err(to_err)?;
+    to_result(res)
+}
+
+pub async fn create_group_savings_account(adapter: &FineractAdapter, req: CreateGroupSavingsReq) -> Result<CallToolResult, McpError> {
+    let payload = json!({
+        "groupId": req.group_id,
+        "productId": req.product_id,
+        "submittedOnDate": today(),
+        "dateFormat": "dd MMMM yyyy",
+        "locale": "en"
+    });
+    let res = adapter.execute_post("savingsaccounts", &payload).await.map_err(to_err)?;
+    to_result(res)
+}
+
+pub async fn update_group(adapter: &FineractAdapter, req: UpdateGroupReq) -> Result<CallToolResult, McpError> {
+    let mut payload = json!({"name": req.name});
+    if let Some(e) = req.external_id { payload["externalId"] = json!(e); }
+    let res = adapter.execute_put(&format!("groups/{}", req.group_id), &payload).await.map_err(to_err)?;
+    to_result(res)
+}
+
+pub async fn close_group(adapter: &FineractAdapter, req: CloseGroupReq) -> Result<CallToolResult, McpError> {
+    let payload = json!({
+        "closureDate": today(),
+        "closureReasonId": req.closure_reason_id,
+        "dateFormat": "dd MMMM yyyy",
+        "locale": "en"
+    });
+    let res = adapter.execute_post(&format!("groups/{}?command=close", req.group_id), &payload).await.map_err(to_err)?;
     to_result(res)
 }
 
