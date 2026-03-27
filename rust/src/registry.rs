@@ -24,7 +24,8 @@ impl DomainRegistry {
         ]);
         map.insert("groups", vec![
             "list_groups", "activate_group", "add_group_member",
-            "list_centers", "get_center", "create_center"
+            "remove_group_member", "get_group_accounts", "create_group_savings_account",
+            "update_group", "close_group", "list_centers", "get_center", "create_center"
         ]);
         map.insert("loans", vec![
             "get_loan_details", "get_repayment_schedule", "create_loan",

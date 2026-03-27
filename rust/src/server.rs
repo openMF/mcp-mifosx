@@ -64,6 +64,16 @@ impl MifosMcpServer {
     async fn activate_group(&self, Parameters(req): Parameters<groups::GroupIdReq>) -> Result<CallToolResult, McpError> { groups::activate_group(&self.adapter, req).await }
     #[tool(description = "Add client to group")]
     async fn add_group_member(&self, Parameters(req): Parameters<groups::AddGroupMemberReq>) -> Result<CallToolResult, McpError> { groups::add_group_member(&self.adapter, req).await }
+    #[tool(description = "Remove client from group")]
+    async fn remove_group_member(&self, Parameters(req): Parameters<groups::RemoveGroupMemberReq>) -> Result<CallToolResult, McpError> { groups::remove_group_member(&self.adapter, req).await }
+    #[tool(description = "Get all accounts for a group")]
+    async fn get_group_accounts(&self, Parameters(req): Parameters<groups::GroupIdReq>) -> Result<CallToolResult, McpError> { groups::get_group_accounts(&self.adapter, req).await }
+    #[tool(description = "Create a savings account for a group")]
+    async fn create_group_savings_account(&self, Parameters(req): Parameters<groups::CreateGroupSavingsReq>) -> Result<CallToolResult, McpError> { groups::create_group_savings_account(&self.adapter, req).await }
+    #[tool(description = "Update group details")]
+    async fn update_group(&self, Parameters(req): Parameters<groups::UpdateGroupReq>) -> Result<CallToolResult, McpError> { groups::update_group(&self.adapter, req).await }
+    #[tool(description = "Close a group")]
+    async fn close_group(&self, Parameters(req): Parameters<groups::CloseGroupReq>) -> Result<CallToolResult, McpError> { groups::close_group(&self.adapter, req).await }
     #[tool(description = "List centers")]
     async fn list_centers(&self, Parameters(req): Parameters<groups::ListGroupsReq>) -> Result<CallToolResult, McpError> { groups::list_centers(&self.adapter, req).await }
     #[tool(description = "Show center details")]
