@@ -5,7 +5,7 @@ This project provides Model Context Protocol (MCP) for the Mifos X Ecosystem, en
 Implementations are available in:
 - **Java (Quarkus)** — 38 typed tools (across Backoffice and Recommendations).
 - **Python (FastMCP)** — 49 typed tools (modular domain-driven design).
-- **Rust** — 61 typed tools (high-performance async I/O with exclusive bulk operations).
+- **Rust** — 66 typed tools (high-performance async I/O with exclusive bulk operations).
 
 ---
 
@@ -24,7 +24,7 @@ The Mifos MCP Server acts as a standalone, stateless integration tier that bridg
 │  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐  │
 │  │ /java (Quarkus) │ │/python (FastMCP)│ │  /rust (Tokio)  │  │
 │  │                 │ │                 │ │                 │  │
-│  │ - 38 Tools      │ │ - 49 Tools      │ │ - 61 Tools      │  │
+│  │ - 38 Tools      │ │ - 49 Tools      │ │ - 66 Tools      │  │
 │  │ - Backoffice    │ │ - Modular Design│ │ - Async I/O     │  │
 │  │ - Recommend.    │ │                 │ │ - Bulk Actions  │  │
 │  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘  │
@@ -47,7 +47,7 @@ While this repository hosts two different programming languages, they are kept i
 
 ### How they "Sync":
 1. **Tool Specification**: All implementations aim to expose the same core banking tools. 
-   - **Rust** currently leads with **61 tools**, uniquely featuring high-concurrency Bulk Operations.
+   - **Rust** currently leads with **66 tools**, uniquely featuring high-concurrency Bulk Operations.
    - **Python** provides **49 tools** using a modular domain design.
    - **Java** provides **38 tools** (21 for Backoffice operations and 17 for User Recommendations).
 2. **API Alignment**: All implementations are built against the same **Apache Fineract REST API**. They share identical logic for field routing.
@@ -140,9 +140,9 @@ This repository is structured to support multiple implementations and client int
 
 The exact number and categorization of tools depend on the core server implementation deployed:
 
-### Rust (61 Tools)
+### Rust (66 Tools)
 *Built for asynchronous scale and bulk processing.*
-- **Clients & Groups**: 22 Tools
+- **Clients & Groups**: 27 Tools
 - **Loans & Savings**: 21 Tools
 - **Staff & Accounting**: 7 Tools
 - **Bulk Operations**: 11 Tools *(Exclusive to Rust)*
