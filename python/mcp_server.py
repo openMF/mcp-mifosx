@@ -47,7 +47,7 @@ from tools.domains.loans import (
     approve_and_disburse_loan,
     create_group_loan,
     create_loan,
-    get_loan_details,
+    get_loan_details as get_loan_details_domain,
     get_loan_history,
     get_loan_template,
     get_overdue_loans,
@@ -287,11 +287,35 @@ def get_addresses(clientId: int) -> dict:
 # --- LOANS ---
 
 @mcp.tool()
-def get_loan(loanId: int) -> dict:
-    """Get key details of a specific loan."""
-    data = get_loan_details.func(loanId)
+def get_loan_details(loan_id: int) -> dict:
+    """Get key details of a specific loan by loan ID.
+
+    This MCP-native tool validates the loan ID, fetches loan data from Fineract
+    via the loan domain adapter, and returns a structured JSON payload.
+    """
+    # Fast fail for invalid IDs to avoid unnecessary API round trips.
+    if not isinstance(loan_id, int) or loan_id <= 0:
+        return {
+            "error": "Invalid loan_id. It must be a positive integer.",
+            "httpStatusCode": 400,
+            "loan_id": loan_id,
+        }
+
+    data = get_loan_details_domain.func(loan_id)
     if not isinstance(data, dict):
-        return data
+        return {
+            "error": "Unexpected response type from loan details tool.",
+            "httpStatusCode": 502,
+            "loan_id": loan_id,
+        }
+
+    if "error" in data:
+        return {
+            "error": data.get("error"),
+            "httpStatusCode": data.get("httpStatusCode", 502),
+            "loan_id": loan_id,
+        }
+
     tl = data.get("timeline", {})
     return {
         "loanId":              data.get("id"),
@@ -309,6 +333,11 @@ def get_loan(loanId: int) -> dict:
         "numberOfRepayments":  data.get("numberOfRepayments"),
         "repaymentFrequency":  f"Every {data.get('repaymentEvery')} {data.get('repaymentFrequencyType', {}).get('value','')}",
     }
+
+@mcp.tool()
+def get_loan(loanId: int) -> dict:
+    """Backward-compatible alias for get_loan_details."""
+    return get_loan_details(loanId)
 
 @mcp.tool()
 def get_repayment_sched(loanId: int) -> dict:
@@ -364,7 +393,7 @@ def create_new_loan(clientId: int, principal: float, months: int, productId: int
 @mcp.tool()
 def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
     """Approve and disburse a pending loan. Validates loanId exists before executing."""
-    check = get_loan_details.func(loanId)
+    check = get_loan_details_domain.func(loanId)
     if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     status = check.get("status", {}).get("value", "")
@@ -378,7 +407,7 @@ def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
 @mcp.tool()
 def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk profile") -> dict:
     """Reject a pending loan application. Validates loanId exists before executing."""
-    check = get_loan_details.func(loanId)
+    check = get_loan_details_domain.func(loanId)
     if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     status = check.get("status", {}).get("value", "")
@@ -389,7 +418,7 @@ def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk prof
 @mcp.tool()
 def make_repayment(loanId: int, amount: float) -> dict:
     """Make a repayment on an active loan. Validates loanId and status before executing."""
-    check = get_loan_details.func(loanId)
+    check = get_loan_details_domain.func(loanId)
     if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     status = check.get("status", {}).get("value", "")
@@ -400,7 +429,7 @@ def make_repayment(loanId: int, amount: float) -> dict:
 @mcp.tool()
 def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
     """Apply a fee/charge to a loan. Validates loanId exists before executing."""
-    check = get_loan_details.func(loanId)
+    check = get_loan_details_domain.func(loanId)
     if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     return apply_late_fee.func(loanId, feeAmount, 2)
@@ -408,7 +437,7 @@ def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
 @mcp.tool()
 def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized Waiver") -> dict:
     """Waive interest on a loan. Validates loanId exists before executing."""
-    check = get_loan_details.func(loanId)
+    check = get_loan_details_domain.func(loanId)
     if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     return waive_interest.func(loanId, amount, note)
@@ -426,7 +455,7 @@ def create_group_loan_app(groupId: int, principal: float, months: int, productId
 @mcp.tool()
 def undo_approval(loanId: int) -> dict:
     """Undo a loan approval so terms can be modified. Only works on approved (not yet disbursed) loans."""
-    check = get_loan_details.func(loanId)
+    check = get_loan_details_domain.func(loanId)
     if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
         return {"error": f"Loan ID {loanId} not found."}
     status = check.get("status", {}).get("value", "")
@@ -437,7 +466,7 @@ def undo_approval(loanId: int) -> dict:
 @mcp.tool()
 def undo_disbursal(loanId: int) -> dict:
     """Undo a loan disbursal to reverse funds and return the loan to approved status."""
-    check = get_loan_details.func(loanId)
+    check = get_loan_details_domain.func(loanId)
     if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
         return {"error": f"Loan ID {loanId} not found."}
     status = check.get("status", {}).get("value", "")
@@ -458,7 +487,7 @@ def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: s
     """Submit a loan reschedule request. Use when a client needs modified repayment terms.
     Dates must be in 'dd MMMM yyyy' format (e.g. '15 March 2026').
     At least one modification (adjustedDueDate, newInterestRate, graceOnPrincipal, or extraTerms) is required."""
-    check = get_loan_details.func(loanId)
+    check = get_loan_details_domain.func(loanId)
     if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
         return {"error": f"Loan ID {loanId} not found."}
     status = check.get("status", {}).get("value", "")

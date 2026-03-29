@@ -13,9 +13,50 @@ from tools.mcp_adapter import fineract_client
 
 @tool
 def get_loan_details(loan_id: int):
-    """Answers: 'What is the status and outstanding balance of Loan #12345?'"""
+    """Answers: 'What is the status and outstanding balance of Loan #12345?'
+
+    Validates loan_id, calls Fineract `/loans/{loan_id}`, and returns the raw
+    loan payload on success so downstream tools can reuse full fields.
+    Errors are normalized for invalid IDs and adapter/API failures.
+    """
     print(f"[Tool] Fetching summary details for Loan #{loan_id}...")
-    return fineract_client.execute_get(f"loans/{loan_id}")
+
+    # Guard against malformed IDs before hitting Fineract.
+    if not isinstance(loan_id, int) or loan_id <= 0:
+        return {
+            "error": "Invalid loan_id. It must be a positive integer.",
+            "httpStatusCode": 400,
+            "loan_id": loan_id,
+        }
+
+    response = fineract_client.execute_get(f"loans/{loan_id}")
+
+    # Normalize transport/API failures from the adapter.
+    if not isinstance(response, dict):
+        return {
+            "error": "Unexpected response from Fineract adapter.",
+            "httpStatusCode": 502,
+            "loan_id": loan_id,
+        }
+
+    if "error" in response:
+        message = response.get("error", "Fineract API request failed")
+        status = 404 if "not exist" in str(message).lower() or "not found" in str(message).lower() else 502
+        return {
+            "error": message,
+            "httpStatusCode": status,
+            "loan_id": loan_id,
+        }
+
+    # Fineract successful payloads should include loan id.
+    if not response.get("id"):
+        return {
+            "error": f"Loan ID {loan_id} not found.",
+            "httpStatusCode": 404,
+            "loan_id": loan_id,
+        }
+
+    return response
 
 @tool
 def get_repayment_schedule(loan_id: int):
