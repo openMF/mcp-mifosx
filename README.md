@@ -160,6 +160,129 @@ The exact number and categorization of tools depend on the core server implement
 
 ---
 
+## MCP Tool Flow (For Contributors)
+
+This section explains how MCP tools in this repository are used end-to-end, and how to add new ones safely.
+
+### What MCP tools are in this project
+
+MCP tools are typed functions that expose core Fineract operations to an LLM client.
+
+- **Clients & Groups**: search clients, fetch accounts, create/activate client, manage groups/centers
+- **Loans & Savings**: loan details, repayment schedule, create loan, approve/disburse, deposit/withdraw
+- **Staff & Accounting**: list staff/offices, GL accounts, journal entries
+- **Bulk (Rust only)**: high-throughput batch operations for concurrent processing
+
+Each implementation (Java, Python, Rust) follows the same architecture goal: **translate MCP tool calls into Fineract REST calls and return predictable JSON to the client**.
+
+### End-to-end flow
+
+```text
+User Query -> LLM -> MCP Tool -> Apache Fineract -> MCP Response -> LLM Answer
+```
+
+1. User asks a natural-language question in an MCP-capable client.
+2. LLM selects the most relevant MCP tool and prepares typed parameters.
+3. MCP server executes the tool.
+4. Tool calls Apache Fineract REST API.
+5. Fineract returns API payload (or error).
+6. MCP tool normalizes output and sends JSON response back to LLM.
+7. LLM generates final user-facing answer.
+
+### Example: natural language -> tool -> API -> output
+
+**Natural language input**:
+
+```text
+"Show me details for loan 27"
+```
+
+**Selected MCP tool**:
+
+```text
+get_loan_details(loan_id=27)
+```
+
+**Underlying Fineract API call**:
+
+```http
+GET /loans/27
+```
+
+**MCP tool output (structured JSON)**:
+
+```json
+{
+   "loanId": 27,
+   "accountNo": "000000027",
+   "productName": "SILVER",
+   "status": "Active",
+   "loanType": "Individual",
+   "principal_USD": 10000.0,
+   "outstandingBalance_USD": 6342.17,
+   "interestRate_pct": 10.0,
+   "submittedDate": "14 March 2026",
+   "approvedDate": "15 March 2026",
+   "disbursedDate": "16 March 2026"
+}
+```
+
+### Sample JSON request/response (MCP tool call)
+
+**Request**:
+
+```json
+{
+   "tool": "get_loan_details",
+   "arguments": {
+      "loan_id": 27
+   }
+}
+```
+
+**Success response**:
+
+```json
+{
+   "loanId": 27,
+   "status": "Active",
+   "outstandingBalance_USD": 6342.17
+}
+```
+
+**Error response (invalid input)**:
+
+```json
+{
+   "error": "Invalid loan_id. It must be a positive integer.",
+   "httpStatusCode": 400,
+   "loan_id": 0
+}
+```
+
+### How to add a new MCP tool
+
+Use this sequence to keep parity with existing coding patterns:
+
+1. **Add domain function**:
+    - Implement Fineract call and error normalization in the domain module.
+    - Example path (Python): `python/tools/domains/<domain>.py`
+2. **Expose as MCP tool**:
+    - Register a wrapper with `@mcp.tool()` in server entrypoint.
+    - Example path (Python): `python/mcp_server.py`
+3. **Register in router (if used)**:
+    - Add to domain router for intent-based tool filtering.
+    - Example path (Python): `python/tools/registry.py`
+4. **Add tests**:
+    - Cover success path, invalid input, and API failure.
+    - Example path (Python): `python/tests/test_<domain>.py`
+5. **Update docs**:
+    - Add tool name and behavior to implementation README for discoverability.
+
+Following this workflow helps maintain tool consistency across implementations and keeps outputs reliable for AI agents.
+
+---
+
 ## Testing with MCP Inspector
 
 Use the **MCP Inspector** to test and debug your server interactively:
