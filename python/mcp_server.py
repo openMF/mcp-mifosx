@@ -4,6 +4,10 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+import functools
+import inspect
+import json
+from time import perf_counter
 
 from fastmcp import FastMCP
 
@@ -76,6 +80,90 @@ from tools.domains.staff import get_office_details, get_staff_details, list_offi
 
 # 3. Initialize the FastMCP Server
 mcp = FastMCP("Mifos-Banking-Agent")
+
+
+def _serialize_for_log(value, max_len: int = 2000) -> str:
+    """Serialize values safely for logs while preventing oversized log lines."""
+    try:
+        payload = json.dumps(value, default=str, ensure_ascii=True)
+    except (TypeError, ValueError):
+        payload = str(value)
+    if len(payload) > max_len:
+        return payload[:max_len] + "...<truncated>"
+    return payload
+
+
+def _build_param_map(func, args, kwargs) -> dict:
+    """Map call arguments to named parameters for readable debugging logs."""
+    try:
+        bound = inspect.signature(func).bind_partial(*args, **kwargs)
+        return dict(bound.arguments)
+    except Exception:
+        # Fallback to positional/keyword capture if signature binding fails.
+        return {"args": args, "kwargs": kwargs}
+
+
+def _response_status(result) -> str:
+    """Derive a compact status string from tool output."""
+    if isinstance(result, dict):
+        if "error" in result:
+            code = result.get("httpStatusCode")
+            return f"error:{code}" if code is not None else "error"
+        if "httpStatusCode" in result:
+            return f"http:{result.get('httpStatusCode')}"
+        if "status" in result:
+            return f"status:{result.get('status')}"
+    return "success"
+
+
+def _enable_mcp_tool_logging() -> None:
+    """Wrap FastMCP tool registration so every tool emits structured execution logs."""
+    original_tool = mcp.tool
+
+    def logged_tool(*tool_args, **tool_kwargs):
+        decorator = original_tool(*tool_args, **tool_kwargs)
+
+        def apply(func):
+            tool_name = tool_kwargs.get("name") or func.__name__
+
+            @functools.wraps(func)
+            def wrapped(*args, **kwargs):
+                started = perf_counter()
+                params = _build_param_map(func, args, kwargs)
+                serialized_params = _serialize_for_log(params)
+
+                try:
+                    result = func(*args, **kwargs)
+                    elapsed_ms = (perf_counter() - started) * 1000
+                    logger.info(
+                        "MCP_TOOL_EXEC name=%s status=%s duration_ms=%.2f params=%s",
+                        tool_name,
+                        _response_status(result),
+                        elapsed_ms,
+                        serialized_params,
+                    )
+                    return result
+                except Exception:
+                    elapsed_ms = (perf_counter() - started) * 1000
+                    logger.exception(
+                        "MCP_TOOL_EXEC name=%s status=exception duration_ms=%.2f params=%s",
+                        tool_name,
+                        elapsed_ms,
+                        serialized_params,
+                    )
+                    raise
+
+            # Ensure introspection-based frameworks still see the original signature.
+            wrapped.__signature__ = inspect.signature(func)
+            return decorator(wrapped)
+
+        return apply
+
+    mcp.tool = logged_tool
+
+
+# Enable structured logging for every @mcp.tool() registered below.
+_enable_mcp_tool_logging()
 
 # --- Shared helpers ---
 
