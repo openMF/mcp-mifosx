@@ -12,7 +12,6 @@ pub struct DomainRegistry {
 }
 
 impl DomainRegistry {
-    #[allow(dead_code)]
     pub fn new() -> Self {
         let mut map = HashMap::new();
         map.insert("clients", vec![
@@ -54,12 +53,10 @@ impl DomainRegistry {
         Self { domain_map: map }
     }
 
-    #[allow(dead_code)]
     pub fn get_domain(&self, domain: &str) -> Vec<&'static str> {
         self.domain_map.get(domain).cloned().unwrap_or_default()
     }
 
-    #[allow(dead_code)]
     pub fn get_all_tools(&self) -> Vec<&'static str> {
         let mut tools = Vec::new();
         let mut seen = HashSet::new();
@@ -73,7 +70,6 @@ impl DomainRegistry {
         tools
     }
 
-    #[allow(dead_code)]
     /// Analyzes a user query and returns tool names required.
     pub fn route_intent(&self, user_query: &str) -> Vec<&'static str> {
         let query = user_query.to_lowercase();
