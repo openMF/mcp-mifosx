@@ -254,6 +254,36 @@ python -m pytest tests/test_my_new_tool.py -v
 - Follow commit message format: `feat(domain): brief description`
 - Link Jira ticket: `Closes AI-123`
 
+### Demo Requirement for New Tools
+
+- Contributors must include proof that their MCP tool works correctly.
+- Accepted formats:
+    - Screenshot of terminal output showing tool execution and structured response
+    - Short demo video
+- The screenshot should clearly show:
+    - Tool name
+    - Execution status (success/failure)
+    - Structured JSON response
+- Example reference:
+    - A sample screenshot demonstrating `get_loan_details` MCP tool execution is included in the PR.
+
+Expected output format:
+
+```text
+TOOL: get_loan_details
+STATUS: success
+OUTPUT:
+{
+    "id": 1,
+    "status": {
+        "value": "Active"
+    },
+    "summary": {
+        "totalOutstanding": 1500
+    }
+}
+```
+
 ---
 
 ## Code Quality Standards
