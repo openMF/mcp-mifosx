@@ -46,6 +46,8 @@ Python/MCP-Server-Python-Implementation/tools/domains/__pycache__/
 *.md
 !README.md
 **/README.md
+!rust/benches/results.md
+!rust/benches/README.md
 
 # Plugin directory
 /.quarkus/cli/plugins/
