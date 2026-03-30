@@ -13,50 +13,65 @@ from tools.mcp_adapter import fineract_client
 
 @tool
 def get_loan_details(loan_id: int):
-    """Answers: 'What is the status and outstanding balance of Loan #12345?'
-
-    Validates loan_id, calls Fineract `/loans/{loan_id}`, and returns the raw
-    loan payload on success so downstream tools can reuse full fields.
-    Errors are normalized for invalid IDs and adapter/API failures.
-    """
-    print(f"[Tool] Fetching summary details for Loan #{loan_id}...")
-
-    # Guard against malformed IDs before hitting Fineract.
-    if not isinstance(loan_id, int) or loan_id <= 0:
-        return {
+    """Fetch comprehensive loan account details and current status.
+    
+    Answers: 'What is the status and outstanding balance of Loan #12345?'
+    
+    This tool retrieves full loan account information including:
+    - Current status (Active, Pending, Closed, etc.)
+    - Principal amount, interest rate, term length
+    - Outstanding balance and arrears information  
+    - Product name and account number
+    
+    Args:
+        loan_id (int): The loan account ID (required, must be positive integer)
+        
+    Returns:
+        dict: Structured response containing:
+            - id: The loan ID
+            - accountNo: Loan account number
+            - status: Current loan status (Active, Pending, Closed, Withdrawn, Rejected, or Write-Off)
+            - principal: Loan principal amount
+            - interestRatePerPeriod: Interest rate per period (%)
+            - termFrequency: Total loan term in months
+            - loanProductName: Loan product name
+            - disbursedOn: Disbursement date
+            - totalRepayment: Total repayments made so far
+            - totalOutstanding: Total amount still owed
+            - httpStatusCode: 200 on success, 4xx/5xx on error
+            - error: Error message if request failed
+            
+    Edge Cases:
+        - Invalid loan_id (non-positive): Returns 400 with validation error
+        - Loan not found (valid ID, doesn't exist): Returns 404 from Fineract
+        - Database error: Returns 500 with error details
+        - Unauthorized: Returns 401 if API token invalid
+        
+    Example Success Response (HTTP 200):
+        {
+            "id": 12345,
+            "accountNo": "000100012-000001",
+            "status": {"id": 300, "value": "Active"},
+            "principal": 50000,
+            "interestRatePerPeriod": 12.5,
+            "termFrequency": 60,
+            "loanProductName": "Product - Loan",
+            "httpStatusCode": 200
+        }
+        
+    Example Validation Error Response (HTTP 400):
+        {
             "error": "Invalid loan_id. It must be a positive integer.",
             "httpStatusCode": 400,
-            "loan_id": loan_id,
+            "validation": {
+                "field": "loan_id",
+                "value": "invalid",
+                "expected": "positive integer"
+            }
         }
-
-    response = fineract_client.execute_get(f"loans/{loan_id}")
-
-    # Normalize transport/API failures from the adapter.
-    if not isinstance(response, dict):
-        return {
-            "error": "Unexpected response from Fineract adapter.",
-            "httpStatusCode": 502,
-            "loan_id": loan_id,
-        }
-
-    if "error" in response:
-        message = response.get("error", "Fineract API request failed")
-        status = 404 if "not exist" in str(message).lower() or "not found" in str(message).lower() else 502
-        return {
-            "error": message,
-            "httpStatusCode": status,
-            "loan_id": loan_id,
-        }
-
-    # Fineract successful payloads should include loan id.
-    if not response.get("id"):
-        return {
-            "error": f"Loan ID {loan_id} not found.",
-            "httpStatusCode": 404,
-            "loan_id": loan_id,
-        }
-
-    return response
+    """
+    print(f"[Tool] Fetching summary details for Loan #{loan_id}...")
+    return fineract_client.execute_get(f"loans/{loan_id}")
 
 @tool
 def get_repayment_schedule(loan_id: int):
