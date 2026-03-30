@@ -136,6 +136,10 @@ This repository is structured to support multiple implementations and client int
 
 ---
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/openmf-mcp-mifosx).
+
 ## Available Tools Summary
 
 The exact number and categorization of tools depend on the core server implementation deployed:
