@@ -1,3 +1,4 @@
+import pytest
 from core.suggestion_engine import generate_suggestions
 
 
@@ -5,34 +6,50 @@ def test_overdue_loans():
     data = [{"id": 101}]
     result = generate_suggestions("get_overdue_loans", data)
 
-    assert "Apply late fee to loan 101" in result
-    assert "Send reminder for loan 101" in result
+    assert len(result["suggestions"]) > 0
+    assert any("loan 101" in s for s in result["suggestions"])
+
+    assert len(result["suggestions_structured"]) > 0
+    assert result["suggestions_structured"][0]["loanId"] == 101
 
 
 def test_active_loan():
     data = {"loanId": 102, "status": "active"}
     result = generate_suggestions("get_loan_details", data)
 
-    assert "Make repayment for loan 102" in result
+    assert any("repayment" in s.lower() for s in result["suggestions"])
+    assert any(item["action"] == "make_repayment" for item in result["suggestions_structured"])
 
 
 def test_pending_loan():
     data = {"loanId": 103, "status": "pending"}
     result = generate_suggestions("get_loan_details", data)
 
-    assert "Approve loan 103" in result
+    assert any("approve" in s.lower() for s in result["suggestions"])
+    assert any(item["action"] == "approve_loan" for item in result["suggestions_structured"])
 
 
 def test_empty_data():
     result = generate_suggestions("get_overdue_loans", [])
-    assert result == []
+    assert result["suggestions"] == []
+    assert result["suggestions_structured"] == []
 
 
-def test_invalid_data():
-    result = generate_suggestions("get_loan_details", [])
-    assert result == []
+def test_invalid_data_type():
+    result = generate_suggestions("get_overdue_loans", {})
+    assert result["suggestions"] == []
+    assert result["suggestions_structured"] == []
 
 
 def test_unknown_intent():
     result = generate_suggestions("unknown", {})
-    assert result == []
+    assert result["suggestions"] == []
+    assert result["suggestions_structured"] == []
+
+
+def test_max_limit():
+    data = [{"id": i} for i in range(10)]
+    result = generate_suggestions("get_overdue_loans", data)
+
+    assert len(result["suggestions"]) <= 5
+    assert len(result["suggestions_structured"]) <= 5

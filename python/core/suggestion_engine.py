@@ -4,61 +4,143 @@ This module is experimental and intended for client-side or AI-agent usage.
 It is NOT integrated into MCP tool responses to keep MCP layer clean.
 """
 
+MAX_SUGGESTIONS = 5
+
 
 def generate_suggestions(intent, data):
     """
     Generate context-aware suggestions based on MCP tool responses.
 
-    This function analyzes the intent (which tool was called)
-    and the returned data to provide meaningful next-step actions.
-
-    Args:
-        intent (str): Name of the MCP tool / action performed
-        data (dict or list): Response data from the tool
-
     Returns:
-        list: A list of suggested next actions (strings)
+        dict:
+        {
+            "suggestions": [str],
+            "suggestions_structured": [dict]
+        }
     """
 
-    suggestions = []
+    raw_suggestions = []
+    structured = []
 
-    # 🔹 Case 1: Overdue loans → suggest recovery actions
+    # 🔹 Case 1: Overdue loans
     if intent == "get_overdue_loans":
-        # Validate data type
         if not isinstance(data, list):
-            return []
+            return _empty_response()
 
         for loan in data:
             loan_id = loan.get("id")
             if not loan_id:
                 continue
 
-            suggestions.append(f"Apply late fee to loan {loan_id}")
-            suggestions.append(f"View repayment schedule for loan {loan_id}")
-            suggestions.append(f"Send reminder for loan {loan_id}")
+            # Text suggestions
+            raw_suggestions.extend([
+                f"Apply late fee to loan {loan_id}",
+                f"View repayment schedule for loan {loan_id}",
+                f"Send reminder for loan {loan_id}",
+            ])
 
-    # 🔹 Case 2: Loan details → suggest actions based on loan status
+            # Structured suggestions
+            structured.extend([
+                {
+                    "action": "apply_late_fee",
+                    "label": "Apply late fee",
+                    "loanId": loan_id,
+                },
+                {
+                    "action": "view_repayment_schedule",
+                    "label": "View repayment schedule",
+                    "loanId": loan_id,
+                },
+                {
+                    "action": "send_reminder",
+                    "label": "Send reminder",
+                    "loanId": loan_id,
+                },
+            ])
+
+    # 🔹 Case 2: Loan details
     elif intent == "get_loan_details":
-        # Validate data type
         if not isinstance(data, dict):
-            return []
+            return _empty_response()
 
         loan_id = data.get("loanId")
         if not loan_id:
-            return []
+            return _empty_response()
 
-        # Normalize status safely
         status = str(data.get("status", "")).lower()
 
-        # Active loan → repayment actions
         if "active" in status:
-            suggestions.append(f"Make repayment for loan {loan_id}")
-            suggestions.append(f"View repayment schedule for loan {loan_id}")
+            raw_suggestions.extend([
+                f"Make repayment for loan {loan_id}",
+                f"View repayment schedule for loan {loan_id}",
+            ])
 
-        # Pending/submitted loan → approval actions
+            structured.extend([
+                {
+                    "action": "make_repayment",
+                    "label": "Make repayment",
+                    "loanId": loan_id,
+                },
+                {
+                    "action": "view_repayment_schedule",
+                    "label": "View repayment schedule",
+                    "loanId": loan_id,
+                },
+            ])
+
         if "pending" in status or "submitted" in status:
-            suggestions.append(f"Approve loan {loan_id}")
-            suggestions.append(f"Reject loan {loan_id}")
+            raw_suggestions.extend([
+                f"Approve loan {loan_id}",
+                f"Reject loan {loan_id}",
+            ])
 
-    # 🔹 Default fallback
-    return suggestions
+            structured.extend([
+                {
+                    "action": "approve_loan",
+                    "label": "Approve loan",
+                    "loanId": loan_id,
+                },
+                {
+                    "action": "reject_loan",
+                    "label": "Reject loan",
+                    "loanId": loan_id,
+                },
+            ])
+
+    else:
+        return _empty_response()
+
+    # 🔹 Deduplicate
+    raw_suggestions = list(dict.fromkeys(raw_suggestions))
+    structured = _deduplicate_structured(structured)
+
+    # 🔹 Limit results
+    raw_suggestions = raw_suggestions[:MAX_SUGGESTIONS]
+    structured = structured[:MAX_SUGGESTIONS]
+
+    return {
+        "suggestions": raw_suggestions,
+        "suggestions_structured": structured,
+    }
+
+
+# ------------------ Helpers ------------------ #
+
+def _empty_response():
+    return {
+        "suggestions": [],
+        "suggestions_structured": []
+    }
+
+
+def _deduplicate_structured(items):
+    seen = set()
+    result = []
+
+    for item in items:
+        key = (item.get("action"), item.get("loanId"))
+        if key not in seen:
+            seen.add(key)
+            result.append(item)
+
+    return result
