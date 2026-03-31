@@ -37,6 +37,28 @@ def test_pending_loan():
     assert any(item["action"] == "approve_loan" for item in result["suggestions_structured"])
 
 
+def test_savings_account():
+    data = {"accountId": 201}
+    result = generate_suggestions("get_savings_account", data)
+
+    # Text
+    assert any("deposit" in s.lower() for s in result["suggestions"])
+
+    # Structured
+    assert any(item["action"] == "deposit_savings" for item in result["suggestions_structured"])
+
+
+def test_client_details():
+    data = {"clientId": 301}
+    result = generate_suggestions("get_client_details", data)
+
+    # Text
+    assert any("accounts" in s.lower() for s in result["suggestions"])
+
+    # Structured
+    assert any(item["action"] == "get_client_accounts" for item in result["suggestions_structured"])
+
+
 def test_empty_data():
     result = generate_suggestions("get_overdue_loans", [])
 
@@ -66,19 +88,15 @@ def test_max_limit():
     assert len(result["suggestions_structured"]) <= 5
 
 
-def test_savings_account():
-    data = {"accountId": 201}
-    result = generate_suggestions("get_savings_account", data)
-
-    # Text
-    assert any("deposit" in s.lower() for s in result["suggestions"])
-
-    # Structured
-    assert any(item["action"] == "deposit_savings" for item in result["suggestions_structured"])
-
-
 def test_invalid_savings_data():
     result = generate_suggestions("get_savings_account", {})
+
+    assert result["suggestions"] == []
+    assert result["suggestions_structured"] == []
+
+
+def test_invalid_client_data():
+    result = generate_suggestions("get_client_details", {})
 
     assert result["suggestions"] == []
     assert result["suggestions_structured"] == []

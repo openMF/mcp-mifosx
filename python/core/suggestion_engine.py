@@ -55,7 +55,6 @@ def generate_suggestions(intent, data):
 
         status = str(data.get("status", "")).lower()
 
-        # Active loan
         if "active" in status:
             raw_suggestions.extend([
                 f"Make repayment for loan {loan_id}",
@@ -67,7 +66,6 @@ def generate_suggestions(intent, data):
                 {"action": "view_repayment_schedule", "label": "View repayment schedule", "loanId": loan_id},
             ])
 
-        # Pending/submitted loan
         if "pending" in status or "submitted" in status:
             raw_suggestions.extend([
                 f"Approve loan {loan_id}",
@@ -98,6 +96,27 @@ def generate_suggestions(intent, data):
             {"action": "deposit_savings", "label": "Deposit money", "accountId": account_id},
             {"action": "withdraw_savings", "label": "Withdraw money", "accountId": account_id},
             {"action": "view_savings_transactions", "label": "View transactions", "accountId": account_id},
+        ])
+
+    # 🔹 Case 4: Client details
+    elif intent == "get_client_details":
+        if not isinstance(data, dict):
+            return _empty_response()
+
+        client_id = data.get("clientId") or data.get("id")
+        if not client_id:
+            return _empty_response()
+
+        raw_suggestions.extend([
+            f"View accounts for client {client_id}",
+            f"View transactions for client {client_id}",
+            f"Apply charge to client {client_id}",
+        ])
+
+        structured.extend([
+            {"action": "get_client_accounts", "label": "View accounts", "clientId": client_id},
+            {"action": "get_client_transactions", "label": "View transactions", "clientId": client_id},
+            {"action": "apply_client_charge", "label": "Apply charge", "clientId": client_id},
         ])
 
     else:
@@ -134,8 +153,10 @@ def _deduplicate_structured(items):
         key = (
             item.get("action"),
             item.get("loanId"),
-            item.get("accountId")
+            item.get("accountId"),
+            item.get("clientId"),
         )
+
         if key not in seen:
             seen.add(key)
             result.append(item)
