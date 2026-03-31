@@ -12,7 +12,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [M
 logger = logging.getLogger(__name__)
 
 # 2. Import all the available domain functions from the existing codebase
-from core.suggestion_engine import generate_suggestions  
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge as create_charge_domain
 from tools.domains.charges import get_charge as get_charge_domain
