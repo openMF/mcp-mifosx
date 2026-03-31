@@ -1,3 +1,9 @@
+"""
+NOTE:
+This module is experimental and intended for client-side or AI-agent usage.
+It is NOT integrated into MCP tool responses to keep MCP layer clean.
+"""
+
 def generate_suggestions(intent, data):
     """
     Generate context-aware suggestions based on MCP tool responses.
