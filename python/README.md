@@ -405,3 +405,20 @@ Suggestion logic can be integrated into:
 - AI Assistants (LLM layer)
 - Chat-based banking copilots
 - Workflow automation systems
+
+## Suggestion Engine (Experimental)
+
+This repository includes an experimental `suggestion_engine.py` module.
+
+- Not integrated into MCP tool responses
+- Intended for client-side AI agents
+- Helps generate next-step recommendations
+
+Example:
+
+```python
+from core.suggestion_engine import generate_suggestions
+
+data = [{"id": 101}]
+print(generate_suggestions("get_overdue_loans", data))
+```
