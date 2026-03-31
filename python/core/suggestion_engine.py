@@ -32,30 +32,16 @@ def generate_suggestions(intent, data):
             if not loan_id:
                 continue
 
-            # Text suggestions
             raw_suggestions.extend([
                 f"Apply late fee to loan {loan_id}",
                 f"View repayment schedule for loan {loan_id}",
                 f"Send reminder for loan {loan_id}",
             ])
 
-            # Structured suggestions
             structured.extend([
-                {
-                    "action": "apply_late_fee",
-                    "label": "Apply late fee",
-                    "loanId": loan_id,
-                },
-                {
-                    "action": "view_repayment_schedule",
-                    "label": "View repayment schedule",
-                    "loanId": loan_id,
-                },
-                {
-                    "action": "send_reminder",
-                    "label": "Send reminder",
-                    "loanId": loan_id,
-                },
+                {"action": "apply_late_fee", "label": "Apply late fee", "loanId": loan_id},
+                {"action": "view_repayment_schedule", "label": "View repayment schedule", "loanId": loan_id},
+                {"action": "send_reminder", "label": "Send reminder", "loanId": loan_id},
             ])
 
     # 🔹 Case 2: Loan details
@@ -69,6 +55,7 @@ def generate_suggestions(intent, data):
 
         status = str(data.get("status", "")).lower()
 
+        # Active loan
         if "active" in status:
             raw_suggestions.extend([
                 f"Make repayment for loan {loan_id}",
@@ -76,18 +63,11 @@ def generate_suggestions(intent, data):
             ])
 
             structured.extend([
-                {
-                    "action": "make_repayment",
-                    "label": "Make repayment",
-                    "loanId": loan_id,
-                },
-                {
-                    "action": "view_repayment_schedule",
-                    "label": "View repayment schedule",
-                    "loanId": loan_id,
-                },
+                {"action": "make_repayment", "label": "Make repayment", "loanId": loan_id},
+                {"action": "view_repayment_schedule", "label": "View repayment schedule", "loanId": loan_id},
             ])
 
+        # Pending/submitted loan
         if "pending" in status or "submitted" in status:
             raw_suggestions.extend([
                 f"Approve loan {loan_id}",
@@ -95,17 +75,30 @@ def generate_suggestions(intent, data):
             ])
 
             structured.extend([
-                {
-                    "action": "approve_loan",
-                    "label": "Approve loan",
-                    "loanId": loan_id,
-                },
-                {
-                    "action": "reject_loan",
-                    "label": "Reject loan",
-                    "loanId": loan_id,
-                },
+                {"action": "approve_loan", "label": "Approve loan", "loanId": loan_id},
+                {"action": "reject_loan", "label": "Reject loan", "loanId": loan_id},
             ])
+
+    # 🔹 Case 3: Savings account
+    elif intent == "get_savings_account":
+        if not isinstance(data, dict):
+            return _empty_response()
+
+        account_id = data.get("accountId") or data.get("id")
+        if not account_id:
+            return _empty_response()
+
+        raw_suggestions.extend([
+            f"Deposit money into account {account_id}",
+            f"Withdraw money from account {account_id}",
+            f"View transactions for account {account_id}",
+        ])
+
+        structured.extend([
+            {"action": "deposit_savings", "label": "Deposit money", "accountId": account_id},
+            {"action": "withdraw_savings", "label": "Withdraw money", "accountId": account_id},
+            {"action": "view_savings_transactions", "label": "View transactions", "accountId": account_id},
+        ])
 
     else:
         return _empty_response()
@@ -138,7 +131,11 @@ def _deduplicate_structured(items):
     result = []
 
     for item in items:
-        key = (item.get("action"), item.get("loanId"))
+        key = (
+            item.get("action"),
+            item.get("loanId"),
+            item.get("accountId")
+        )
         if key not in seen:
             seen.add(key)
             result.append(item)
