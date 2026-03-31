@@ -102,6 +102,33 @@ def _resolve_client_id(name: str):
         return None
     return clients[0].get("entityId") or clients[0].get("id")
 
+
+def _validation_error(message: str) -> dict:
+    """Standardize validation error logging while preserving existing error payload shape."""
+    logger.warning("VALIDATION_ERROR %s", message)
+    return {"error": message}
+
+
+def _status_text(entity: dict) -> str:
+    """Return normalized status text from common Fineract entity payloads."""
+    return str((entity.get("status") or {}).get("value", "")).lower()
+
+
+def _ensure_loan_exists(loan_id: int, not_found_message: str):
+    """Return (loan_payload, error_payload) for common loan existence checks."""
+    check = get_loan_details.func(loan_id)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return None, _validation_error(not_found_message)
+    return check, None
+
+
+def _ensure_savings_exists(account_id: int, not_found_message: str):
+    """Return (savings_payload, error_payload) for common savings existence checks."""
+    check = get_savings_account.func(account_id)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return None, _validation_error(not_found_message)
+    return check, None
+
 # --- Register all MCP-native tools ---
 
 # --- CLIENTS & GROUPS ---
@@ -364,53 +391,72 @@ def create_new_loan(clientId: int, principal: float, months: int, productId: int
 @mcp.tool()
 def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
     """Approve and disburse a pending loan. Validates loanId exists before executing."""
-    check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
-    status = check.get("status", {}).get("value", "")
-    if "pending" not in status.lower() and "submitted" not in status.lower():
-        return {
-            "error": f"Loan {loanId} is in status '{status}' and cannot be approved. "
+    check, error = _ensure_loan_exists(
+        loanId,
+        f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.",
+    )
+    if error:
+        return error
+    status = _status_text(check)
+    if "pending" not in status and "submitted" not in status:
+        return _validation_error(
+            f"Loan {loanId} is in status '{status}' and cannot be approved. "
             "Only 'Submitted and pending approval' loans can be approved."
-        }
+        )
     return approve_and_disburse_loan.func(loanId, amount)
 
 @mcp.tool()
 def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk profile") -> dict:
     """Reject a pending loan application. Validates loanId exists before executing."""
-    check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
-    status = check.get("status", {}).get("value", "")
-    if "pending" not in status.lower() and "submitted" not in status.lower():
-        return {"error": f"Loan {loanId} is in status '{status}' and cannot be rejected. Only pending loans can be rejected."}
+    check, error = _ensure_loan_exists(
+        loanId,
+        f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.",
+    )
+    if error:
+        return error
+    status = _status_text(check)
+    if "pending" not in status and "submitted" not in status:
+        return _validation_error(
+            f"Loan {loanId} is in status '{status}' and cannot be rejected. Only pending loans can be rejected."
+        )
     return reject_loan_application.func(loanId, note)
 
 @mcp.tool()
 def make_repayment(loanId: int, amount: float) -> dict:
     """Make a repayment on an active loan. Validates loanId and status before executing."""
-    check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
-    status = check.get("status", {}).get("value", "")
-    if "active" not in status.lower():
-        return {"error": f"Loan {loanId} is in status '{status}'. Only Active loans can receive repayments."}
+    check, error = _ensure_loan_exists(
+        loanId,
+        f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.",
+    )
+    if error:
+        return error
+    status = _status_text(check)
+    if "active" not in status:
+        return _validation_error(
+            f"Loan {loanId} is in status '{status}'. Only Active loans can receive repayments."
+        )
     return make_loan_repayment.func(loanId, amount)
 
 @mcp.tool()
 def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
     """Apply a fee/charge to a loan. Validates loanId exists before executing."""
-    check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+    _, error = _ensure_loan_exists(
+        loanId,
+        f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.",
+    )
+    if error:
+        return error
     return apply_late_fee.func(loanId, feeAmount, 2)
 
 @mcp.tool()
 def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized Waiver") -> dict:
     """Waive interest on a loan. Validates loanId exists before executing."""
-    check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+    _, error = _ensure_loan_exists(
+        loanId,
+        f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.",
+    )
+    if error:
+        return error
     return waive_interest.func(loanId, amount, note)
 
 @mcp.tool()
@@ -426,23 +472,27 @@ def create_group_loan_app(groupId: int, principal: float, months: int, productId
 @mcp.tool()
 def undo_approval(loanId: int) -> dict:
     """Undo a loan approval so terms can be modified. Only works on approved (not yet disbursed) loans."""
-    check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Loan ID {loanId} not found."}
-    status = check.get("status", {}).get("value", "")
-    if "approved" not in status.lower():
-        return {"error": f"Loan {loanId} is in status '{status}'. Only approved loans can have their approval undone."}
+    check, error = _ensure_loan_exists(loanId, f"Loan ID {loanId} not found.")
+    if error:
+        return error
+    status = _status_text(check)
+    if "approved" not in status:
+        return _validation_error(
+            f"Loan {loanId} is in status '{status}'. Only approved loans can have their approval undone."
+        )
     return undo_loan_approval.func(loanId)
 
 @mcp.tool()
 def undo_disbursal(loanId: int) -> dict:
     """Undo a loan disbursal to reverse funds and return the loan to approved status."""
-    check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Loan ID {loanId} not found."}
-    status = check.get("status", {}).get("value", "")
-    if "active" not in status.lower():
-        return {"error": f"Loan {loanId} is in status '{status}'. Only active (disbursed) loans can have their disbursal undone."}
+    check, error = _ensure_loan_exists(loanId, f"Loan ID {loanId} not found.")
+    if error:
+        return error
+    status = _status_text(check)
+    if "active" not in status:
+        return _validation_error(
+            f"Loan {loanId} is in status '{status}'. Only active (disbursed) loans can have their disbursal undone."
+        )
     return undo_loan_disbursal.func(loanId)
 
 @mcp.tool()
@@ -458,12 +508,14 @@ def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: s
     """Submit a loan reschedule request. Use when a client needs modified repayment terms.
     Dates must be in 'dd MMMM yyyy' format (e.g. '15 March 2026').
     At least one modification (adjustedDueDate, newInterestRate, graceOnPrincipal, or extraTerms) is required."""
-    check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Loan ID {loanId} not found."}
-    status = check.get("status", {}).get("value", "")
-    if "active" not in status.lower():
-        return {"error": f"Loan {loanId} is in status '{status}'. Only active loans can be rescheduled."}
+    check, error = _ensure_loan_exists(loanId, f"Loan ID {loanId} not found.")
+    if error:
+        return error
+    status = _status_text(check)
+    if "active" not in status:
+        return _validation_error(
+            f"Loan {loanId} is in status '{status}'. Only active loans can be rescheduled."
+        )
     return reschedule_loan.func(loanId, rescheduleFromDate, adjustedDueDate,
                                 newInterestRate, graceOnPrincipal, extraTerms, reason)
 
@@ -528,26 +580,38 @@ def close_savings(accountId: int) -> dict:
 @mcp.tool()
 def deposit(accountId: int, amount: float) -> dict:
     """Deposit money into a savings account. Validates accountId exists before executing."""
-    check = get_savings_account.func(accountId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds."}
-    status = check.get("status", {}).get("value", "")
-    if "active" not in status.lower():
-        return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can accept deposits."}
+    check, error = _ensure_savings_exists(
+        accountId,
+        f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.",
+    )
+    if error:
+        return error
+    status = _status_text(check)
+    if "active" not in status:
+        return _validation_error(
+            f"Savings account {accountId} is in status '{status}'. Only Active accounts can accept deposits."
+        )
     return deposit_savings.func(accountId, amount)
 
 @mcp.tool()
 def withdraw(accountId: int, amount: float) -> dict:
     """Withdraw money from a savings account. Validates accountId and balance before executing."""
-    check = get_savings_account.func(accountId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
-        return {"error": f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds."}
-    status = check.get("status", {}).get("value", "")
-    if "active" not in status.lower():
-        return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can be withdrawn from."}
+    check, error = _ensure_savings_exists(
+        accountId,
+        f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.",
+    )
+    if error:
+        return error
+    status = _status_text(check)
+    if "active" not in status:
+        return _validation_error(
+            f"Savings account {accountId} is in status '{status}'. Only Active accounts can be withdrawn from."
+        )
     balance = (check.get("summary") or {}).get("availableBalance", 0) or 0
     if amount > balance:
-        return {"error": f"Insufficient funds: requested ${amount:.2f} but available balance is ${balance:.2f} in account {accountId}."}
+        return _validation_error(
+            f"Insufficient funds: requested ${amount:.2f} but available balance is ${balance:.2f} in account {accountId}."
+        )
     return withdraw_savings.func(accountId, amount)
 
 @mcp.tool()
