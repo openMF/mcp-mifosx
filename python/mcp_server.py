@@ -73,6 +73,7 @@ from tools.domains.savings import (
     withdraw_savings,
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
+from tools.suggestion_engine import suggest_tools
 
 # 3. Initialize the FastMCP Server
 mcp = FastMCP("Mifos-Banking-Agent")
@@ -283,6 +284,15 @@ def list_client_txns(clientId: int) -> dict:
 def get_addresses(clientId: int) -> dict:
     """Show client addresses"""
     return get_client_addresses.func(clientId)
+
+
+@mcp.tool()
+def suggest_tools_tool(query: str) -> dict:
+    """Suggest relevant MCP tools based on user query."""
+    return {
+        "query": query,
+        "suggested_tools": suggest_tools(query),
+    }
 
 # --- LOANS ---
 
