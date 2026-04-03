@@ -134,82 +134,82 @@ All tools are registered in `mcp_server.py` with `@mcp.tool()` and are discovera
 
 ### 👤 Clients (16 tools)
 
-| Tool | Description |
-|---|---|
-| `search_clients` | Find clients by name, returns clientId |
-| `get_client` | Show key profile details for a client |
-| `get_client_accts` | List all loan and savings accounts for a client |
-| `create_new_client` | Create a new banking client profile |
-| `activate_pending_client` | Activate a pending client |
-| `update_mobile` | Update a client's mobile number |
-| `close_client_profile` | Close a client's profile |
-| `get_identifiers` | List client KYC documents |
-| `add_identifier` | Add a KYC document to a client |
-| `list_documents` | List uploaded files for a client |
-| `list_client_charges` | List client-level fees |
-| `apply_client_fee` | Apply a one-time charge to a client profile |
-| `list_client_txns` | List financial transactions for a client |
-| `get_addresses` | Show a client's registered addresses |
-| `create_lending_group` | Create a lending group |
-| `get_group` | Show group details and members |
+| Tool                      | Description                                     |
+| ------------------------- | ----------------------------------------------- |
+| `search_clients`          | Find clients by name, returns clientId          |
+| `get_client`              | Show key profile details for a client           |
+| `get_client_accts`        | List all loan and savings accounts for a client |
+| `create_new_client`       | Create a new banking client profile             |
+| `activate_pending_client` | Activate a pending client                       |
+| `update_mobile`           | Update a client's mobile number                 |
+| `close_client_profile`    | Close a client's profile                        |
+| `get_identifiers`         | List client KYC documents                       |
+| `add_identifier`          | Add a KYC document to a client                  |
+| `list_documents`          | List uploaded files for a client                |
+| `list_client_charges`     | List client-level fees                          |
+| `apply_client_fee`        | Apply a one-time charge to a client profile     |
+| `list_client_txns`        | List financial transactions for a client        |
+| `get_addresses`           | Show a client's registered addresses            |
+| `create_lending_group`    | Create a lending group                          |
+| `get_group`               | Show group details and members                  |
 
 ### 👥 Groups & Centers (6 tools)
 
-| Tool | Description |
-|---|---|
-| `list_all_groups` | List all lending groups |
+| Tool                     | Description                      |
+| ------------------------ | -------------------------------- |
+| `list_all_groups`        | List all lending groups          |
 | `activate_pending_group` | Activate a pending lending group |
-| `add_member_to_group` | Add a client to a group |
-| `list_all_centers` | List all centers |
-| `get_center` | Show details for a center |
-| `create_new_center` | Create a new center |
+| `add_member_to_group`    | Add a client to a group          |
+| `list_all_centers`       | List all centers                 |
+| `get_center`             | Show details for a center        |
+| `create_new_center`      | Create a new center              |
 
 ### 💳 Loans (11 tools)
 
-| Tool | Description |
-|---|---|
-| `get_loan` | Get key details for a loan |
-| `get_repayment_sched` | Get the repayment schedule |
-| `get_loan_hist` | Get full transaction history for a loan |
-| `get_overdue_loans_for_client` | List overdue loans for a client |
-| `create_new_loan` | Create a new individual loan application |
-| `create_group_loan_app` | Create a group loan application |
-| `approve_disburse_loan` | Approve and disburse a pending loan |
-| `reject_loan` | Reject a pending loan application |
-| `make_repayment` | Make a repayment on an active loan |
-| `apply_loan_fee` | Apply a fee/charge to a loan |
-| `waive_loan_interest` | Waive interest on a loan |
+| Tool                           | Description                              |
+| ------------------------------ | ---------------------------------------- |
+| `get_loan`                     | Get key details for a loan               |
+| `get_repayment_sched`          | Get the repayment schedule               |
+| `get_loan_hist`                | Get full transaction history for a loan  |
+| `get_overdue_loans_for_client` | List overdue loans for a client          |
+| `create_new_loan`              | Create a new individual loan application |
+| `create_group_loan_app`        | Create a group loan application          |
+| `approve_disburse_loan`        | Approve and disburse a pending loan      |
+| `reject_loan`                  | Reject a pending loan application        |
+| `make_repayment`               | Make a repayment on an active loan       |
+| `apply_loan_fee`               | Apply a fee/charge to a loan             |
+| `waive_loan_interest`          | Waive interest on a loan                 |
 
 ### 💰 Savings (9 tools)
 
-| Tool | Description |
-|---|---|
-| `get_savings` | Get key details of a savings account |
-| `get_savings_txns` | Get transactions for a savings account |
-| `create_savings` | Create a new savings account |
-| `approve_activate_savings` | Approve and activate a savings account |
-| `close_savings` | Close a savings account |
-| `deposit` | Deposit money into a savings account |
-| `withdraw` | Withdraw money from a savings account |
-| `apply_savings_fee` | Apply a charge to a savings account |
-| `calc_post_interest` | Post accrued interest to a savings account |
+| Tool                       | Description                                |
+| -------------------------- | ------------------------------------------ |
+| `get_savings`              | Get key details of a savings account       |
+| `get_savings_txns`         | Get transactions for a savings account     |
+| `create_savings`           | Create a new savings account               |
+| `approve_activate_savings` | Approve and activate a savings account     |
+| `close_savings`            | Close a savings account                    |
+| `deposit`                  | Deposit money into a savings account       |
+| `withdraw`                 | Withdraw money from a savings account      |
+| `apply_savings_fee`        | Apply a charge to a savings account        |
+| `calc_post_interest`       | Post accrued interest to a savings account |
 
 ### 🏢 Staff & Offices (4 tools)
 
-| Tool | Description |
-|---|---|
-| `list_all_staff` | List bank staff members |
-| `get_staff` | Get details for a staff member |
-| `list_all_offices` | List all bank branches/offices |
-| `get_office` | Get details for a specific office |
+| Tool               | Description                       |
+| ------------------ | --------------------------------- |
+| `list_all_staff`   | List bank staff members           |
+| `get_staff`        | Get details for a staff member    |
+| `list_all_offices` | List all bank branches/offices    |
+| `get_office`       | Get details for a specific office |
 
 ### 📊 Accounting (3 tools)
 
-| Tool | Description |
-|---|---|
-| `list_accounts` | List GL accounts (Chart of Accounts) |
+| Tool                   | Description                                       |
+| ---------------------- | ------------------------------------------------- |
+| `list_accounts`        | List GL accounts (Chart of Accounts)              |
 | `list_journal_entries` | List journal entries by account or transaction ID |
-| `record_journal_entry` | Record a manual debit/credit journal entry |
+| `record_journal_entry` | Record a manual debit/credit journal entry        |
 
 ---
 
@@ -252,12 +252,12 @@ By keeping this server "pure," you gain:
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|---|---|---|
-| `MIFOSX_BASE_URL` | Full base URL of your Fineract REST API | — |
-| `MIFOSX_TENANT_ID` | Fineract tenant identifier | `default` |
-| `MIFOSX_USERNAME` | Fineract API username | `mifos` |
-| `MIFOSX_PASSWORD` | Fineract API password | `password` |
+| Variable           | Description                             | Default    |
+| ------------------ | --------------------------------------- | ---------- |
+| `MIFOSX_BASE_URL`  | Full base URL of your Fineract REST API | —          |
+| `MIFOSX_TENANT_ID` | Fineract tenant identifier              | `default`  |
+| `MIFOSX_USERNAME`  | Fineract API username                   | `mifos`    |
+| `MIFOSX_PASSWORD`  | Fineract API password                   | `password` |
 
 ---
 
@@ -275,6 +275,7 @@ DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector python mcp_server
 ```
 
 This will:
+
 - Start the MCP Inspector proxy on `localhost:6277`
 - Open the Inspector UI at `http://localhost:6274`
 - Automatically spawn `mcp_server.py` as the stdio server
@@ -308,6 +309,7 @@ python test_tools.py
 ```
 
 Expected output:
+
 ```
   ✅ PASS — All 49 tools registered with unique names
   ✅ list_offices          : OK
@@ -377,3 +379,46 @@ Contributions to expand Fineract API coverage are welcome. To add a new tool:
 ## License
 
 This project is licensed under the [Mozilla Public License 2.0](LICENSE).
+
+## Suggestion Engine (Experimental)
+
+This repository includes an experimental `suggestion_engine.py` module that demonstrates how context-aware next-step suggestions can be generated based on MCP tool outputs.
+
+⚠️ Important:
+
+- The suggestion engine is NOT integrated into MCP tool responses.
+- MCP server remains a pure execution layer (no decision-making logic).
+- Suggestions are intended to be generated at the client/LLM layer.
+
+### Why?
+
+Keeping suggestions outside the MCP layer ensures:
+
+- Clean separation of concerns
+- Reduced response size
+- Better flexibility for AI agents to decide next actions
+
+### Future Scope
+
+Suggestion logic can be integrated into:
+
+- AI Assistants (LLM layer)
+- Chat-based banking copilots
+- Workflow automation systems
+
+## Suggestion Engine (Experimental)
+
+This repository includes an experimental `suggestion_engine.py` module.
+
+- Not integrated into MCP tool responses
+- Intended for client-side AI agents
+- Helps generate next-step recommendations
+
+Example:
+
+```python
+from core.suggestion_engine import generate_suggestions
+
+data = [{"id": 101}]
+print(generate_suggestions("get_overdue_loans", data))
+```
