@@ -42,10 +42,16 @@ Python/MCP-Server-Python-Implementation/agent.py
 Python/MCP-Server-Python-Implementation/__pycache__/
 Python/MCP-Server-Python-Implementation/tools/domains/__pycache__/
 
+# Go Server Exclusions
+go/agent.py
+go/docker-compose.yml
+go/mysql-init/
+
 # Documentation
 *.md
 !README.md
 **/README.md
+!go/README.md
 !rust/benches/results.md
 !rust/benches/README.md
 
