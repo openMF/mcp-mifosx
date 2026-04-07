@@ -19,7 +19,9 @@ impl DomainRegistry {
             "create_client", "activate_client", "update_client_mobile", "close_client",
             "create_group", "get_group_details", "get_client_identifiers",
             "create_client_identifier", "get_client_documents", "get_client_charges",
-            "apply_client_charge", "get_client_transactions", "get_client_addresses"
+            "apply_client_charge", "pay_client_charge", "waive_client_charge",
+            "get_client_transactions", "get_client_transaction", 
+            "undo_client_transaction", "get_client_addresses"
         ]);
         map.insert("groups", vec![
             "list_groups", "activate_group", "add_group_member",
@@ -31,6 +33,12 @@ impl DomainRegistry {
             "approve_and_disburse_loan", "reject_loan_application",
             "make_loan_repayment", "apply_late_fee", "waive_interest",
             "get_overdue_loans", "create_group_loan", "list_loan_products"
+        ]);
+        map.insert("collaterals", vec![
+            "list_loan_collaterals", "get_loan_collateral", "create_loan_collateral",
+            "update_loan_collateral", "delete_loan_collateral",
+            "list_client_collaterals", "get_client_collateral", "create_client_collateral",
+            "update_client_collateral", "delete_client_collateral"
         ]);
         map.insert("savings", vec![
             "get_savings_account", "get_savings_transactions", "create_savings_account",
@@ -48,6 +56,9 @@ impl DomainRegistry {
             "bulk_make_repayments", "bulk_activate_clients", "bulk_get_savings_balances",
             "bulk_apply_fees", "bulk_close_accounts", "bulk_create_savings_accounts",
             "bulk_approve_and_activate_savings", "bulk_deposit_savings"
+        ]);
+        map.insert("charges", vec![
+            "retrieve_charge", "create_charge", "update_charge", "delete_charge"
         ]);
 
         Self { domain_map: map }
@@ -81,6 +92,9 @@ impl DomainRegistry {
         if ["client", "person", "search", "activate", "mobile", "kyc", "identifier", "address", "charge", "fee", "document"].iter().any(|w| query.contains(w)) {
             active_domains.insert("clients");
         }
+        if ["collateral", "security", "pledge"].iter().any(|w| query.contains(w)) {
+            active_domains.insert("collaterals");
+        }
         if ["group", "center", "centre", "member", "lending group"].iter().any(|w| query.contains(w)) {
             active_domains.insert("groups");
         }
@@ -95,6 +109,9 @@ impl DomainRegistry {
         }
         if ["bulk", "multiple", "batch", "parallel", "concurrent", "all at once", "mass", "each", "both", "all of them"].iter().any(|w| query.contains(w)) {
             active_domains.insert("bulk");
+        }
+        if ["charge", "fee", "penalty", "tax", "fee definition"].iter().any(|w| query.contains(w)) {
+            active_domains.insert("charges");
         }
 
         if active_domains.is_empty() {

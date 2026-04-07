@@ -10,3 +10,5 @@ pub mod loans;
 pub mod savings;
 pub mod staff;
 pub mod bulk;
+pub mod charges;
+pub mod collaterals;

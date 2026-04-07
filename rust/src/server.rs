@@ -49,10 +49,28 @@ impl MifosMcpServer {
     async fn get_client_charges(&self, Parameters(req): Parameters<clients::ClientIdReq>) -> Result<CallToolResult, McpError> { clients::get_client_charges(&self.adapter, req).await }
     #[tool(description = "Apply a one-time charge to client")]
     async fn apply_client_charge(&self, Parameters(req): Parameters<clients::ApplyClientChargeReq>) -> Result<CallToolResult, McpError> { clients::apply_client_charge(&self.adapter, req).await }
-    #[tool(description = "Fetch client's financial transactions")]
+    #[tool(description = "Pay a pending client charge. This generates a client transaction. Use the client_charge_id returned by apply_client_charge.")]
+    async fn pay_client_charge(&self, Parameters(req): Parameters<clients::PayClientChargeReq>) -> Result<CallToolResult, McpError> { clients::pay_client_charge(&self.adapter, req).await }
+    #[tool(description = "Waive a pending client charge. This generates a client transaction. Use the client_charge_id returned by apply_client_charge.")]
+    async fn waive_client_charge(&self, Parameters(req): Parameters<clients::WaiveClientChargeReq>) -> Result<CallToolResult, McpError> { clients::waive_client_charge(&self.adapter, req).await }
+    #[tool(description = "Fetch client's financial transactions (list)")]
     async fn get_client_transactions(&self, Parameters(req): Parameters<clients::ClientIdReq>) -> Result<CallToolResult, McpError> { clients::get_client_transactions(&self.adapter, req).await }
+    #[tool(description = "Retrieve a specific client transaction by ID")]
+    async fn get_client_transaction(&self, Parameters(req): Parameters<clients::ClientTransactionIdReq>) -> Result<CallToolResult, McpError> { clients::get_client_transaction(&self.adapter, req).await }
+    #[tool(description = "Undo a client transaction. Note: client transactions can only be reversed, not explicitly created, since they are generated naturally via charge payments/waivers.")]
+    async fn undo_client_transaction(&self, Parameters(req): Parameters<clients::ClientTransactionIdReq>) -> Result<CallToolResult, McpError> { clients::undo_client_transaction(&self.adapter, req).await }
     #[tool(description = "Fetch home addresses for client")]
     async fn get_client_addresses(&self, Parameters(req): Parameters<clients::ClientIdReq>) -> Result<CallToolResult, McpError> { clients::get_client_addresses(&self.adapter, req).await }
+    #[tool(description = "List all client collaterals")]
+    async fn list_client_collaterals(&self, Parameters(req): Parameters<collaterals::ClientIdReq>) -> Result<CallToolResult, McpError> { collaterals::list_client_collaterals(&self.adapter, req).await }
+    #[tool(description = "Retrieve a specific client collateral")]
+    async fn get_client_collateral(&self, Parameters(req): Parameters<collaterals::ClientCollateralIdReq>) -> Result<CallToolResult, McpError> { collaterals::get_client_collateral(&self.adapter, req).await }
+    #[tool(description = "Create a client collateral")]
+    async fn create_client_collateral(&self, Parameters(req): Parameters<collaterals::CreateClientCollateralReq>) -> Result<CallToolResult, McpError> { collaterals::create_client_collateral(&self.adapter, req).await }
+    #[tool(description = "Update a client collateral")]
+    async fn update_client_collateral(&self, Parameters(req): Parameters<collaterals::UpdateClientCollateralReq>) -> Result<CallToolResult, McpError> { collaterals::update_client_collateral(&self.adapter, req).await }
+    #[tool(description = "Delete a client collateral")]
+    async fn delete_client_collateral(&self, Parameters(req): Parameters<collaterals::ClientCollateralIdReq>) -> Result<CallToolResult, McpError> { collaterals::delete_client_collateral(&self.adapter, req).await }
 
     #[tool(description = "List groups")]
     async fn list_groups(&self, Parameters(req): Parameters<groups::ListGroupsReq>) -> Result<CallToolResult, McpError> { groups::list_groups(&self.adapter, req).await }
@@ -105,6 +123,16 @@ impl MifosMcpServer {
     async fn apply_late_fee(&self, Parameters(req): Parameters<loans::ApplyLateFeeReq>) -> Result<CallToolResult, McpError> { loans::apply_late_fee(&self.adapter, req).await }
     #[tool(description = "Waive interest")]
     async fn waive_interest(&self, Parameters(req): Parameters<loans::WaiveInterestReq>) -> Result<CallToolResult, McpError> { loans::waive_interest(&self.adapter, req).await }
+    #[tool(description = "List all loan collaterals")]
+    async fn list_loan_collaterals(&self, Parameters(req): Parameters<collaterals::LoanIdReq>) -> Result<CallToolResult, McpError> { collaterals::list_loan_collaterals(&self.adapter, req).await }
+    #[tool(description = "Retrieve a specific loan collateral")]
+    async fn get_loan_collateral(&self, Parameters(req): Parameters<collaterals::LoanCollateralIdReq>) -> Result<CallToolResult, McpError> { collaterals::get_loan_collateral(&self.adapter, req).await }
+    #[tool(description = "Create a loan collateral")]
+    async fn create_loan_collateral(&self, Parameters(req): Parameters<collaterals::CreateLoanCollateralReq>) -> Result<CallToolResult, McpError> { collaterals::create_loan_collateral(&self.adapter, req).await }
+    #[tool(description = "Update a loan collateral")]
+    async fn update_loan_collateral(&self, Parameters(req): Parameters<collaterals::UpdateLoanCollateralReq>) -> Result<CallToolResult, McpError> { collaterals::update_loan_collateral(&self.adapter, req).await }
+    #[tool(description = "Delete a loan collateral")]
+    async fn delete_loan_collateral(&self, Parameters(req): Parameters<collaterals::LoanCollateralIdReq>) -> Result<CallToolResult, McpError> { collaterals::delete_loan_collateral(&self.adapter, req).await }
 
     #[tool(description = "Get savings account balance")]
     async fn get_savings_account(&self, Parameters(req): Parameters<savings::SavingsIdReq>) -> Result<CallToolResult, McpError> { savings::get_savings_account(&self.adapter, req).await }
@@ -142,6 +170,15 @@ impl MifosMcpServer {
     async fn list_offices(&self, Parameters(req): Parameters<staff::EmptyReq>) -> Result<CallToolResult, McpError> { staff::list_offices(&self.adapter, req).await }
     #[tool(description = "Get office details")]
     async fn get_office_details(&self, Parameters(req): Parameters<staff::OfficeIdReq>) -> Result<CallToolResult, McpError> { staff::get_office_details(&self.adapter, req).await }
+
+    #[tool(description = "Retrieve charge template details")]
+    async fn retrieve_charge(&self, Parameters(req): Parameters<charges::ChargeIdReq>) -> Result<CallToolResult, McpError> { charges::retrieve_charge(&self.adapter, req).await }
+    #[tool(description = "Create new charge/fee template")]
+    async fn create_charge(&self, Parameters(req): Parameters<charges::CreateChargeReq>) -> Result<CallToolResult, McpError> { charges::create_charge(&self.adapter, req).await }
+    #[tool(description = "Update existing charge template")]
+    async fn update_charge(&self, Parameters(req): Parameters<charges::UpdateChargeReq>) -> Result<CallToolResult, McpError> { charges::update_charge(&self.adapter, req).await }
+    #[tool(description = "Delete charge template")]
+    async fn delete_charge(&self, Parameters(req): Parameters<charges::ChargeIdReq>) -> Result<CallToolResult, McpError> { charges::delete_charge(&self.adapter, req).await }
 
     #[tool(description = "Bulk parallel search clients by name")]
     async fn bulk_search_clients(&self, Parameters(req): Parameters<bulk::BulkSearchClientsReq>) -> Result<CallToolResult, McpError> { bulk::bulk_search_clients(&self.adapter, req).await }
