@@ -289,11 +289,16 @@ def get_addresses(clientId: int) -> dict:
 @mcp.tool()
 def get_loan(loanId: int) -> dict:
     """Get key details of a specific loan."""
+
     data = get_loan_details.func(loanId)
+
     if not isinstance(data, dict):
         return data
+
     tl = data.get("timeline", {})
-    return {
+
+    # 🔹 Step 1: Prepare clean response
+    response = {
         "loanId":              data.get("id"),
         "accountNo":           data.get("accountNo"),
         "productName":         data.get("loanProductName"),
@@ -310,6 +315,14 @@ def get_loan(loanId: int) -> dict:
         "repaymentFrequency":  f"Every {data.get('repaymentEvery')} {data.get('repaymentFrequencyType', {}).get('value','')}",
     }
 
+    # 🔹 Step 2: Generate suggestions
+    suggestions = generate_suggestions("get_loan_details", response)
+
+    # 🔹 Step 3: Return enhanced response
+    return {
+        "data": response,
+        "suggestions": suggestions
+    }
 @mcp.tool()
 def get_repayment_sched(loanId: int) -> dict:
     """Get the repayment schedule for a loan."""
@@ -414,9 +427,14 @@ def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized W
     return waive_interest.func(loanId, amount, note)
 
 @mcp.tool()
-def get_overdue_loans_for_client(clientId: int) -> dict:
+def get_overdue_loans_for_client(clientId: int) -> list:
     """Get all overdue or in-arrears loans for a client"""
-    return get_overdue_loans.func(clientId)
+
+    # Step 1: Get actual data
+    result = get_overdue_loans.func(clientId)
+
+    # Step 2: Return ONLY data (no suggestions)
+    return result
 
 @mcp.tool()
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
