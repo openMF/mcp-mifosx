@@ -17,6 +17,27 @@ def test_get_loan_details(mock_client):
 
 
 @patch("tools.domains.loans.fineract_client")
+def test_get_loan_details_invalid_loan_id(mock_client):
+    from tools.domains.loans import get_loan_details
+
+    result = get_loan_details.func(0)
+    assert result["httpStatusCode"] == 400
+    assert "Invalid loan_id" in result["error"]
+    mock_client.execute_get.assert_not_called()
+
+
+@patch("tools.domains.loans.fineract_client")
+def test_get_loan_details_api_failure(mock_client):
+    from tools.domains.loans import get_loan_details
+
+    mock_client.execute_get.return_value = {"error": "Connection failed: timeout"}
+    result = get_loan_details.func(999)
+    assert result["httpStatusCode"] == 502
+    assert "timeout" in result["error"]
+    mock_client.execute_get.assert_called_once_with("loans/999")
+
+
+@patch("tools.domains.loans.fineract_client")
 def test_get_repayment_schedule(mock_client):
     from tools.domains.loans import get_repayment_schedule
 
