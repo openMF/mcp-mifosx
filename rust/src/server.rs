@@ -37,6 +37,10 @@ impl MifosMcpServer {
     async fn activate_client(&self, Parameters(req): Parameters<clients::ClientIdReq>) -> Result<CallToolResult, McpError> { clients::activate_client(&self.adapter, req).await }
     #[tool(description = "Update client mobile number. Use PUT.")]
     async fn update_client_mobile(&self, Parameters(req): Parameters<clients::UpdateMobileReq>) -> Result<CallToolResult, McpError> { clients::update_client_mobile(&self.adapter, req).await }
+    #[tool(description = "Update client details (firstname, lastname, etc.)")]
+    async fn update_client(&self, Parameters(req): Parameters<clients::UpdateClientReq>) -> Result<CallToolResult, McpError> { clients::update_client(&self.adapter, req).await }
+    #[tool(description = "Delete client profile")]
+    async fn delete_client(&self, Parameters(req): Parameters<clients::ClientIdReq>) -> Result<CallToolResult, McpError> { clients::delete_client(&self.adapter, req).await }
     #[tool(description = "Close client profile")]
     async fn close_client(&self, Parameters(req): Parameters<clients::CloseClientReq>) -> Result<CallToolResult, McpError> { clients::close_client(&self.adapter, req).await }
     #[tool(description = "Fetch ID documents for client")]
@@ -109,6 +113,10 @@ impl MifosMcpServer {
     async fn get_overdue_loans(&self, Parameters(req): Parameters<loans::ClientIdReq>) -> Result<CallToolResult, McpError> { loans::get_overdue_loans(&self.adapter, req).await }
     #[tool(description = "Create an individual loan")]
     async fn create_loan(&self, Parameters(req): Parameters<loans::CreateLoanReq>) -> Result<CallToolResult, McpError> { loans::create_loan(&self.adapter, req).await }
+    #[tool(description = "Update a draft/submitted loan application")]
+    async fn update_loan(&self, Parameters(req): Parameters<loans::UpdateLoanReq>) -> Result<CallToolResult, McpError> { loans::update_loan(&self.adapter, req).await }
+    #[tool(description = "Delete a draft/submitted loan application")]
+    async fn delete_loan(&self, Parameters(req): Parameters<loans::LoanIdReq>) -> Result<CallToolResult, McpError> { loans::delete_loan(&self.adapter, req).await }
     #[tool(description = "List all loan products")]
     async fn list_loan_products(&self, Parameters(req): Parameters<loans::EmptyReq>) -> Result<CallToolResult, McpError> { loans::list_loan_products(&self.adapter, req).await }
     #[tool(description = "Create a group loan")]
