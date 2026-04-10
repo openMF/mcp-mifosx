@@ -16,7 +16,7 @@ impl DomainRegistry {
         let mut map = HashMap::new();
         map.insert("clients", vec![
             "search_clients_by_name", "get_client_details", "get_client_accounts",
-            "create_client", "activate_client", "update_client_mobile", "close_client",
+            "create_client", "activate_client", "update_client_mobile", "update_client", "delete_client", "close_client",
             "create_group", "get_group_details", "get_client_identifiers",
             "create_client_identifier", "get_client_documents", "get_client_charges",
             "apply_client_charge", "pay_client_charge", "waive_client_charge",
@@ -30,6 +30,7 @@ impl DomainRegistry {
         ]);
         map.insert("loans", vec![
             "get_loan_details", "get_repayment_schedule", "create_loan",
+            "update_loan", "delete_loan",
             "approve_and_disburse_loan", "reject_loan_application",
             "make_loan_repayment", "apply_late_fee", "waive_interest",
             "get_overdue_loans", "create_group_loan", "list_loan_products"

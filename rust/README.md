@@ -1,6 +1,6 @@
 # Mifos MCP Server — Rust Implementation
 
-The **Mifos MCP Server (Rust)** is a high-performance, multi-threaded integration tier that bridges any AI assistant or agent framework to the **Apache Fineract** banking backend. It exposes **85 typed tools** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), leveraging Rust's concurrency model to handle bulk operations in parallel.
+The **Mifos MCP Server (Rust)** is a high-performance, multi-threaded integration tier that bridges any AI assistant or agent framework to the **Apache Fineract** banking backend. It exposes **89 typed tools** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), leveraging Rust's concurrency model to handle bulk operations in parallel.
 
 ---
 
@@ -15,7 +15,7 @@ This is a **Server**, not a client or agent. It translates Fineract REST API ope
                        │ REST API
 ┌──────────────────────▼──────────────────────┐
 │         mcp-rust-mifosx  (This Repo)         │
-│    High-Perf MCP Server — 85 typed tools     │
+│    High-Perf MCP Server — 89 typed tools     │
 │    (Built with Tokio + Reqwest + RMCP)       │
 └──────────────────────┬──────────────────────┘
                        │ MCP Standard Protocol (stdio)
@@ -103,11 +103,11 @@ Add this to your `claude_desktop_config.json`:
 
 ---
 
-## Available Tools (85)
+## Available Tools (89)
 
 The Rust server categorizes tools into domains for easier discovery.
 
-### 👤 Clients & Collaterals (23 tools)
+### 👤 Clients & Collaterals (25 tools)
 
 | Tool | Description |
 |---|---|
@@ -116,8 +116,9 @@ The Rust server categorizes tools into domains for easier discovery.
 | `get_client_accounts` | List all loan and savings accounts for a client |
 | `create_client` | Create a new banking client profile |
 | `activate_client` | Activate a pending client |
-| `update_client_mobile` | Update a client's mobile number |
-| `close_client` | Close a client's profile |
+| `update_client` | **Robust** update (handles mandatory fields automatically) |
+| `delete_client` | Hard delete a pending client profile |
+| `close_client` | Close an active client profile |
 | `get_client_identifiers` | List client KYC documents |
 | `create_client_identifier` | Add a KYC document to a client |
 | `get_client_documents` | List uploaded files for a client |
@@ -153,7 +154,7 @@ The Rust server categorizes tools into domains for easier discovery.
 | `get_center` | Show details for a center |
 | `create_center` | Create a new center |
 
-### 💳 Loans & Collaterals (17 tools)
+### 💳 Loans & Collaterals (19 tools)
 
 | Tool | Description |
 |---|---|
@@ -168,6 +169,8 @@ The Rust server categorizes tools into domains for easier discovery.
 | `make_loan_repayment` | Make a repayment on an active loan |
 | `apply_late_fee` | Apply a fee/charge to a loan |
 | `waive_interest` | Waive interest on a loan |
+| `update_loan` | **Robust** update (handles mandatory financial baseline) |
+| `delete_loan` | Hard delete a draft loan application |
 | `list_loan_products` | List all available loan products |
 | `list_loan_collaterals` | List assets attached to a loan |
 | `get_loan_collateral` | Retrieve specific loan collateral details |
@@ -249,6 +252,11 @@ Registering assets in Fineract often requires knowing internal `collateralTypeId
 ### 3. Smart Reversals
 Beyond simple CRUD, the server provides `undo_client_transaction`. This allows agents to recover from errors by strictly reversing payments or waivers while maintaining an audit trail.
 
+### 4. Intelligent "Fetch-and-Merge" Updates
+Updating complex entities like Loans or Clients in Fineract often fails due to missing mandatory fields (e.g., `firstname`). The Rust server implements a **Read-Modify-Write** cycle:
+- **Baseline Discovery**: The server automatically fetches the current state of a resource before a `PUT`.
+- **Intelligent Merge**: It overlays only the user's requested changes onto the mandatory baseline (including interest rates, amortization codes, and legal forms), ensuring the transaction never fails due to partial state issues.
+
 ---
 
 ## Testing with MCP Inspector
@@ -262,7 +270,7 @@ npx @modelcontextprotocol/inspector ./target/release/mcp-rust-mifosx
 1. Select **STDIO** transport.
 2. Ensure the command points to the compiled Rust binary.
 3. Click **Connect**.
-4. Browse the **Tools** tab to see all 61 tools and their JSON schemas.
+4. Browse the **Tools** tab to see all 89 tools and their JSON schemas.
 
 ### Programmatic Smoke Test
 

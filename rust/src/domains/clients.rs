@@ -22,6 +22,15 @@ pub struct CreateClientReq { pub firstname: String, pub lastname: String, pub mo
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateMobileReq { pub client_id: i64, pub new_mobile_no: String }
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct UpdateClientReq { 
+    pub client_id: i64, 
+    pub firstname: Option<String>, 
+    pub lastname: Option<String>, 
+    pub mobile_no: Option<String>,
+    pub external_id: Option<String>,
+    pub office_id: Option<i64>
+}
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CloseClientReq { pub client_id: i64, pub closure_reason_id: Option<i64> }
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CreateIdentifierReq { pub client_id: i64, pub document_type_id: i64, pub document_key: String }
@@ -65,7 +74,8 @@ pub async fn create_client(adapter: &FineractAdapter, req: CreateClientReq) -> R
     let payload = json!({
         "firstname": req.firstname, "lastname": req.lastname, "officeId": req.office_id.unwrap_or(1),
         "active": req.is_active.unwrap_or(false), "locale": "en", "dateFormat": "dd MMMM yyyy",
-        "activationDate": today(), "mobileNo": req.mobile_no.unwrap_or_default()
+        "activationDate": today(), "mobileNo": req.mobile_no.unwrap_or_default(),
+        "legalFormId": 1
     });
     let res = adapter.execute_post("clients", &payload).await.map_err(to_err)?;
     to_result(res)
@@ -80,6 +90,46 @@ pub async fn activate_client(adapter: &FineractAdapter, req: ClientIdReq) -> Res
 pub async fn update_client_mobile(adapter: &FineractAdapter, req: UpdateMobileReq) -> Result<CallToolResult, McpError> {
     let payload = json!({ "mobileNo": req.new_mobile_no });
     let res = adapter.execute_put(&format!("clients/{}", req.client_id), &payload).await.map_err(to_err)?;
+    to_result(res)
+}
+
+pub async fn update_client(adapter: &FineractAdapter, req: UpdateClientReq) -> Result<CallToolResult, McpError> {
+    // 1. Fetch current state to satisfy Fineract's mandatory field requirement on PUT
+    let current = adapter.execute_get(&format!("clients/{}", req.client_id), None).await.map_err(to_err)?;
+    
+    // Helper to clean and validate strings
+    let clean = |s: Option<&str>| s.map(|v| v.trim()).filter(|v| !v.is_empty()).map(|v| v.to_string());
+
+    // 2. Prepare payload with existing mandatory fields as baseline (must be non-blank)
+    let mut payload = json!({
+        "firstname": clean(current.get("firstname").and_then(|v| v.as_str())).unwrap_or_else(|| "Unknown".to_string()),
+        "lastname": clean(current.get("lastname").and_then(|v| v.as_str())).unwrap_or_else(|| "Unknown".to_string()),
+        "legalFormId": current.get("legalForm").and_then(|v| v.get("id")).and_then(|v| v.as_i64()).unwrap_or(1),
+        "locale": "en",
+        "dateFormat": "dd MMMM yyyy"
+    });
+
+    // 3. Overlay the user's updates with strict blank-rejection
+    if let Some(v) = req.firstname {
+        let t = v.trim();
+        if t.is_empty() { return Err(McpError::invalid_params("firstname cannot be blank".to_string(), None)); }
+        payload["firstname"] = json!(t);
+    }
+    if let Some(v) = req.lastname {
+        let t = v.trim();
+        if t.is_empty() { return Err(McpError::invalid_params("lastname cannot be blank".to_string(), None)); }
+        payload["lastname"] = json!(t);
+    }
+    if let Some(v) = req.mobile_no { payload["mobileNo"] = json!(v); }
+    if let Some(v) = req.external_id { payload["externalId"] = json!(v); }
+    if let Some(v) = req.office_id { payload["officeId"] = json!(v); }
+    
+    let res = adapter.execute_put(&format!("clients/{}", req.client_id), &payload).await.map_err(to_err)?;
+    to_result(res)
+}
+
+pub async fn delete_client(adapter: &FineractAdapter, req: ClientIdReq) -> Result<CallToolResult, McpError> {
+    let res = adapter.execute_delete(&format!("clients/{}", req.client_id)).await.map_err(to_err)?;
     to_result(res)
 }
 
