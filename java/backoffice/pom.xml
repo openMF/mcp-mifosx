@@ -13,7 +13,7 @@
         <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
         <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
         <quarkus.platform.version>3.34.3</quarkus.platform.version>
-        <quarkus.mcp.version>1.11.0</quarkus.mcp.version>
+        <quarkus.mcp.version>1.11.1</quarkus.mcp.version>
         <lombok.version>1.18.44</lombok.version>
         <skipITs>true</skipITs>
         <surefire-plugin.version>3.5.5</surefire-plugin.version>
