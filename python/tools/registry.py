@@ -3,6 +3,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import re
+
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge, get_charge, list_charges, update_charge
 from tools.domains.clients import (
@@ -62,7 +64,7 @@ class DomainRegistry:
     Domain router that maps user intent to a filtered subset of MCP tools.
 
     This is used by MCP clients that want to limit the tool context window
-    based on the user's query. Instead of sending all 49 tools to the LLM,
+    based on the user's query. Instead of sending all available tools to the LLM,
     the router returns only the tools relevant to the detected domain(s).
 
     Usage:
@@ -71,7 +73,7 @@ class DomainRegistry:
         # returns only the Loans domain tools
 
     Full domain map:
-        router.domain_map["clients"]    - 15 client & KYC tools
+        router.domain_map["clients"]    - 16 client & KYC tools
         router.domain_map["groups"]     - 6 group & center tools
         router.domain_map["loans"]      - 14 loan tools
         router.domain_map["savings"]    - 9 savings tools
@@ -132,12 +134,12 @@ class DomainRegistry:
     def get_domain(self, domain: str) -> list:
         """
         Return all tools for a specific domain by name.
-        Valid names: 'clients', 'groups', 'loans', 'savings', 'staff', 'accounting', 'charges', 'codetables'
+        Valid names: 'clients', 'groups', 'loans', 'savings', 'staff', 'accounting', 'reports', 'products', 'charges', 'codetables'
         """
         return self.domain_map.get(domain, [])
 
     def get_all_tools(self) -> list:
-        """Return the full flat list of all 61 tools across all domains."""
+        """Return the full flat list of all tools across all domains."""
         all_tools = []
         seen = set()
         for tools in self.domain_map.values():
@@ -155,48 +157,60 @@ class DomainRegistry:
         query = user_query.lower()
         active_domains = set()
 
+        def matches_keyword(keywords):
+            for w in keywords:
+                if w.endswith('y'):
+                    pattern = rf"\b{re.escape(w[:-1])}(y|ies)\b"
+                elif w.endswith(('s', 'sh', 'ch', 'x', 'z')):
+                    pattern = rf"\b{re.escape(w)}(es)?\b"
+                else:
+                    pattern = rf"\b{re.escape(w)}s?\b"
+                if re.search(pattern, query):
+                    return True
+            return False
+
         # Loans
         loan_keywords = [
             "loan", "repayment", "disburse", "overdue", "arrear",
             "reject", "waive", "installment", "undo", "reschedule", "template",
         ]
-        if any(w in query for w in loan_keywords):
+        if matches_keyword(loan_keywords):
             active_domains.add("loans")
 
         # Clients
-        if any(w in query for w in ["client", "person", "search", "activate", "mobile", "kyc", "identifier", "address", "charge", "fee", "document"]):
+        if matches_keyword(["client", "person", "search", "activate", "mobile", "kyc", "identifier", "address", "charge", "fee", "document"]):
             active_domains.add("clients")
 
         # Groups & Centers
-        if any(w in query for w in ["group", "center", "centre", "member", "lending group"]):
+        if matches_keyword(["group", "center", "centre", "member", "lending group"]):
             active_domains.add("groups")
 
         # Savings
-        if any(w in query for w in ["saving", "deposit", "withdraw", "balance", "wallet", "interest"]):
+        if matches_keyword(["saving", "deposit", "withdraw", "balance", "wallet", "interest"]):
             active_domains.add("savings")
 
         # Staff & Offices
-        if any(w in query for w in ["staff", "officer", "employee", "office", "branch"]):
+        if matches_keyword(["staff", "officer", "employee", "office", "branch"]):
             active_domains.add("staff")
 
         # Accounting
-        if any(w in query for w in ["journal", "ledger", "account", "gl account", "debit", "credit", "accounting"]):
+        if matches_keyword(["journal", "ledger", "account", "gl account", "debit", "credit", "accounting"]):
             active_domains.add("accounting")
 
         # Reports
-        if any(w in query for w in ["report", "run report", "report template", "portfolio report", "generate report", "sql report"]):
+        if matches_keyword(["report", "run report", "report template", "portfolio report", "generate report", "sql report"]):
             active_domains.add("reports")
 
         # Products
-        if any(w in query for w in ["product", "loan product", "savings product", "product type", "available products"]):
+        if matches_keyword(["product", "loan product", "savings product", "product type", "available products"]):
             active_domains.add("products")
 
         # Charges
-        if any(w in query for w in ["charge", "fee", "penalty", "late fee", "disbursement fee"]):
+        if matches_keyword(["charge", "fee", "penalty", "late fee", "disbursement fee"]):
             active_domains.add("charges")
 
         # Code Tables
-        if any(w in query for w in ["code", "dropdown", "code value", "gender", "id type", "datatable", "custom field"]):
+        if matches_keyword(["code", "dropdown", "code value", "gender", "id type", "datatable", "custom field"]):
             active_domains.add("codetables")
 
         # Default: return clients for basic lookup if nothing matched

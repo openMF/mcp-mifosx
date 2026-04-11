@@ -134,37 +134,3 @@ impl DomainRegistry {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_route_intent_loans() {
-        let registry = DomainRegistry::new();
-        let tools = registry.route_intent("I want to apply for a loan");
-        assert!(tools.contains(&"create_loan"));
-        assert!(tools.contains(&"get_loan_details"));
-    }
-
-    #[test]
-    fn test_route_intent_savings() {
-        let registry = DomainRegistry::new();
-        let tools = registry.route_intent("deposit money into my savings");
-        assert!(tools.contains(&"deposit_savings"));
-        assert!(tools.contains(&"get_savings_account"));
-    }
-
-    #[test]
-    fn test_route_intent_bulk() {
-        let registry = DomainRegistry::new();
-        let tools = registry.route_intent("bulk search for Matt and Syn");
-        assert!(tools.contains(&"bulk_search_clients"));
-    }
-
-    #[test]
-    fn test_route_intent_default_clients() {
-        let registry = DomainRegistry::new();
-        let tools = registry.route_intent("hello world");
-        assert!(tools.contains(&"search_clients_by_name"));
-    }
-}

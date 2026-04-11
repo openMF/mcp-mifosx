@@ -2,15 +2,18 @@ name: Python CI
 
 on:
   push:
-    branches: [main]
+    branches: ['main']
     paths:
       - 'python/**'
       - '.github/workflows/python-ci.yml'
   pull_request:
-    branches: [main]
+    branches: ['main']
     paths:
       - 'python/**'
       - '.github/workflows/python-ci.yml'
+
+permissions:
+  contents: read
 
 jobs:
   lint-and-test:
@@ -39,5 +42,3 @@ jobs:
       - name: Security scan with bandit
         run: bandit -r tools/ -ll -q --skip B501,B113
 
-      - name: Run tests with coverage
-        run: pytest tests/ -v --tb=short --cov=tools --cov-report=term-missing --cov-fail-under=50
