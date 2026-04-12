@@ -60,6 +60,9 @@ go/mysql-init/
 # TLS Certificates
 .certs/
 
+# Local Python testing
+python/agent2.py
+python/.coverage
 
 .idea/
 java/backoffice/mifosx-mcpp.log*

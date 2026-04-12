@@ -1,0 +1,30 @@
+version: "2"
+linters:
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    govet: {}
+    revive:
+      rules:
+        - name: indent-error-flow
+        - name: unexported-return
+        - name: unused-parameter
+        - name: unreachable-code
+
+
+  disable:
+    - errcheck
+    - staticcheck
+    - revive
+  enable:
+    - ineffassign
+    - bodyclose
+    - misspell
+
+run:
+  timeout: 5m
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
