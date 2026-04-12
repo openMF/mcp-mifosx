@@ -79,7 +79,7 @@ If you want to learn more about building native executables, please consult <htt
 ## Related Guides
 
 - Qute ([guide](https://quarkus.io/guides/qute)): Offer templating support for web, email, etc in a build time, type-safe way
-- Model Context Protocol (MCP) Server for standard input/output (stdio) ([guide](https://docs.quarkiverse.io/quarkus-mcp-server/dev/index.html)): This extension enables developers to implement the MCP server features easily using stanard input/output (stdio).
+- Model Context Protocol (MCP) Server: This extension enables developers to implement the MCP server features used by the configured HTTP transport.
 
 ## MCP Developer Tools
 
@@ -89,5 +89,5 @@ For development and testing, you can use the MCP Inspector tool:
 npx @modelcontextprotocol/inspector
 ```
 
-This starts a local web server where you can test your MCP server and you can connect it using STDIO or SSE
+This starts a local web server where you can test your MCP server through the configured HTTP transport
 
