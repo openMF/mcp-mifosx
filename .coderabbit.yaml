@@ -177,3 +177,78 @@ reviews:
           - Never commit secrets.
           - Validate configuration via `@ConfigurationProperties`.
           - Provide `application-example.yml` for reference.
+
+    - path: 'python/**/*.py'
+      instructions: |
+        ## General Python Code Review Instructions
+        - **Type Safety:** Flag any new function signatures, complex variable assignments, or class attributes that are missing `mypy`-compatible type hints.
+        - **Immutability:** Suggest replacing standard classes with `@dataclass(frozen=True)` or Pydantic models when defining data structures.
+        - **Error Handling:** Reject broad `except Exception:` blocks. Suggest domain-specific custom exceptions instead.
+        - **Async I/O:** Flag blocking I/O (like `requests` or `time.sleep`) inside `async def` functions; recommend `aiohttp` or `asyncio.sleep`.
+
+    - path: 'python/core/**/*.py'
+      instructions: |
+        ## Python Core Transport Layer
+        - Code in this folder must handle the MCP protocol, stream parsing, and connection lifecycles.
+        - Suggest keeping transport logic separate from business rules when possible, but allow simple integrated tools if beneficial for velocity.
+        - Ensure robust asyncio logging for degraded socket connections.
+
+    - path: 'python/**/{mcp_server.py,mcp_adapter.py,registry.py}'
+      instructions: |
+        ## Python Core Decoupling Layer
+        - Ensure `mcp_server.py`, `mcp_adapter.py`, and `registry.py` properly decouple the transport protocol from the business schemas.
+        - Suggest maintaining decoupling via `registry.py` rather than direct tool imports across the application, though do not aggressively reject pragmatic unions.
+
+    - path: 'python/tools/**/*.py'
+      instructions: |
+        ## Python Domain Tools Layer
+        - This namespace is strictly for operational business logic.
+        - Enforce that new endpoints added here include strict input schema validation (e.g., through Pydantic) before executing external APIs.
+        - Flag any direct stdio or generic transport manipulation inside this directory (excluding `mcp_adapter.py` and `registry.py`).
+
+    - path: 'rust/**/*.rs'
+      instructions: |
+        ## General Rust Code Review Instructions
+        - **Safety First:** Actively FLAG any use of `.unwrap()` or `.expect()` outside of `#[cfg(test)]` modules. Instruct the author to propagate errors using `?`.
+        - **Error Types:** Flag generic `Box<dyn Error>` returns in library code. Suggest custom error enums using `thiserror` (or `anyhow` binary wide).
+        - **Memory Allocations:** Recommend replacing owned types (`String`, `Vec<T>`) with borrows (`&str`, `&[T]`) for read-only function arguments.
+
+    - path: 'rust/src/domains/**/*.rs'
+      instructions: |
+        ## Rust Domain Tools Layer
+        - Code here must encapsulate isolated business logic and exact MCP schema generation.
+        - Suggest keeping explicit transport dependencies out of domains when possible, allowing simple hard-coded endpoints if velocity mandates it.
+        - Ensure JSON schemas map 1:1 with underlying tool structs.
+
+    - path: 'rust/src/{server.rs,adapter.rs,registry.rs}'
+      instructions: |
+        ## Rust Core Transport Layer
+        - Ensure `tokio` channels, sockets, and async traits are used correctly to prevent blocking the main executor.
+        - Suggest maintaining decoupling via `registry.rs` rather than direct tool imports, though do not aggressively reject pragmatic unions.
+
+    - path: 'go/**/*.go'
+      instructions: |
+        ## General Go Code Review Instructions
+        - **Error Handling:** FLAG any ignored errors (e.g., assigning to `_`). Ensure every error is checked explicitly and wrapped using `fmt.Errorf("...: %w", err)`.
+        - **Goroutines:** Flag naked goroutines (`go func()`). Advise passing a `context.Context` to explicitly manage cascading cancellation.
+        - **Interfaces:** Suggest defining interfaces in the consumer package rather than the package implementing them.
+        - **Package State:** Strongly flag the introduction of unexported or exported package-level mutable variables (`var xyz = ...`).
+
+    - path: 'go/**/{server.go,http_server.go,adapter.go,registry.go}'
+      instructions: |
+        ## Go Core Decoupling Layer
+        - Ensure `server.go`, `adapter.go` (if present), and `registry.go` properly decouple the transport protocol from the business schemas.
+        - Suggest maintaining decoupling via `registry.go` rather than direct tool imports across the application, though do not aggressively reject pragmatic unions.
+
+    - path: 'go/server/**/*.go'
+      instructions: |
+        ## Go Core Transport Layer
+        - Handles the core MCP JSON-RPC loop and network transport (stdio/SSE/HTTP).
+        - Suggest avoiding embedding of heavy business logic here, keeping it delegated to handlers, but allow simple direct implementations to reduce boilerplate.
+
+    - path: 'go/tools/**/*.go'
+      instructions: |
+        ## Go Domain Tools Layer
+        - Enforce explicit struct validation before hitting downstream systems.
+        - Code here should focus entirely on payload formatting and backend MifosX API translations.
+        - Flag any direct stdio or generic transport manipulation inside this directory (excluding `registry.go`).
