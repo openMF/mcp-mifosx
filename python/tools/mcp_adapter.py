@@ -22,11 +22,15 @@ class FineractAdapter:
         self.tenant_id = os.getenv("MIFOSX_TENANT_ID", "default")
         self.username = os.getenv("MIFOSX_USERNAME")
         self.password = os.getenv("MIFOSX_PASSWORD")
+        
+        # Default to True for backward compatibility, but should be False in production
+        self.verify_ssl = os.getenv("MIFOSX_SKIP_TLS_VERIFY", "true").lower() != "true"
 
-        # STOP: Suppress SSL warnings for local self-signed certs (Docker)
-        requests.packages.urllib3.disable_warnings(
-            requests.packages.urllib3.exceptions.InsecureRequestWarning
-        )
+        # Only suppress SSL warnings if verification is disabled
+        if not self.verify_ssl:
+            requests.packages.urllib3.disable_warnings(
+                requests.packages.urllib3.exceptions.InsecureRequestWarning
+            )
 
     def _get_headers(self):
         """Builds the mandatory headers for Fineract."""
@@ -55,7 +59,7 @@ class FineractAdapter:
         try:
             response = requests.get(
                 url, headers=self._get_headers(), auth=(self.username, self.password),
-                params=params, verify=False
+                params=params, verify=self.verify_ssl
             )
             response.raise_for_status()
             return response.json()
@@ -73,7 +77,7 @@ class FineractAdapter:
         try:
             response = requests.post(
                 url, headers=self._get_headers(), auth=(self.username, self.password),
-                json=payload, verify=False
+                json=payload, verify=self.verify_ssl
             )
             response.raise_for_status()
             return response.json()
@@ -89,7 +93,7 @@ class FineractAdapter:
         try:
             response = requests.put(
                 url, headers=self._get_headers(), auth=(self.username, self.password),
-                json=payload, verify=False
+                json=payload, verify=self.verify_ssl
             )
             response.raise_for_status()
             return response.json()
@@ -105,7 +109,7 @@ class FineractAdapter:
         try:
             response = requests.delete(
                 url, headers=self._get_headers(), auth=(self.username, self.password),
-                verify=False
+                verify=self.verify_ssl
             )
             response.raise_for_status()
             return response.json()
