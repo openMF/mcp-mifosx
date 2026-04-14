@@ -23,8 +23,9 @@ class FineractAdapter:
         self.username = os.getenv("MIFOSX_USERNAME")
         self.password = os.getenv("MIFOSX_PASSWORD")
         
-        # Default to True for backward compatibility, but should be False in production
-        self.verify_ssl = os.getenv("MIFOSX_SKIP_TLS_VERIFY", "true").lower() != "true"
+        # Default to False (secure) - SSL verification enabled by default
+        # Set MIFOSX_SKIP_TLS_VERIFY=true only for local dev with self-signed certs
+        self.verify_ssl = os.getenv("MIFOSX_SKIP_TLS_VERIFY", "false").lower() != "true"
 
         # Only suppress SSL warnings if verification is disabled
         if not self.verify_ssl:
