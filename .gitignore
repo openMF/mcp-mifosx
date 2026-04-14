@@ -70,3 +70,6 @@ java/userrecommendation/mifosx-mcpp.log*
 java/backoffice/target/
 java/userrecommendation/target/
 java/target/
+
+# Testing Scripts
+ollama_context_eval.py
