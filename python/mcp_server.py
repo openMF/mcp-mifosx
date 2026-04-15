@@ -4,6 +4,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+import functools
+import inspect
 
 from fastmcp import FastMCP
 
@@ -73,9 +75,60 @@ from tools.domains.savings import (
     withdraw_savings,
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
+from tools.validation import validate_tool_params
 
 # 3. Initialize the FastMCP Server
 mcp = FastMCP("Mifos-Banking-Agent")
+
+
+def _build_param_map(func, args, kwargs) -> dict:
+    """Map call arguments to parameter names for consistent validation."""
+    try:
+        bound = inspect.signature(func).bind_partial(*args, **kwargs)
+        return dict(bound.arguments)
+    except Exception:
+        # Best-effort fallback if signature binding fails.
+        return {"args": args, "kwargs": kwargs}
+
+
+def _enable_mcp_tool_validation() -> None:
+    """Apply a central validation layer to all @mcp.tool() registrations.
+
+    This keeps individual tool business logic unchanged while ensuring a
+    consistent error structure and early rejection of invalid parameters.
+    """
+    original_tool = mcp.tool
+
+    def validated_tool(*tool_args, **tool_kwargs):
+        decorator = original_tool(*tool_args, **tool_kwargs)
+
+        def apply(func):
+            @functools.wraps(func)
+            def wrapped(*args, **kwargs):
+                params = _build_param_map(func, args, kwargs)
+                validation_error = validate_tool_params(params)
+                if validation_error:
+                    logger.warning(
+                        "MCP_TOOL_VALIDATION_FAILED tool=%s field=%s value=%s",
+                        func.__name__,
+                        validation_error.get("validation", {}).get("field"),
+                        validation_error.get("validation", {}).get("value"),
+                    )
+                    return validation_error
+
+                return func(*args, **kwargs)
+
+            # Preserve original signature for framework introspection.
+            wrapped.__signature__ = inspect.signature(func)
+            return decorator(wrapped)
+
+        return apply
+
+    mcp.tool = validated_tool
+
+
+# Enable centralized tool input validation before registering tools.
+_enable_mcp_tool_validation()
 
 # --- Shared helpers ---
 
