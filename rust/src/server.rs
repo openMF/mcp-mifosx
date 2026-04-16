@@ -5,6 +5,7 @@
 
 use crate::adapter::FineractAdapter;
 use crate::domains::*;
+use crate::registry::{DomainRegistry, IntentRouterReq, INTENT_ROUTE_THRESHOLD};
 use rmcp::{
     ErrorData as McpError,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -15,6 +16,7 @@ use rmcp::{
 #[derive(Clone, Debug)]
 pub struct MifosMcpServer {
     pub adapter: FineractAdapter,
+    pub registry: DomainRegistry,
     tool_router: ToolRouter<Self>,
 }
 
@@ -22,7 +24,8 @@ pub struct MifosMcpServer {
 impl MifosMcpServer {
 
     pub fn new(adapter: FineractAdapter) -> Self {
-        Self { adapter, tool_router: Self::tool_router() }
+        let registry = DomainRegistry::new();
+        Self { adapter, registry, tool_router: Self::tool_router() }
     }
 
     #[tool(description = "Find the client ID for a given name")]
@@ -210,6 +213,15 @@ impl MifosMcpServer {
     async fn bulk_approve_and_activate_savings(&self, Parameters(req): Parameters<bulk::BulkApproveActivateSavingsReq>) -> Result<CallToolResult, McpError> { bulk::bulk_approve_and_activate_savings(&self.adapter, req).await }
     #[tool(description = "MANDATORY: Bulk parallel deposit into savings accounts for both/all. Use THE EXACT dollar amount from the prompt.")]
     async fn bulk_deposit_savings(&self, Parameters(req): Parameters<bulk::BulkDepositSavingsReq>) -> Result<CallToolResult, McpError> { bulk::bulk_deposit_savings(&self.adapter, req).await }
+
+    #[tool(description = "High-performance hybrid intent router. Returns the list of relevant tools for a given banking query to prune the context window.")]
+    async fn get_relevant_tools(&self, Parameters(req): Parameters<IntentRouterReq>) -> Result<CallToolResult, McpError> {
+        let tools = self.registry.route_intent_hybrid(&req.query, INTENT_ROUTE_THRESHOLD).await;
+        
+        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+            serde_json::to_string_pretty(&tools).unwrap_or_else(|_| "[]".to_string())
+        )]))
+    }
 }
 
 #[tool_handler]

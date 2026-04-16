@@ -22,6 +22,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 futures = "0.3"
 
+# Semantic Route Intent — CPU-only ML for context window pruning
+candle-core = "0.10"
+candle-nn = "0.10"
+candle-transformers = "0.10"
+tokenizers = "0.22"
+hf-hub = { version = "0.5", default-features = false, features = ["tokio", "rustls-tls"] }
+
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 
