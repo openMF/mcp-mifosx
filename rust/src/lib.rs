@@ -8,5 +8,6 @@
 
 pub mod adapter;
 pub mod domains;
+pub mod embeddings;
 pub mod registry;
 pub mod server;
