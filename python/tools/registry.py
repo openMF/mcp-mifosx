@@ -2,6 +2,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0.
 
+from typing import Any, List
+
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge, get_charge, list_charges, update_charge
 from tools.domains.clients import (
@@ -55,24 +57,28 @@ from tools.domains.savings import (
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
 
-# ✅ AI Suggestion Engine (New Contribution)
+# ✅ AI Suggestion Engine
 from core.suggestion_engine import generate_suggestions
 
 
 class DomainRegistry:
     """
-    Domain router that maps user intent to MCP tools.
+    Domain router that maps user intent to a filtered subset of MCP tools.
+
+    This is used by MCP clients to limit the tool context window
+    based on the user query. Instead of sending all tools to the LLM,
+    only relevant domain tools are returned.
 
     NOTE:
     -----
     The Suggestion Engine is NOT registered as a tool because:
     - It does not call Fineract APIs directly
     - It enhances responses AFTER tool execution
-    - It is used as a helper layer inside MCP server
+    - It acts as a UX enhancement layer inside MCP server
 
-    This maintains clean separation of concerns:
+    Separation of concerns:
     - Tools → Data operations
-    - Suggestion Engine → UX enhancement layer
+    - Suggestion Engine → Post-processing / guidance layer
     """
 
     def __init__(self):
@@ -121,10 +127,12 @@ class DomainRegistry:
             ]
         }
 
-    def get_domain(self, domain: str) -> list:
+    def get_domain(self, domain: str) -> List[Any]:
+        """Return tools for a specific domain."""
         return self.domain_map.get(domain, [])
 
-    def get_all_tools(self) -> list:
+    def get_all_tools(self) -> List[Any]:
+        """Return all unique tools across domains."""
         all_tools = []
         seen = set()
         for tools in self.domain_map.values():
@@ -134,7 +142,8 @@ class DomainRegistry:
                     seen.add(tool.name)
         return all_tools
 
-    def route_intent(self, user_query: str) -> list:
+    def route_intent(self, user_query: str) -> List[Any]:
+        """Route user query to relevant domain tools."""
         query = user_query.lower()
         active_domains = set()
 
@@ -156,7 +165,7 @@ class DomainRegistry:
         if any(w in query for w in ["journal", "ledger", "accounting"]):
             active_domains.add("accounting")
 
-        if any(w in query for w in ["report", "generate report"]):
+        if any(w in query for w in ["report"]):
             active_domains.add("reports")
 
         if any(w in query for w in ["product"]):
@@ -181,8 +190,8 @@ class DomainRegistry:
 
         return result
 
-    # ✅ NEW HELPER METHOD
-    def get_suggestions(self, intent: str, data):
+    # ✅ Suggestion helper (with type safety)
+    def get_suggestions(self, intent: str, data: Any) -> List[str]:
         """
         Generate intelligent suggestions based on tool output.
 
