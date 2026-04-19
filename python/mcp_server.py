@@ -427,22 +427,24 @@ def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized W
     return waive_interest.func(loanId, amount, note)
 
 @mcp.tool()
-def get_overdue_loans_for_client(clientId: int) -> list:
+def get_overdue_loans_for_client(clientId: int) -> dict:
     """Get all overdue or in-arrears loans for a client"""
 
-    # Step 1: Get actual data
-   
-    return get_overdue_loans.func(clientId)
+    # 🔹 Step 1: Get actual data
+    result = get_overdue_loans.func(clientId)
 
-    # 🔹 Step 2: Generate smart suggestions
+    # 🔹 Step 2: Propagate errors safely
+    if isinstance(result, dict) and "error" in result:
+        return result
+
+    # 🔹 Step 3: Generate smart suggestions
     suggestions = generate_suggestions("get_overdue_loans", result)
 
-    # 🔹 Step 3: Return enhanced response
-   # ✅ correct
+    # 🔹 Step 4: Return enhanced response (backward compatible)
     return {
-    **result,
-    "suggestions": suggestions
-}
+        **result,
+        "suggestions": suggestions
+    }
 
 @mcp.tool()
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
