@@ -434,15 +434,18 @@ def get_overdue_loans_for_client(clientId: int) -> dict:
     # 🔹 Step 1: Get actual data
     result = get_overdue_loans.func(clientId)
 
-    # 🔹 Step 2: Generate smart suggestions
+    # 🔹 Step 2: Propagate errors safely
+    if isinstance(result, dict) and "error" in result:
+        return result
+
+    # 🔹 Step 3: Generate smart suggestions
     suggestions = generate_suggestions("get_overdue_loans", result)
 
-    # 🔹 Step 3: Return enhanced response
+    # 🔹 Step 4: Return backward-compatible response
     return {
-        "data": result,
+        **result,
         "suggestions": suggestions
     }
-
 @mcp.tool()
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
     """Create a group loan application for an existing lending group"""
