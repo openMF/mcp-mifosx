@@ -431,16 +431,18 @@ def get_overdue_loans_for_client(clientId: int) -> list:
     """Get all overdue or in-arrears loans for a client"""
 
     # Step 1: Get actual data
-    result = get_overdue_loans.func(clientId)
+   
+    return get_overdue_loans.func(clientId)
 
     # 🔹 Step 2: Generate smart suggestions
     suggestions = generate_suggestions("get_overdue_loans", result)
 
     # 🔹 Step 3: Return enhanced response
+   # ✅ correct
     return {
-        "data": result,
-        "suggestions": suggestions
-    }
+    **result,
+    "suggestions": suggestions
+}
 
 @mcp.tool()
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
