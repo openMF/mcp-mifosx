@@ -1,58 +1,63 @@
-"""
-NOTE:
-This module is experimental and intended for client-side or AI-agent usage.
-It is NOT integrated into MCP tool responses to keep MCP layer clean.
-"""
-
 def generate_suggestions(intent, data):
     """
     Generate context-aware suggestions based on MCP tool responses.
-
-    This function analyzes the intent (which tool was called)
-    and the returned data to provide meaningful next-step actions
-    for users inside the Mifos AI Assistant.
-
-    Args:
-        intent (str): Name of the MCP tool / action performed
-        data (dict or list): Response data from the tool
-
-    Returns:
-        list: A list of suggested next actions (strings)
     """
 
-    # Initialize empty suggestion list
-    suggestions = []
+    suggestions: List[str] = []
 
-    # 🔹 Case 1: Overdue loans → suggest recovery actions
+    # 🔹 Case 1: Overdue loans
     if intent == "get_overdue_loans":
-        for loan in data:
-            loan_id = loan.get("id")
 
-            # Suggest applying penalty
+        # Extract loan list safely
+        if isinstance(data, dict):
+            if "error" in data:
+                return []  # Don't generate suggestions for error responses
+            loans = data.get("overdueLoans", [])
+        else:
+            loans = data or []
+
+        # Ensure it's iterable list
+        if not isinstance(loans, list):
+            return []
+
+        for loan in loans:
+            if not isinstance(loan, dict):
+                continue
+
+            loan_id = loan.get("loanId") or loan.get("id")
+
+            if not loan_id:
+                continue
+
             suggestions.append(f"Apply a late fee to loan {loan_id}")
-
-            # Suggest checking repayment plan
             suggestions.append(f"View repayment schedule for loan {loan_id}")
-
-            # Suggest notifying the client
             suggestions.append(f"Send a repayment reminder for loan {loan_id}")
 
-    # 🔹 Case 2: Loan details → suggest actions based on loan status
+    # 🔹 Case 2: Loan details
     elif intent == "get_loan_details":
+
+        if not isinstance(data, dict):
+            return suggestions
+
+        if "error" in data:
+            return suggestions
+
         loan_id = data.get("loanId")
 
-        # Normalize status for safe comparison
-        status = data.get("status", "").lower()
+        # Safe normalization (prevents None.lower() crash)
+        status = (data.get("status") or "").lower()
 
-        # If loan is active → allow repayment actions
+        if not loan_id:
+            return suggestions
+
+        # Active loan actions
         if "active" in status:
             suggestions.append(f"Make a repayment for loan {loan_id}")
             suggestions.append(f"View repayment schedule for loan {loan_id}")
 
-        # If loan is pending → allow approval/rejection
+        # Pending/submitted actions
         if "pending" in status or "submitted" in status:
             suggestions.append(f"Approve loan {loan_id}")
             suggestions.append(f"Reject loan {loan_id}")
 
-    # 🔹 Return final suggestions list
     return suggestions
