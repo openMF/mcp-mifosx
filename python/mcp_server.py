@@ -19,7 +19,9 @@ from tools.domains.charges import list_charges as list_charges_domain
 from tools.domains.charges import update_charge as update_charge_domain
 from functools import wraps
 from typing import Any, Callable, Dict
+from inspect import signature
 from core.validation_engine import validate_input, ValidationError
+from core.suggestion_engine import generate_suggestions
 from tools.domains.clients import (
     activate_client,
     apply_client_charge,
@@ -433,19 +435,24 @@ def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized W
 def get_overdue_loans_for_client(clientId: int) -> dict:
     """Get all overdue or in-arrears loans for a client"""
 
-    # 🔹 Step 1: Get actual data
     result = get_overdue_loans.func(clientId)
 
-    # 🔹 Step 2: Propagate errors safely
+    # 🔹 Step 1: Propagate errors safely
     if isinstance(result, dict) and "error" in result:
         return result
 
-    # 🔹 Step 3: Generate smart suggestions
+    # 🔹 Step 2: Generate suggestions
     suggestions = generate_suggestions("get_overdue_loans", result)
 
-    # 🔹 Step 4: Return enhanced response (backward compatible)
+    # 🔹 Step 3: Safe response handling
+    if isinstance(result, dict):
+        return {
+            **result,
+            "suggestions": suggestions
+        }
+
     return {
-        **result,
+        "overdueLoans": result or [],
         "suggestions": suggestions
     }
 
@@ -454,25 +461,24 @@ def safe_tool(tool_name: str) -> Callable:
         @wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Dict[str, Any]:
             try:
-                # 🔹 Step 1: Validate input
-                validate_input(tool_name, kwargs)
+                # 🔹 Bind args + kwargs properly
+                bound = signature(func).bind_partial(*args, **kwargs)
+                bound.apply_defaults()
 
-                # 🔹 Step 2: Execute actual tool
+                validate_input(tool_name, dict(bound.arguments))
+
                 return func(*args, **kwargs)
 
             except ValidationError as e:
-                # 🔹 Step 3: Structured validation error
                 return {
                     "error": str(e),
                     "safe": True,
                     "tool": tool_name
                 }
 
-            except Exception as e:
-                # 🔹 Step 4: Catch unexpected errors (VERY important)
+            except Exception:
                 return {
                     "error": "Internal tool execution error",
-                    "details": str(e),
                     "safe": False,
                     "tool": tool_name
                 }
