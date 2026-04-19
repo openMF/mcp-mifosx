@@ -17,6 +17,9 @@ from tools.domains.charges import create_charge as create_charge_domain
 from tools.domains.charges import get_charge as get_charge_domain
 from tools.domains.charges import list_charges as list_charges_domain
 from tools.domains.charges import update_charge as update_charge_domain
+from functools import wraps
+from typing import Any, Callable, Dict
+from core.validation_engine import validate_input, ValidationError
 from tools.domains.clients import (
     activate_client,
     apply_client_charge,
@@ -446,6 +449,36 @@ def get_overdue_loans_for_client(clientId: int) -> dict:
         "suggestions": suggestions
     }
 
+def safe_tool(tool_name: str) -> Callable:
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+            try:
+                # 🔹 Step 1: Validate input
+                validate_input(tool_name, kwargs)
+
+                # 🔹 Step 2: Execute actual tool
+                return func(*args, **kwargs)
+
+            except ValidationError as e:
+                # 🔹 Step 3: Structured validation error
+                return {
+                    "error": str(e),
+                    "safe": True,
+                    "tool": tool_name
+                }
+
+            except Exception as e:
+                # 🔹 Step 4: Catch unexpected errors (VERY important)
+                return {
+                    "error": "Internal tool execution error",
+                    "details": str(e),
+                    "safe": False,
+                    "tool": tool_name
+                }
+
+        return wrapper
+    return decorator
 @mcp.tool()
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
     """Create a group loan application for an existing lending group"""
