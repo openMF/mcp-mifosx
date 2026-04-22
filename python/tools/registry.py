@@ -1,7 +1,6 @@
 # Copyright since 2025 Mifos Initiative
 # This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# License, v. 2.0.
 
 import re
 from typing import Any, List
@@ -76,9 +75,7 @@ from core.suggestion_engine import generate_suggestions
 
 
 class DomainRegistry:
-    """
-    Domain router that maps user intent to a filtered subset of MCP tools.
-    """
+    """Domain router that maps user intent to relevant MCP tools."""
 
     def __init__(self):
         self.domain_map = {
@@ -142,95 +139,73 @@ class DomainRegistry:
 
         return all_tools
 
-   def route_intent(self, user_query: str) -> List[Any]:
-    """Route user query to relevant domain tools using word-boundary matching."""
-    query = user_query.lower()
-    active_domains = set()
+    def route_intent(self, user_query: str) -> List[Any]:
+        """
+        Route user query using regex + phrase-aware matching.
+        Prevents false positives like 'research' → 'search'.
+        """
+        query = user_query.lower()
+        active_domains = set()
 
-    def matches_keyword(keywords: List[str]) -> bool:
-        for word in keywords:
-            pattern = rf"\b{re.escape(word)}\b"
-            if re.search(pattern, query):
-                return True
-        return False
+        def matches(keywords: List[str]) -> bool:
+            for k in keywords:
+                if " " in k:
+                    if k in query:
+                        return True
+                else:
+                    if re.search(rf"\b{re.escape(k)}\b", query):
+                        return True
+            return False
 
-    # Loans
-    if matches_keyword([
-        "loan", "repayment", "disburse", "overdue", "arrear",
-        "reject", "waive", "installment", "undo", "reschedule", "template"
-    ]):
-        active_domains.add("loans")
+        if matches([
+            "loan", "repayment", "disburse", "overdue", "arrear",
+            "reject", "waive", "installment", "undo", "reschedule", "template"
+        ]):
+            active_domains.add("loans")
 
-    # Clients
-    if matches_keyword([
-        "client", "person", "search", "activate", "mobile", "kyc",
-        "identifier", "address", "charge", "fee", "document"
-    ]):
-        active_domains.add("clients")
+        if matches([
+            "client", "person", "search", "activate", "mobile",
+            "kyc", "identifier", "address", "charge", "fee", "document"
+        ]):
+            active_domains.add("clients")
 
-    # Groups
-    if matches_keyword([
-        "group", "center", "centre", "member"
-    ]):
-        active_domains.add("groups")
+        if matches(["group", "center", "centre", "member"]):
+            active_domains.add("groups")
 
-    # Savings
-    if matches_keyword([
-        "saving", "deposit", "withdraw", "balance", "wallet", "interest"
-    ]):
-        active_domains.add("savings")
+        if matches(["saving", "savings", "deposit", "withdraw", "balance", "interest"]):
+            active_domains.add("savings")
 
-    # Staff
-    if matches_keyword([
-        "staff", "officer", "employee", "office", "branch"
-    ]):
-        active_domains.add("staff")
+        if matches(["staff", "officer", "employee", "office", "branch"]):
+            active_domains.add("staff")
 
-    # Accounting
-    if matches_keyword([
-        "journal", "ledger", "account", "debit", "credit", "accounting"
-    ]):
-        active_domains.add("accounting")
+        if matches(["journal", "ledger", "account", "debit", "credit"]):
+            active_domains.add("accounting")
 
-    # Reports
-    if matches_keyword([
-        "report", "generate", "sql"
-    ]):
-        active_domains.add("reports")
+        if matches(["report", "portfolio report", "generate report"]):
+            active_domains.add("reports")
 
-    # Products
-    if matches_keyword([
-        "product"
-    ]):
-        active_domains.add("products")
+        if matches(["product", "loan product", "savings product"]):
+            active_domains.add("products")
 
-    # Charges
-    if matches_keyword([
-        "charge", "penalty", "fee"
-    ]):
-        active_domains.add("charges")
+        if matches(["charge", "fee", "penalty", "late fee"]):
+            active_domains.add("charges")
 
-    # Code tables
-    if matches_keyword([
-        "code", "datatable", "dropdown"
-    ]):
-        active_domains.add("codetables")
+        if matches(["code", "datatable", "custom field"]):
+            active_domains.add("codetables")
 
-    # Default fallback
-    if not active_domains:
-        active_domains.add("clients")
+        if not active_domains:
+            active_domains.add("clients")
 
-    # Deduplicate tools
-    seen = set()
-    result = []
+        seen = set()
+        result = []
 
-    for domain in active_domains:
-        for tool in self.domain_map[domain]:
-            if tool.name not in seen:
-                result.append(tool)
-                seen.add(tool.name)
+        for domain in active_domains:
+            for tool in self.domain_map[domain]:
+                if tool.name not in seen:
+                    result.append(tool)
+                    seen.add(tool.name)
 
-    return result
+        return result
 
     def get_suggestions(self, intent: str, data: Any) -> List[str]:
         return generate_suggestions(intent, data)
