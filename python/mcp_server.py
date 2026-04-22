@@ -442,19 +442,26 @@ def get_overdue_loans_for_client(clientId: int) -> dict:
         return result
 
     # 🔹 Step 2: Generate suggestions
-    suggestions = generate_suggestions("get_overdue_loans", result)
-
-    # 🔹 Step 3: Safe response handling
-    if isinstance(result, dict):
-        return {
-            **result,
-            "suggestions": suggestions
-        }
-
+    # suggestions = generate_suggestions("get_overdue_loans", result)
+    
+    payload = result if isinstance(result, dict) else {"overdueLoans": result or []}
+    suggestions = generate_suggestions("get_overdue_loans", payload)
     return {
-        "overdueLoans": result or [],
-        "suggestions": suggestions
-    }
+    **payload,
+    "suggestions": suggestions
+}
+
+    # # 🔹 Step 3: Safe response handling
+    # if isinstance(result, dict):
+    #     return {
+    #         **result,
+    #         "suggestions": suggestions
+    #     }
+
+    # return {
+    #     "overdueLoans": result or [],
+    #     "suggestions": suggestions
+    # }
 
 def safe_tool(tool_name: str) -> Callable:
     def decorator(func: Callable) -> Callable:
