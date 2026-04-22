@@ -3,7 +3,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from typing import List, Any  # ✅ FIX: required imports
+import re
+from typing import Any, List
 
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge, get_charge, list_charges, update_charge
@@ -26,7 +27,14 @@ from tools.domains.clients import (
     update_client_mobile,
 )
 from tools.domains.codetables import get_code_values, list_codes, list_datatables
-from tools.domains.groups import activate_group, add_group_member, create_center, get_center, list_centers, list_groups
+from tools.domains.groups import (
+    activate_group,
+    add_group_member,
+    create_center,
+    get_center,
+    list_centers,
+    list_groups,
+)
 from tools.domains.loans import (
     apply_late_fee,
     approve_and_disburse_loan,
@@ -43,7 +51,12 @@ from tools.domains.loans import (
     undo_loan_disbursal,
     waive_interest,
 )
-from tools.domains.products import get_loan_product, get_savings_product, list_loan_products, list_savings_products
+from tools.domains.products import (
+    get_loan_product,
+    get_savings_product,
+    list_loan_products,
+    list_savings_products,
+)
 from tools.domains.reports import create_report, get_report, list_reports, run_report, update_report
 from tools.domains.savings import (
     apply_savings_charge,
@@ -85,7 +98,8 @@ class DomainRegistry:
                 approve_and_disburse_loan, reject_loan_application,
                 make_loan_repayment, apply_late_fee, waive_interest,
                 get_overdue_loans, create_group_loan,
-                undo_loan_approval, undo_loan_disbursal, get_loan_template, reschedule_loan
+                undo_loan_approval, undo_loan_disbursal,
+                get_loan_template, reschedule_loan
             ],
             "savings": [
                 get_savings_account, get_savings_transactions, create_savings_account,
@@ -110,60 +124,69 @@ class DomainRegistry:
             ],
             "codetables": [
                 list_codes, get_code_values, list_datatables
-            ]
+            ],
         }
 
-    def get_domain(self, domain: str) -> list:
+    def get_domain(self, domain: str) -> List[Any]:
         return self.domain_map.get(domain, [])
 
-    def get_all_tools(self) -> list:
+    def get_all_tools(self) -> List[Any]:
         all_tools = []
         seen = set()
+
         for tools in self.domain_map.values():
             for tool in tools:
                 if tool.name not in seen:
                     all_tools.append(tool)
                     seen.add(tool.name)
+
         return all_tools
 
     def route_intent(self, user_query: str) -> List[Any]:
+        """
+        Route user query to relevant domain tools using precise keyword matching.
+        Avoids false positives like 'research' triggering 'search'.
+        """
         query = user_query.lower()
         active_domains = set()
 
-        if any(w in query for w in [
+        def matches(keywords: List[str]) -> bool:
+            return any(re.search(rf"\b{re.escape(k)}\b", query) for k in keywords)
+
+        if matches([
             "loan", "repayment", "disburse", "overdue", "arrear",
             "reject", "waive", "installment", "undo", "reschedule", "template"
         ]):
             active_domains.add("loans")
 
-        if any(w in query for w in [
-            "client", "person", "search", "activate", "mobile", "kyc",
-            "identifier", "address", "charge", "fee", "document"
+        if matches([
+            "client", "person", "search", "activate", "mobile",
+            "kyc", "identifier", "address", "charge", "fee", "document"
         ]):
             active_domains.add("clients")
 
-        if any(w in query for w in ["group", "center", "centre", "member", "lending group"]):
+        if matches(["group", "center", "centre", "member"]):
             active_domains.add("groups")
 
-        if any(w in query for w in ["saving", "deposit", "withdraw", "balance", "wallet", "interest"]):
+        if matches(["saving", "deposit", "withdraw", "balance", "interest"]):
             active_domains.add("savings")
 
-        if any(w in query for w in ["staff", "officer", "employee", "office", "branch"]):
+        if matches(["staff", "officer", "employee", "office", "branch"]):
             active_domains.add("staff")
 
-        if any(w in query for w in ["journal", "ledger", "account", "gl account", "debit", "credit", "accounting"]):
+        if matches(["journal", "ledger", "account", "debit", "credit"]):
             active_domains.add("accounting")
 
-        if any(w in query for w in ["report", "run report", "portfolio report", "generate report", "sql report"]):
+        if matches(["report", "portfolio report", "generate report"]):
             active_domains.add("reports")
 
-        if any(w in query for w in ["product", "loan product", "savings product"]):
+        if matches(["product", "loan product", "savings product"]):
             active_domains.add("products")
 
-        if any(w in query for w in ["charge", "fee", "penalty", "late fee"]):
+        if matches(["charge", "fee", "penalty", "late fee"]):
             active_domains.add("charges")
 
-        if any(w in query for w in ["code", "dropdown", "datatable", "custom field"]):
+        if matches(["code", "datatable", "custom field"]):
             active_domains.add("codetables")
 
         if not active_domains:
