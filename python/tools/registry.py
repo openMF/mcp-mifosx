@@ -1,9 +1,9 @@
 # Copyright since 2025 Mifos Initiative
 # This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0. If a copy of the MPL was not distributed with this
-# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+# License, v. 2.0.
 
 import re
+from typing import Any, List
 
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge, get_charge, list_charges, update_charge
@@ -26,7 +26,14 @@ from tools.domains.clients import (
     update_client_mobile,
 )
 from tools.domains.codetables import get_code_values, list_codes, list_datatables
-from tools.domains.groups import activate_group, add_group_member, create_center, get_center, list_centers, list_groups
+from tools.domains.groups import (
+    activate_group,
+    add_group_member,
+    create_center,
+    get_center,
+    list_centers,
+    list_groups,
+)
 from tools.domains.loans import (
     apply_late_fee,
     approve_and_disburse_loan,
@@ -43,7 +50,12 @@ from tools.domains.loans import (
     undo_loan_disbursal,
     waive_interest,
 )
-from tools.domains.products import get_loan_product, get_savings_product, list_loan_products, list_savings_products
+from tools.domains.products import (
+    get_loan_product,
+    get_savings_product,
+    list_loan_products,
+    list_savings_products,
+)
 from tools.domains.reports import create_report, get_report, list_reports, run_report, update_report
 from tools.domains.savings import (
     apply_savings_charge,
@@ -58,32 +70,12 @@ from tools.domains.savings import (
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
 
+# ✅ AI Suggestion Engine
+from core.suggestion_engine import generate_suggestions
+
 
 class DomainRegistry:
-    """
-    Domain router that maps user intent to a filtered subset of MCP tools.
-
-    This is used by MCP clients that want to limit the tool context window
-    based on the user's query. Instead of sending all available tools to the LLM,
-    the router returns only the tools relevant to the detected domain(s).
-
-    Usage:
-        from tools.registry import router
-        tools = router.route_intent("Show me the repayment schedule for loan 5")
-        # returns only the Loans domain tools
-
-    Full domain map:
-        router.domain_map["clients"]    - 16 client & KYC tools
-        router.domain_map["groups"]     - 6 group & center tools
-        router.domain_map["loans"]      - 14 loan tools
-        router.domain_map["savings"]    - 9 savings tools
-        router.domain_map["staff"]      - 4 staff & office tools
-        router.domain_map["accounting"] - 3 accounting tools
-        router.domain_map["reports"]    - 5 report definition & execution tools
-        router.domain_map["products"]   - 4 loan & savings product tools
-        router.domain_map["charges"]    - 4 charge/fee tools
-        router.domain_map["codetables"] - 3 code table & datatable tools
-    """
+    """Domain router that maps user intent to relevant MCP tools."""
 
     def __init__(self):
         self.domain_map = {
@@ -103,7 +95,8 @@ class DomainRegistry:
                 approve_and_disburse_loan, reject_loan_application,
                 make_loan_repayment, apply_late_fee, waive_interest,
                 get_overdue_loans, create_group_loan,
-                undo_loan_approval, undo_loan_disbursal, get_loan_template, reschedule_loan
+                undo_loan_approval, undo_loan_disbursal,
+                get_loan_template, reschedule_loan
             ],
             "savings": [
                 get_savings_account, get_savings_transactions, create_savings_account,
@@ -128,105 +121,95 @@ class DomainRegistry:
             ],
             "codetables": [
                 list_codes, get_code_values, list_datatables
-            ]
+            ],
         }
 
-    def get_domain(self, domain: str) -> list:
-        """
-        Return all tools for a specific domain by name.
-        Valid names: 'clients', 'groups', 'loans', 'savings', 'staff', 'accounting', 'reports', 'products', 'charges', 'codetables'
-        """
+    def get_domain(self, domain: str) -> List[Any]:
         return self.domain_map.get(domain, [])
 
-    def get_all_tools(self) -> list:
-        """Return the full flat list of all tools across all domains."""
+    def get_all_tools(self) -> List[Any]:
         all_tools = []
         seen = set()
+
         for tools in self.domain_map.values():
             for tool in tools:
                 if tool.name not in seen:
                     all_tools.append(tool)
                     seen.add(tool.name)
+
         return all_tools
 
-    def route_intent(self, user_query: str) -> list:
+    def route_intent(self, user_query: str) -> List[Any]:
         """
-        Analyzes a user prompt and returns only the tool objects needed.
-        Used to keep the LLM context window lean for single-domain queries.
+        Route user query using regex + phrase-aware matching.
+        Prevents false positives like 'research' → 'search'.
         """
         query = user_query.lower()
         active_domains = set()
 
-        def matches_keyword(keywords):
-            for w in keywords:
-                if w.endswith('y'):
-                    pattern = rf"\b{re.escape(w[:-1])}(y|ies)\b"
-                elif w.endswith(('s', 'sh', 'ch', 'x', 'z')):
-                    pattern = rf"\b{re.escape(w)}(es)?\b"
+        def matches(keywords: List[str]) -> bool:
+            for k in keywords:
+                if " " in k:
+                    if k in query:
+                        return True
                 else:
-                    pattern = rf"\b{re.escape(w)}s?\b"
-                if re.search(pattern, query):
-                    return True
+                    if re.search(rf"\b{re.escape(k)}\b", query):
+                        return True
             return False
 
-        # Loans
-        loan_keywords = [
+        if matches([
             "loan", "repayment", "disburse", "overdue", "arrear",
-            "reject", "waive", "installment", "undo", "reschedule", "template",
-        ]
-        if matches_keyword(loan_keywords):
+            "reject", "waive", "installment", "undo", "reschedule", "template"
+        ]):
             active_domains.add("loans")
 
-        # Clients
-        if matches_keyword(["client", "person", "search", "activate", "mobile", "kyc", "identifier", "address", "charge", "fee", "document"]):
+        if matches([
+            "client", "person", "search", "activate", "mobile",
+            "kyc", "identifier", "address", "charge", "fee", "document"
+        ]):
             active_domains.add("clients")
 
-        # Groups & Centers
-        if matches_keyword(["group", "center", "centre", "member", "lending group"]):
+        if matches(["group", "center", "centre", "member"]):
             active_domains.add("groups")
 
-        # Savings
-        if matches_keyword(["saving", "deposit", "withdraw", "balance", "wallet", "interest"]):
+        if matches(["saving", "savings", "deposit", "withdraw", "balance", "interest"]):
             active_domains.add("savings")
 
-        # Staff & Offices
-        if matches_keyword(["staff", "officer", "employee", "office", "branch"]):
+        if matches(["staff", "officer", "employee", "office", "branch"]):
             active_domains.add("staff")
 
-        # Accounting
-        if matches_keyword(["journal", "ledger", "account", "gl account", "debit", "credit", "accounting"]):
+        if matches(["journal", "ledger", "account", "debit", "credit"]):
             active_domains.add("accounting")
 
-        # Reports
-        if matches_keyword(["report", "run report", "report template", "portfolio report", "generate report", "sql report"]):
+        if matches(["report", "portfolio report", "generate report"]):
             active_domains.add("reports")
 
-        # Products
-        if matches_keyword(["product", "loan product", "savings product", "product type", "available products"]):
+        if matches(["product", "loan product", "savings product"]):
             active_domains.add("products")
 
-        # Charges
-        if matches_keyword(["charge", "fee", "penalty", "late fee", "disbursement fee"]):
+        if matches(["charge", "fee", "penalty", "late fee"]):
             active_domains.add("charges")
 
-        # Code Tables
-        if matches_keyword(["code", "dropdown", "code value", "gender", "id type", "datatable", "custom field"]):
+        if matches(["code", "datatable", "custom field"]):
             active_domains.add("codetables")
 
-        # Default: return clients for basic lookup if nothing matched
         if not active_domains:
             active_domains.add("clients")
 
-        # Flatten and deduplicate across matched domains
         seen = set()
         result = []
+
         for domain in active_domains:
             for tool in self.domain_map[domain]:
                 if tool.name not in seen:
                     result.append(tool)
                     seen.add(tool.name)
+
         return result
 
+    def get_suggestions(self, intent: str, data: Any) -> List[str]:
+        return generate_suggestions(intent, data)
 
-# Global router instance — import this in your MCP client
+
+# Global router instance
 router = DomainRegistry()

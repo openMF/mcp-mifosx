@@ -17,6 +17,11 @@ from tools.domains.charges import create_charge as create_charge_domain
 from tools.domains.charges import get_charge as get_charge_domain
 from tools.domains.charges import list_charges as list_charges_domain
 from tools.domains.charges import update_charge as update_charge_domain
+from functools import wraps
+from typing import Any, Callable, Dict
+from inspect import signature
+from core.validation_engine import validate_input, ValidationError
+from core.suggestion_engine import generate_suggestions
 from tools.domains.clients import (
     activate_client,
     apply_client_charge,
@@ -289,11 +294,16 @@ def get_addresses(clientId: int) -> dict:
 @mcp.tool()
 def get_loan(loanId: int) -> dict:
     """Get key details of a specific loan."""
+
     data = get_loan_details.func(loanId)
+
     if not isinstance(data, dict):
         return data
+
     tl = data.get("timeline", {})
-    return {
+
+    # 🔹 Step 1: Prepare clean response
+    response = {
         "loanId":              data.get("id"),
         "accountNo":           data.get("accountNo"),
         "productName":         data.get("loanProductName"),
@@ -310,6 +320,14 @@ def get_loan(loanId: int) -> dict:
         "repaymentFrequency":  f"Every {data.get('repaymentEvery')} {data.get('repaymentFrequencyType', {}).get('value','')}",
     }
 
+    # 🔹 Step 2: Generate suggestions
+    suggestions = generate_suggestions("get_loan_details", response)
+
+    # 🔹 Step 3: Return enhanced response
+    return {
+        "data": response,
+        "suggestions": suggestions
+    }
 @mcp.tool()
 def get_repayment_sched(loanId: int) -> dict:
     """Get the repayment schedule for a loan."""
@@ -416,8 +434,64 @@ def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized W
 @mcp.tool()
 def get_overdue_loans_for_client(clientId: int) -> dict:
     """Get all overdue or in-arrears loans for a client"""
-    return get_overdue_loans.func(clientId)
 
+    result = get_overdue_loans.func(clientId)
+
+    # 🔹 Step 1: Propagate errors safely
+    if isinstance(result, dict) and "error" in result:
+        return result
+
+    # 🔹 Step 2: Generate suggestions
+    # suggestions = generate_suggestions("get_overdue_loans", result)
+    
+    payload = result if isinstance(result, dict) else {"overdueLoans": result or []}
+    suggestions = generate_suggestions("get_overdue_loans", payload)
+    return {
+    **payload,
+    "suggestions": suggestions
+}
+
+    # # 🔹 Step 3: Safe response handling
+    # if isinstance(result, dict):
+    #     return {
+    #         **result,
+    #         "suggestions": suggestions
+    #     }
+
+    # return {
+    #     "overdueLoans": result or [],
+    #     "suggestions": suggestions
+    # }
+
+def safe_tool(tool_name: str) -> Callable:
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+            try:
+                # 🔹 Bind args + kwargs properly
+                bound = signature(func).bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+
+                validate_input(tool_name, dict(bound.arguments))
+
+                return func(*args, **kwargs)
+
+            except ValidationError as e:
+                return {
+                    "error": str(e),
+                    "safe": True,
+                    "tool": tool_name
+                }
+
+            except Exception:
+                return {
+                    "error": "Internal tool execution error",
+                    "safe": False,
+                    "tool": tool_name
+                }
+
+        return wrapper
+    return decorator
 @mcp.tool()
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
     """Create a group loan application for an existing lending group"""
