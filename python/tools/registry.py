@@ -1,8 +1,9 @@
 # Copyright since 2025 Mifos Initiative
 # This Source Code Form is subject to the terms of the Mozilla Public
-# License, v. 2.0.
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from typing import Any, List
+from typing import List, Any  # ✅ FIX: required imports
 
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge, get_charge, list_charges, update_charge
@@ -64,21 +65,6 @@ from core.suggestion_engine import generate_suggestions
 class DomainRegistry:
     """
     Domain router that maps user intent to a filtered subset of MCP tools.
-
-    This is used by MCP clients to limit the tool context window
-    based on the user query. Instead of sending all tools to the LLM,
-    only relevant domain tools are returned.
-
-    NOTE:
-    -----
-    The Suggestion Engine is NOT registered as a tool because:
-    - It does not call Fineract APIs directly
-    - It enhances responses AFTER tool execution
-    - It acts as a UX enhancement layer inside MCP server
-
-    Separation of concerns:
-    - Tools → Data operations
-    - Suggestion Engine → Post-processing / guidance layer
     """
 
     def __init__(self):
@@ -127,12 +113,10 @@ class DomainRegistry:
             ]
         }
 
-    def get_domain(self, domain: str) -> List[Any]:
-        """Return tools for a specific domain."""
+    def get_domain(self, domain: str) -> list:
         return self.domain_map.get(domain, [])
 
-    def get_all_tools(self) -> List[Any]:
-        """Return all unique tools across domains."""
+    def get_all_tools(self) -> list:
         all_tools = []
         seen = set()
         for tools in self.domain_map.values():
@@ -143,38 +127,43 @@ class DomainRegistry:
         return all_tools
 
     def route_intent(self, user_query: str) -> List[Any]:
-        """Route user query to relevant domain tools."""
         query = user_query.lower()
         active_domains = set()
 
-        if any(w in query for w in ["loan", "repayment", "overdue", "disburse", "reschedule"]):
+        if any(w in query for w in [
+            "loan", "repayment", "disburse", "overdue", "arrear",
+            "reject", "waive", "installment", "undo", "reschedule", "template"
+        ]):
             active_domains.add("loans")
 
-        if any(w in query for w in ["client", "search", "kyc", "mobile", "document"]):
+        if any(w in query for w in [
+            "client", "person", "search", "activate", "mobile", "kyc",
+            "identifier", "address", "charge", "fee", "document"
+        ]):
             active_domains.add("clients")
 
-        if any(w in query for w in ["group", "center", "member"]):
+        if any(w in query for w in ["group", "center", "centre", "member", "lending group"]):
             active_domains.add("groups")
 
-        if any(w in query for w in ["saving", "deposit", "withdraw", "interest"]):
+        if any(w in query for w in ["saving", "deposit", "withdraw", "balance", "wallet", "interest"]):
             active_domains.add("savings")
 
-        if any(w in query for w in ["staff", "office", "branch"]):
+        if any(w in query for w in ["staff", "officer", "employee", "office", "branch"]):
             active_domains.add("staff")
 
-        if any(w in query for w in ["journal", "ledger", "accounting"]):
+        if any(w in query for w in ["journal", "ledger", "account", "gl account", "debit", "credit", "accounting"]):
             active_domains.add("accounting")
 
-        if any(w in query for w in ["report"]):
+        if any(w in query for w in ["report", "run report", "portfolio report", "generate report", "sql report"]):
             active_domains.add("reports")
 
-        if any(w in query for w in ["product"]):
+        if any(w in query for w in ["product", "loan product", "savings product"]):
             active_domains.add("products")
 
-        if any(w in query for w in ["charge", "fee", "penalty"]):
+        if any(w in query for w in ["charge", "fee", "penalty", "late fee"]):
             active_domains.add("charges")
 
-        if any(w in query for w in ["code", "datatable"]):
+        if any(w in query for w in ["code", "dropdown", "datatable", "custom field"]):
             active_domains.add("codetables")
 
         if not active_domains:
@@ -182,6 +171,7 @@ class DomainRegistry:
 
         seen = set()
         result = []
+
         for domain in active_domains:
             for tool in self.domain_map[domain]:
                 if tool.name not in seen:
@@ -190,13 +180,7 @@ class DomainRegistry:
 
         return result
 
-    # ✅ Suggestion helper (with type safety)
     def get_suggestions(self, intent: str, data: Any) -> List[str]:
-        """
-        Generate intelligent suggestions based on tool output.
-
-        This enhances MCP responses by guiding users with next actions.
-        """
         return generate_suggestions(intent, data)
 
 

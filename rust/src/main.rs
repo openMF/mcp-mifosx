@@ -5,6 +5,7 @@
 
 mod adapter;
 mod domains;
+mod embeddings;
 mod registry;
 mod server;
 

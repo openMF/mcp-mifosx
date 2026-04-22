@@ -3,9 +3,10 @@
 This project provides Model Context Protocol (MCP) for the Mifos X Ecosystem, enabling AI agents to access financial data and operations. 
 
 Implementations are available in:
+- **Go (Native)** — 102 typed tools (high-performance, cloud-native with SSE/Stdio).
 - **Java (Quarkus)** — 38 typed tools (across Backoffice and Recommendations).
 - **Python (FastMCP)** — 49 typed tools (modular domain-driven design).
-- **Rust** — 66 typed tools (high-performance async I/O with exclusive bulk operations).
+- **Rust** — 89 typed tools (high-performance async I/O with exclusive bulk operations).
 
 ---
 
@@ -21,14 +22,14 @@ The Mifos MCP Server acts as a standalone, stateless integration tier that bridg
 ┌───────────────────────────────▼───────────────────────────────┐
 │                 mcp-mifosx (Primary Repo)                     │
 │                                                               │
-│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐  │
-│  │ /java (Quarkus) │ │/python (FastMCP)│ │  /rust (Tokio)  │  │
-│  │                 │ │                 │ │                 │  │
-│  │ - 38 Tools      │ │ - 49 Tools      │ │ - 66 Tools      │  │
-│  │ - Backoffice    │ │ - Modular Design│ │ - Async I/O     │  │
-│  │ - Recommend.    │ │                 │ │ - Bulk Actions  │  │
-│  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘  │
-└───────────┴───────────────────┼───────────────────┴───────────┘
+│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐  │
+│  │   /go (Native)  │ │ /java (Quarkus) │ │/python (FastMCP)│ │  /rust (Tokio)  │  │
+│  │                 │ │                 │ │                 │ │                 │  │
+│  │ - 102 Tools     │ │ - 38 Tools      │ │ - 49 Tools      │ │ - 89 Tools      │  │
+│  │ - Go Routines   │ │ - Backoffice    │ │ - Modular Design│ │ - Async I/O     │  │
+│  │ - SSE / Stdio   │ │ - Recommend.    │ │                 │ │ - Bulk Actions  │  │
+│  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘ └────────┬────────┘  │
+└───────────┴───────────────────┼───────────────────┼───────────────────┴───────────┘
                         │ MCP Protocol (stdio / SSE)
           ┌─────────────┼──────────────┐
           ▼             ▼              ▼
@@ -47,7 +48,8 @@ While this repository hosts two different programming languages, they are kept i
 
 ### How they "Sync":
 1. **Tool Specification**: All implementations aim to expose the same core banking tools. 
-   - **Rust** currently leads with **66 tools**, uniquely featuring high-concurrency Bulk Operations.
+   - **Go** currently leads with **102 tools**, featuring advanced cloud-native features and SSE.
+   - **Rust** provides **89 tools**, uniquely featuring high-concurrency Bulk Operations and robust "Fetch-and-Merge" state management.
    - **Python** provides **49 tools** using a modular domain design.
    - **Java** provides **38 tools** (21 for Backoffice operations and 17 for User Recommendations).
 2. **API Alignment**: All implementations are built against the same **Apache Fineract REST API**. They share identical logic for field routing.
@@ -63,6 +65,10 @@ This repository is structured to support multiple implementations and client int
 ```
 .
 ├── README.md               # Root entry point & cross-implementation guide
+├── go/                     # Go Implementation (Native / High-Performance)
+│   ├── tools/              # 102 Domain-specific tools (SSE/Stdio)
+│   ├── server/             # Dual-transport logic (HTTP/SSE & Stdio)
+│   └── main.go             # Server entry point
 ├── rust/                   # Rust Implementation (Tokio/Reqwest)
 │   ├── src/                # Multi-threaded typed tools & bulk execution logic
 │   └── Cargo.toml          # Rust package dependencies
@@ -80,6 +86,21 @@ This repository is structured to support multiple implementations and client int
 ## Getting Started
 
 ### 1. Choose Your Implementation
+
+#### **Go (Native & Cloud-Ready)**
+**Prerequisites**: Go 1.21+
+
+**Steps**:
+1. **Configure Environment**:
+   Copy `go/.env.example` to `go/.env` and update credentials.
+2. **Build and Run**:
+   ```bash
+   cd go
+   go build -o mcp-server .
+   ./mcp-server
+   ```
+3. **SSE Mode** (Optional):
+   Define `PORT=8080` in `.env` to switch from Stdio to SSE microservice mode.
 
 #### **Rust (High-Performance)**
 **Prerequisites**: Rust (Cargo)
@@ -140,11 +161,21 @@ This repository is structured to support multiple implementations and client int
 
 The exact number and categorization of tools depend on the core server implementation deployed:
 
-### Rust (66 Tools)
-*Built for asynchronous scale and bulk processing.*
-- **Clients & Groups**: 27 Tools
-- **Loans & Savings**: 21 Tools
-- **Staff & Accounting**: 7 Tools
+### Go (102 Tools)
+*The most feature-complete implementation with native concurrent routines.*
+- **Clients & Identities**: 16 Tools
+- **Documents & Reports**: 26 Tools
+- **Loans & Savings**: 23 Tools
+- **Groups & Centers**: 13 Tools
+- **Bulk & Composite**: 19 Tools (Cloud-Native)
+- **Accounting & Stats**: 5 Tools
+
+### Rust (89 Tools)
+*Built for asynchronous scale, bulk processing, and robust state-aware updates.*
+- **Clients & Collaterals**: 25 Tools
+- **Loans & Collaterals**: 19 Tools 
+- **Groups, Savings & Centers**: 23 Tools
+- **Staff, Accounting & Charges**: 11 Tools
 - **Bulk Operations**: 11 Tools *(Exclusive to Rust)*
 
 ### Python (49 Tools)
@@ -179,22 +210,22 @@ npx @modelcontextprotocol/inspector python python/mcp_server.py
 
 | Video URL | Title | Prompt | Implementation |
 | :--- | :--- | :--- | :--- |
-| https://youtu.be/MDQKRoz5GKw?si=69X77C58nFhy6Ioh | Join and Try the Mifos MCP | Go to https://ai.mifos.community | **Java / Python / Rust** |
-| https://youtu.be/y5MR3j8EGM4?si=zXTurBNql4xF5CGY | Create Client | Create client using name: OCTAVIO PAZ, email: octaviopaz@mifos.org, etc. | **Java / Python / Rust** |
-| https://youtu.be/qJsC25cd-1g?si=qQzX8DeOe0_2qhfr | Activate Client | Activate the client OCTAVIO PAZ | **Java / Python / Rust** |
+| https://youtu.be/MDQKRoz5GKw?si=69X77C58nFhy6Ioh | Join and Try the Mifos MCP | Go to https://ai.mifos.community | **Go / Java / Python / Rust** |
+| https://youtu.be/y5MR3j8EGM4?si=zXTurBNql4xF5CGY | Create Client | Create client using name: OCTAVIO PAZ, email: octaviopaz@mifos.org, etc. | **Go / Java / Python / Rust** |
+| https://youtu.be/qJsC25cd-1g?si=qQzX8DeOe0_2qhfr | Activate Client | Activate the client OCTAVIO PAZ | **Go / Java / Python / Rust** |
 | https://youtu.be/X1g_nVDsRnM?si=K7vsAN7gOLEC2OG0 | Add Address to Client | Add the address to the client OCTAVIO PAZ (Plaza de Loreto) | **Java** |
 | https://youtu.be/xeL9_sycwA8?si=AtV6F4WhTvcDspSp | Add Personal Reference | Add Maria Elena Ramírez as sister to OCTAVIO PAZ | **Java** |
 | https://youtu.be/IKGMeAJBAOk?si=N27rE64dn7qxmMBk | Create a Loan Product | Create default loan product named "SILVER" (10% interest) | **Java** |
-| https://youtu.be/5EdgUyLyP0w?si=L0UdYjXlyYF6faL5 | Create Loan Application | Apply for individual loan for OCTAVIO PAZ using SILVER | **Java / Python / Rust** |
-| https://youtu.be/2ioN_8z_uaY?si=ZTB5rCrgS2jTpC4- | Approve Loan | Approve the loan account | **Java / Python / Rust** |
-| https://youtu.be/dDebmrn4lB0?si=0GTf4asCBHnsu27f | Disbursement of Loan | Disburse loan account using Money Transfer | **Java / Python / Rust** |
-| https://youtu.be/N3wnyJCh_Ik?si=gSy5LrJdFF2kfzHd | Make Loan Repayment | Make a repayment for account 6 (Amount: 6687.59) | **Java / Python / Rust** |
+| https://youtu.be/5EdgUyLyP0w?si=L0UdYjXlyYF6faL5 | Create Loan Application | Apply for individual loan for OCTAVIO PAZ using SILVER | **Go / Java / Python / Rust** |
+| https://youtu.be/2ioN_8z_uaY?si=ZTB5rCrgS2jTpC4- | Approve Loan | Approve the loan account | **Go / Java / Python / Rust** |
+| https://youtu.be/dDebmrn4lB0?si=0GTf4asCBHnsu27f | Disbursement of Loan | Disburse loan account using Money Transfer | **Go / Java / Python / Rust** |
+| https://youtu.be/N3wnyJCh_Ik?si=gSy5LrJdFF2kfzHd | Make Loan Repayment | Make a repayment for account 6 (Amount: 6687.59) | **Go / Java / Python / Rust** |
 | https://youtu.be/bOuTj97hyqU?si=9bpno4Kp0II1IfPY | Create Savings Product | Create default savings product named "WALLET" | **Java** |
-| https://youtu.be/l-Z7LlE3AnM?si=yQM4lloJL8Hu6yv8 | Create Savings App | Apply for savings account for OCTAVIO PAZ using WALLET | **Java / Python / Rust** |
-| https://youtu.be/Q5ExlhalG8U?si=TwbsUZX30G3JeNJy | Approve Savings App | Approve the savings account with note "MY FIRST APPROVAL" | **Java / Python / Rust** |
-| https://youtu.be/DJgUiRYK-rE?si=YatfVgOgpbP4wV91 | Activate Savings | Activate the savings account | **Java / Python / Rust** |
-| https://youtu.be/Od7KFqktUtI?si=gPJNlLOB_7D74QdS | Make a Deposit | Create DEPOSIT of 5000 for account 1 | **Java / Python / Rust** |
-| https://youtu.be/9OL6N5wKG7c?si=R50RjTK6GI_ODuUs | Make a Withdrawal | Create WITHDRAWAL of 2000 for account 1 | **Java / Python / Rust** |
+| https://youtu.be/l-Z7LlE3AnM?si=yQM4lloJL8Hu6yv8 | Create Savings App | Apply for savings account for OCTAVIO PAZ using WALLET | **Go / Java / Python / Rust** |
+| https://youtu.be/Q5ExlhalG8U?si=TwbsUZX30G3JeNJy | Approve Savings App | Approve the savings account with note "MY FIRST APPROVAL" | **Go / Java / Python / Rust** |
+| https://youtu.be/DJgUiRYK-rE?si=YatfVgOgpbP4wV91 | Activate Savings | Activate the savings account | **Go / Java / Python / Rust** |
+| https://youtu.be/Od7KFqktUtI?si=gPJNlLOB_7D74QdS | Make a Deposit | Create DEPOSIT of 5000 for account 1 | **Go / Java / Python / Rust** |
+| https://youtu.be/9OL6N5wKG7c?si=R50RjTK6GI_ODuUs | Make a Withdrawal | Create WITHDRAWAL of 2000 for account 1 | **Go / Java / Python / Rust** |
 
 ---
 

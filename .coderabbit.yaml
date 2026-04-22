@@ -1,0 +1,254 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: 'en-US'
+tone_instructions: 'give formal and direct reviews with no humour and any other distracting text, only the necessary'
+chat:
+  auto_reply: true
+  art: false
+reviews:
+  profile: 'chill'
+  request_changes_workflow: true
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    base_branches:
+      - '^(?!release).*'
+  poem: false
+  high_level_summary: true
+  suggested_labels: true
+  auto_apply_labels: true
+  labeling_instructions:
+    - label: '⏱️ <10 Min Review'
+      instructions: Apply for PRs with <200 lines changed
+    - label: '⏱️ 10-30 Min Review'
+      instructions: Apply for PRs with 200–1000 lines changed
+    - label: '⏱️ 30-60 Min Review'
+      instructions: Apply for PRs with 1000–2000 lines changed
+    - label: '⏱️ 60+ Min Review'
+      instructions: Apply for PRs with >2000 lines changed
+
+  path_instructions:
+    - path: '**'
+      instructions: |
+        ## General Project Standards
+        ### Security & Performance
+        - Validate and sanitize all incoming data (use Bean Validation with `@Valid` and constraints).
+        - Always use prepared statements, parameterized queries, or Spring Data repositories.
+        - Use Spring Security for authentication and method-level authorization.
+        - Apply the principle of least privilege for access control.
+        - Configure connection pools (HikariCP) properly for performance.
+        - Cache frequently accessed results with `@Cacheable` and invalidate with `@CacheEvict`.
+        - Offload long-running or blocking work using `@Async`, schedulers, or queues.
+        - Avoid blocking I/O in reactive (WebFlux) contexts.
+
+        ### Code Quality & Documentation
+        - Apply DRY, SOLID, and Clean Architecture principles.
+        - Avoid framework coupling in domain or application layers.
+        - Maintain up-to-date API documentation via SpringDoc (OpenAPI 3) or REST Docs.
+        - Use Checkstyle or SpotBugs for static code analysis.
+        - Prefer immutability and constructor injection for all beans.
+
+    - path: 'src/main/java/**'
+      instructions: |
+        ## Project & Package Structure
+        - Follow DDD-inspired modular structure:
+          ```
+          com.company.project
+          ├── api          # REST controllers, request/response DTOs
+          ├── application  # Services, use cases, orchestrators
+          ├── domain       # Entities, value objects, domain events, aggregates
+          ├── infrastructure
+          │   ├── persistence  # JPA, repositories, adapters
+          │   ├── messaging    # Kafka, RabbitMQ adapters
+          │   └── config       # Spring @Configuration classes
+          └── shared        # Common utilities, constants, base abstractions
+          ```
+        - Each module should have a clear boundary and minimal dependencies.
+        - No circular dependencies between packages.
+        - Do not mix domain and infrastructure code.
+
+    - path: '**/*.java'
+      instructions: |
+        ## General Java + Spring Coding Standards
+        ### Style & Conventions
+        - Class names: PascalCase. Methods/fields: camelCase. Constants: UPPER_CASE.
+        - Avoid wildcard imports; import explicitly.
+        - Use Lombok judiciously. Avoid `@Data`; prefer `@Value`, `@Getter`, and explicit constructors.
+        - Apply `final` to fields injected via constructors.
+        - Avoid mutable static state or utility singletons.
+
+        ### Dependency Injection
+        - Prefer constructor-based injection. Avoid field injection.
+        - Mark service components with `@Service` or `@Component`.
+        - Use `@ConfigurationProperties` for structured config, validated with `@Validated`.
+        - Keep beans stateless wherever possible.
+
+        ### Methods & Classes
+        - Keep methods concise (<20 lines).
+        - Limit public methods in classes; prefer package-private visibility for internal logic.
+        - Extract reusable logic to smaller, cohesive components.
+        - Avoid logic inside constructors or `@PostConstruct` unless necessary.
+        - Prefer returning Optional or sealed result types instead of null.
+
+        ### Logging & Exceptions
+        - Use SLF4J (`@Slf4j`) for logging.
+        - Never log sensitive data (PII, tokens).
+        - Throw domain-specific exceptions rather than generic ones.
+        - Use `@ControllerAdvice` with `@ExceptionHandler` for global error mapping.
+
+        ### Documentation
+        - Public methods and classes MUST have Javadoc.
+        - Document complex business rules with “why” comments, not “what”.
+
+    - path: 'src/main/java/**/api/**/*.java'
+      instructions: |
+        ## API & Controllers
+        - Use `@RestController` for REST endpoints, `@RequestMapping` for base paths.
+        - Controllers must delegate all logic to application or domain layers.
+        - Validate inputs with `@Valid` and Jakarta validation annotations.
+        - Always return DTOs, never entities.
+        - Use meaningful HTTP status codes (`ResponseEntity` preferred).
+        - Document endpoints using OpenAPI annotations or SpringDoc.
+        - Avoid excessive controller logic — aim for single responsibility per endpoint.
+
+    - path: 'src/main/java/**/application/**/*.java'
+      instructions: |
+        ## Application Layer (Use Cases)
+        - Services encapsulate use cases — stateless and orchestrate domain operations.
+        - Annotate with `@Service`; manage transactions with `@Transactional`.
+        - Avoid direct dependency on controllers or persistence details.
+        - Return well-defined domain or DTO responses.
+        - Avoid leaking persistence entities or DTOs outside the application layer.
+
+    - path: 'src/main/java/**/domain/**/*.java'
+      instructions: |
+        ## Domain Layer
+        - Contains entities, value objects, and domain events only.
+        - No dependencies on Spring, frameworks, or infrastructure.
+        - Entities should encapsulate behavior and invariants.
+        - Use immutable patterns for Value Objects (explicit constructors, final fields). Lombok `@Value` may be used as it's compile-time only.
+        - Domain events should be POJOs with clear purpose.
+        - Domain services should express business logic that doesn’t belong to entities.
+
+    - path: 'src/main/java/**/infrastructure/**/*.java'
+      instructions: |
+        ## Infrastructure Layer
+        - Contains all technical implementations (persistence, messaging, integration).
+        - JPA entities should reside here, separate from domain models.
+        - Use repositories extending `JpaRepository` or custom interfaces.
+        - Mark adapters with `@Repository`, `@Component`, or `@Configuration`.
+        - Manage transactions only at the service level, not in repositories.
+        - Define mappers for converting between persistence models and domain models.
+
+    - path: 'src/main/java/**/config/**/*.java'
+      instructions: |
+        ## Configuration & Bootstrapping
+        - Use `@Configuration` for bean definitions.
+        - Use `@EnableScheduling`, `@EnableAsync`, or other annotations only where necessary.
+        - Configuration must be environment-agnostic.
+        - Avoid business logic in configuration classes.
+        - Use profiles (`@Profile`) for environment-specific beans.
+        - Externalize configuration in `application.yml` and validate on startup.
+
+    - path: 'src/test/java/**'
+      instructions: |
+        ## Testing Standards
+        - Use JUnit 5, Mockito, and AssertJ.
+        - Name tests `ClassNameTest` or `ClassNameIT` (for integration).
+        - Unit tests must be isolated (mock dependencies).
+        - Use Testcontainers for database or integration tests.
+        - Use `@SpringBootTest` only for full-context integration tests.
+        - Verify both happy path and edge cases.
+        - Maintain >80% coverage for core business logic.
+
+    - path: '{pom.xml,build.gradle,README.md,application.yml,application.properties}'
+      instructions: |
+        ## Project-Level Standards
+        - **pom.xml / build.gradle:**
+          - Use Java 21+ and Spring Boot 3.x.
+          - Include dependencies: Spring Boot Starter (Web, Data JPA, Validation, Test).
+          - Enforce static analysis: Checkstyle, Spotless, PMD.
+          - Configure `jacoco` or `kover` for code coverage reporting.
+        - **README.md:**
+          - Must include setup, build, and run instructions.
+          - List all environment variables and required external services.
+          - Describe how to run tests and generate API docs.
+        - **application.yml:**
+          - Organize by domain (e.g., `spring.datasource`, `app.security`, `app.cache`).
+          - Never commit secrets.
+          - Validate configuration via `@ConfigurationProperties`.
+          - Provide `application-example.yml` for reference.
+
+    - path: 'python/**/*.py'
+      instructions: |
+        ## General Python Code Review Instructions
+        - **Type Safety:** Flag any new function signatures, complex variable assignments, or class attributes that are missing `mypy`-compatible type hints.
+        - **Immutability:** Suggest replacing standard classes with `@dataclass(frozen=True)` or Pydantic models when defining data structures.
+        - **Error Handling:** Reject broad `except Exception:` blocks. Suggest domain-specific custom exceptions instead.
+        - **Async I/O:** Flag blocking I/O (like `requests` or `time.sleep`) inside `async def` functions; recommend `aiohttp` or `asyncio.sleep`.
+
+    - path: 'python/core/**/*.py'
+      instructions: |
+        ## Python Core Transport Layer
+        - Code in this folder must handle the MCP protocol, stream parsing, and connection lifecycles.
+        - Suggest keeping transport logic separate from business rules when possible, but allow simple integrated tools if beneficial for velocity.
+        - Ensure robust asyncio logging for degraded socket connections.
+
+    - path: 'python/**/{mcp_server.py,mcp_adapter.py,registry.py}'
+      instructions: |
+        ## Python Core Decoupling Layer
+        - Ensure `mcp_server.py`, `mcp_adapter.py`, and `registry.py` properly decouple the transport protocol from the business schemas.
+        - Suggest maintaining decoupling via `registry.py` rather than direct tool imports across the application, though do not aggressively reject pragmatic unions.
+
+    - path: 'python/tools/**/*.py'
+      instructions: |
+        ## Python Domain Tools Layer
+        - This namespace is strictly for operational business logic.
+        - Enforce that new endpoints added here include strict input schema validation (e.g., through Pydantic) before executing external APIs.
+        - Flag any direct stdio or generic transport manipulation inside this directory (excluding `mcp_adapter.py` and `registry.py`).
+
+    - path: 'rust/**/*.rs'
+      instructions: |
+        ## General Rust Code Review Instructions
+        - **Safety First:** Actively FLAG any use of `.unwrap()` or `.expect()` outside of `#[cfg(test)]` modules. Instruct the author to propagate errors using `?`.
+        - **Error Types:** Flag generic `Box<dyn Error>` returns in library code. Suggest custom error enums using `thiserror` (or `anyhow` binary wide).
+        - **Memory Allocations:** Recommend replacing owned types (`String`, `Vec<T>`) with borrows (`&str`, `&[T]`) for read-only function arguments.
+
+    - path: 'rust/src/domains/**/*.rs'
+      instructions: |
+        ## Rust Domain Tools Layer
+        - Code here must encapsulate isolated business logic and exact MCP schema generation.
+        - Suggest keeping explicit transport dependencies out of domains when possible, allowing simple hard-coded endpoints if velocity mandates it.
+        - Ensure JSON schemas map 1:1 with underlying tool structs.
+
+    - path: 'rust/src/{server.rs,adapter.rs,registry.rs}'
+      instructions: |
+        ## Rust Core Transport Layer
+        - Ensure `tokio` channels, sockets, and async traits are used correctly to prevent blocking the main executor.
+        - Suggest maintaining decoupling via `registry.rs` rather than direct tool imports, though do not aggressively reject pragmatic unions.
+
+    - path: 'go/**/*.go'
+      instructions: |
+        ## General Go Code Review Instructions
+        - **Error Handling:** FLAG any ignored errors (e.g., assigning to `_`). Ensure every error is checked explicitly and wrapped using `fmt.Errorf("...: %w", err)`.
+        - **Goroutines:** Flag naked goroutines (`go func()`). Advise passing a `context.Context` to explicitly manage cascading cancellation.
+        - **Interfaces:** Suggest defining interfaces in the consumer package rather than the package implementing them.
+        - **Package State:** Strongly flag the introduction of unexported or exported package-level mutable variables (`var xyz = ...`).
+
+    - path: 'go/**/{server.go,http_server.go,adapter.go,registry.go}'
+      instructions: |
+        ## Go Core Decoupling Layer
+        - Ensure `server.go`, `adapter.go` (if present), and `registry.go` properly decouple the transport protocol from the business schemas.
+        - Suggest maintaining decoupling via `registry.go` rather than direct tool imports across the application, though do not aggressively reject pragmatic unions.
+
+    - path: 'go/server/**/*.go'
+      instructions: |
+        ## Go Core Transport Layer
+        - Handles the core MCP JSON-RPC loop and network transport (stdio/SSE/HTTP).
+        - Suggest avoiding embedding of heavy business logic here, keeping it delegated to handlers, but allow simple direct implementations to reduce boilerplate.
+
+    - path: 'go/tools/**/*.go'
+      instructions: |
+        ## Go Domain Tools Layer
+        - Enforce explicit struct validation before hitting downstream systems.
+        - Code here should focus entirely on payload formatting and backend MifosX API translations.
+        - Flag any direct stdio or generic transport manipulation inside this directory (excluding `registry.go`).

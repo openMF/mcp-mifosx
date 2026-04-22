@@ -10,20 +10,20 @@ use mcp_rust_mifosx::domains::clients;
 use mcp_rust_mifosx::domains::loans;
 
 fn bench_registry_new(c: &mut Criterion) {
-    c.bench_function("DomainRegistry::new", |b| {
-        b.iter(|| black_box(DomainRegistry::new()))
+    c.bench_function("DomainRegistry::new_keywords_only", |b| {
+        b.iter(|| black_box(DomainRegistry::new_keywords_only()))
     });
 }
 
 fn bench_route_intent_single_domain(c: &mut Criterion) {
-    let registry = DomainRegistry::new();
+    let registry = DomainRegistry::new_keywords_only();
     c.bench_function("route_intent (single domain: loans)", |b| {
         b.iter(|| black_box(registry.route_intent("I want to apply for a loan")))
     });
 }
 
 fn bench_route_intent_multi_domain(c: &mut Criterion) {
-    let registry = DomainRegistry::new();
+    let registry = DomainRegistry::new_keywords_only();
     c.bench_function("route_intent (multi domain: loans+savings+clients)", |b| {
         b.iter(|| {
             black_box(registry.route_intent(
@@ -34,28 +34,28 @@ fn bench_route_intent_multi_domain(c: &mut Criterion) {
 }
 
 fn bench_route_intent_bulk(c: &mut Criterion) {
-    let registry = DomainRegistry::new();
+    let registry = DomainRegistry::new_keywords_only();
     c.bench_function("route_intent (bulk domain)", |b| {
         b.iter(|| black_box(registry.route_intent("bulk activate all pending clients")))
     });
 }
 
 fn bench_route_intent_fallback(c: &mut Criterion) {
-    let registry = DomainRegistry::new();
+    let registry = DomainRegistry::new_keywords_only();
     c.bench_function("route_intent (fallback to clients)", |b| {
         b.iter(|| black_box(registry.route_intent("hello world, how are you today?")))
     });
 }
 
 fn bench_get_all_tools(c: &mut Criterion) {
-    let registry = DomainRegistry::new();
+    let registry = DomainRegistry::new_keywords_only();
     c.bench_function("get_all_tools (flatten + dedup)", |b| {
         b.iter(|| black_box(registry.get_all_tools()))
     });
 }
 
 fn bench_get_domain(c: &mut Criterion) {
-    let registry = DomainRegistry::new();
+    let registry = DomainRegistry::new_keywords_only();
     c.bench_function("get_domain (loans)", |b| {
         b.iter(|| black_box(registry.get_domain("loans")))
     });
@@ -108,7 +108,7 @@ fn bench_to_result_large(c: &mut Criterion) {
 }
 
 fn bench_to_err(c: &mut Criterion) {
-    c.bench_function("clients::to_err (anyhow → McpError)", |b| {
+    c.bench_function("clients::to_err (anyhow -> McpError)", |b| {
         b.iter(|| {
             let err = anyhow::anyhow!("Fineract Error: Loan not found");
             black_box(clients::to_err(err))
