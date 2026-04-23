@@ -12,6 +12,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [M
 logger = logging.getLogger(__name__)
 
 # 2. Import all the available domain functions from the existing codebase
+from core.suggestion_engine import generate_suggestions  
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge as create_charge_domain
 from tools.domains.charges import get_charge as get_charge_domain
@@ -289,11 +290,16 @@ def get_addresses(clientId: int) -> dict:
 @mcp.tool()
 def get_loan(loanId: int) -> dict:
     """Get key details of a specific loan."""
+
     data = get_loan_details.func(loanId)
+
     if not isinstance(data, dict):
         return data
+
     tl = data.get("timeline", {})
-    return {
+
+    # 🔹 Step 1: Prepare clean response
+    response = {
         "loanId":              data.get("id"),
         "accountNo":           data.get("accountNo"),
         "productName":         data.get("loanProductName"),
@@ -310,6 +316,14 @@ def get_loan(loanId: int) -> dict:
         "repaymentFrequency":  f"Every {data.get('repaymentEvery')} {data.get('repaymentFrequencyType', {}).get('value','')}",
     }
 
+    # 🔹 Step 2: Generate suggestions
+    suggestions = generate_suggestions("get_loan_details", response)
+
+    # 🔹 Step 3: Return enhanced response
+    return {
+        "data": response,
+        "suggestions": suggestions
+    }
 @mcp.tool()
 def get_repayment_sched(loanId: int) -> dict:
     """Get the repayment schedule for a loan."""
@@ -416,7 +430,18 @@ def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized W
 @mcp.tool()
 def get_overdue_loans_for_client(clientId: int) -> dict:
     """Get all overdue or in-arrears loans for a client"""
-    return get_overdue_loans.func(clientId)
+
+    # 🔹 Step 1: Get actual data
+    result = get_overdue_loans.func(clientId)
+
+    # 🔹 Step 2: Generate smart suggestions
+    suggestions = generate_suggestions("get_overdue_loans", result)
+
+    # 🔹 Step 3: Return enhanced response
+    return {
+        "data": result,
+        "suggestions": suggestions
+    }
 
 @mcp.tool()
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
