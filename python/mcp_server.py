@@ -36,6 +36,13 @@ from tools.domains.clients import (
 from tools.domains.codetables import get_code_values as get_code_values_domain
 from tools.domains.codetables import list_codes as list_codes_domain
 from tools.domains.codetables import list_datatables as list_datatables_domain
+from tools.domains.codetables import (
+    create_datatable as create_datatable_domain,
+    get_datatable_entries as get_datatable_entries_domain,
+    create_datatable_entry as create_datatable_entry_domain,
+    update_datatable_entry as update_datatable_entry_domain,
+    delete_datatable_entry as delete_datatable_entry_domain,
+)
 from tools.domains.groups import activate_group as activate_group_domain
 from tools.domains.groups import add_group_member, list_centers, list_groups
 from tools.domains.groups import create_center as create_center_domain
@@ -704,6 +711,65 @@ def get_code_values(codeId: int) -> dict:
 def list_all_datatables() -> dict:
     """List all registered data tables (custom fields, additional data extensions)"""
     return list_datatables_domain.func()
+
+
+# --- DATATABLE CRUD ---
+
+@mcp.tool()
+def create_datatable(datatable_name: str, apptable_name: str, columns: list) -> dict:
+    """Create a new datatable (custom data extension) attached to a Fineract entity.
+    apptable_name: m_client, m_group, m_loan, m_savings_account, m_office, m_center
+    columns: list of dicts [{name, type, length?, mandatory?}]
+    type: string, int, decimal, boolean, date, datetime, text, dropdown"""
+    valid_apptables = ["m_client", "m_group", "m_loan", "m_savings_account", "m_office", "m_center"]
+    if apptable_name not in valid_apptables:
+        return {"error": f"Invalid apptable '{apptable_name}'. Must be one of: {valid_apptables}"}
+    if not columns or not isinstance(columns, list):
+        return {"error": "columns must be a non-empty list of dicts with 'name' and 'type' keys"}
+    for col in columns:
+        if not isinstance(col, dict) or "name" not in col:
+            return {"error": f"Each column must be a dict with at least 'name'. Got: {col}"}
+    return create_datatable_domain.func(datatable_name, apptable_name, columns)
+
+
+@mcp.tool()
+def get_datatable_entries(datatable_name: str, entity_id: int) -> dict:
+    """Read all datatable rows for a specific entity.
+    datatable_name: the registered datatable name (e.g., dt_group_meetings)
+    entity_id: the ID of the entity (clientId, groupId, loanId, etc.)"""
+    result = get_datatable_entries_domain.func(datatable_name, entity_id)
+    if isinstance(result, list):
+        return {"entries": result, "count": len(result)}
+    return result
+
+
+@mcp.tool()
+def create_datatable_entry(datatable_name: str, entity_id: int, data: dict) -> dict:
+    """Add a row to a datatable for a specific entity.
+    datatable_name: the registered datatable name
+    entity_id: the ID of the entity
+    data: column values, e.g. {"meeting_date": "2026-05-15", "status": "scheduled"}
+    For date columns include dateFormat and locale in data."""
+    if not data or not isinstance(data, dict):
+        return {"error": "data must be a non-empty dict of column values"}
+    return create_datatable_entry_domain.func(datatable_name, entity_id, data)
+
+
+@mcp.tool()
+def update_datatable_entry(datatable_name: str, entity_id: int, data: dict) -> dict:
+    """Update a datatable entry for a specific entity.
+    data: dict of column values to update."""
+    if not data or not isinstance(data, dict):
+        return {"error": "data must be a non-empty dict of column values to update"}
+    return update_datatable_entry_domain.func(datatable_name, entity_id, data)
+
+
+@mcp.tool()
+def delete_datatable_entry(datatable_name: str, entity_id: int) -> dict:
+    """Delete all datatable entries for a specific entity.
+    datatable_name: the registered datatable name
+    entity_id: the ID of the entity"""
+    return delete_datatable_entry_domain.func(datatable_name, entity_id)
 
 
 # 5. START SERVER
