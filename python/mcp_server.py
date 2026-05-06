@@ -501,7 +501,7 @@ def update_existing_loan(loanId: int, principal: float = None, months: int = Non
         return {"error": f"Loan ID {loanId} not found."}
     
     status = check.get("status", {}).get("value", "").lower()
-    if "active" in status or "closed" in status:
+    if "pending" not in status and "submitted" not in status:
         return {"error": f"Loan {loanId} is in status '{status}'. Only pending/submitted loans can be updated."}
     
     return update_loan.func(loanId, principal, months, productId)
@@ -516,7 +516,7 @@ def delete_loan_app(loanId: int) -> dict:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     
     status = check.get("status", {}).get("value", "").lower()
-    if "active" in status or "closed" in status:
+    if "pending" not in status and "submitted" not in status:
         return {"error": f"Loan {loanId} is in status '{status}'. Only pending/submitted loans can be deleted."}
     
     return delete_loan.func(loanId)
