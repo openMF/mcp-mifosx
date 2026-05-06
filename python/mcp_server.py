@@ -161,7 +161,7 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
         actual_id = clientId or id or (clientIds[0] if clientIds else None)
 
     result = get_client_accounts.func(int(actual_id))
-    if not isinstance(result, dict) or result.get("httpStatusCode") == 404:
+    if not isinstance(result, dict) or "error" in result:
         return {"error": f"Client ID {actual_id} not found. Call search_clients(name) first."}
 
     loans = result.get("loanAccounts", [])
@@ -389,7 +389,7 @@ def create_new_loan(clientId: int, principal: float, months: int, productId: int
 def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
     """Approve and disburse a pending loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     status = check.get("status", {}).get("value", "")
     if "pending" not in status.lower() and "submitted" not in status.lower():
@@ -403,7 +403,7 @@ def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
 def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk profile") -> dict:
     """Reject a pending loan application. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     status = check.get("status", {}).get("value", "")
     if "pending" not in status.lower() and "submitted" not in status.lower():
@@ -414,7 +414,7 @@ def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk prof
 def make_repayment(loanId: int, amount: float) -> dict:
     """Make a repayment on an active loan. Validates loanId and status before executing."""
     check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
@@ -425,7 +425,7 @@ def make_repayment(loanId: int, amount: float) -> dict:
 def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
     """Apply a fee/charge to a loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     return apply_late_fee.func(loanId, feeAmount, 2)
 
@@ -433,7 +433,7 @@ def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
 def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized Waiver") -> dict:
     """Waive interest on a loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
     return waive_interest.func(loanId, amount, note)
 
@@ -451,7 +451,7 @@ def create_group_loan_app(groupId: int, principal: float, months: int, productId
 def undo_approval(loanId: int) -> dict:
     """Undo a loan approval so terms can be modified. Only works on approved (not yet disbursed) loans."""
     check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found."}
     status = check.get("status", {}).get("value", "")
     if "approved" not in status.lower():
@@ -462,7 +462,7 @@ def undo_approval(loanId: int) -> dict:
 def undo_disbursal(loanId: int) -> dict:
     """Undo a loan disbursal to reverse funds and return the loan to approved status."""
     check = get_loan_details.func(loanId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found."}
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
@@ -583,7 +583,7 @@ def close_savings(accountId: int) -> dict:
 def deposit(accountId: int, amount: float) -> dict:
     """Deposit money into a savings account. Validates accountId exists before executing."""
     check = get_savings_account.func(accountId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds."}
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
@@ -594,7 +594,7 @@ def deposit(accountId: int, amount: float) -> dict:
 def withdraw(accountId: int, amount: float) -> dict:
     """Withdraw money from a savings account. Validates accountId and balance before executing."""
     check = get_savings_account.func(accountId)
-    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+    if not isinstance(check, dict) or "error" in check:
         return {"error": f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds."}
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
