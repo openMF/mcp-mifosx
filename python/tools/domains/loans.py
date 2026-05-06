@@ -349,8 +349,8 @@ def reschedule_loan(loan_id: int, reschedule_from_date: str, adjusted_due_date: 
         payload["newInterestRate"] = new_interest_rate
     if grace_on_principal is not None:
         payload["graceOnPrincipal"] = grace_on_principal
-        if extra_terms is not None:
-            payload["extraTerms"] = extra_terms
+    if extra_terms is not None:
+        payload["extraTerms"] = extra_terms
 
     return fineract_client.execute_post("rescheduleloans", payload)
 
