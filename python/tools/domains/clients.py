@@ -82,6 +82,32 @@ def update_client_mobile(client_id: int, new_mobile_no: str):
     return fineract_client.execute_put(f"clients/{client_id}", payload)
 
 @tool
+def update_client(client_id: int, firstname: str = None, lastname: str = None, 
+                mobile_no: str = None, external_id: str = None):
+    """Answers: 'Update client #5 firstname to John' or 'Change mobile number for client 123'"""
+    print(f"[Tool] Updating Client #{client_id}...")
+    
+    # Fetch current state to get mandatory fields
+    current = fineract_client.execute_get(f"clients/{client_id}")
+    if "error" in current:
+        return current
+    
+    # Build payload with existing values as defaults
+    payload = {
+        "firstname": firstname if firstname else current.get("firstname"),
+        "lastname": lastname if lastname else current.get("lastname"),
+        "mobileNo": mobile_no if mobile_no else current.get("mobileNo"),
+        "externalId": external_id if external_id else current.get("externalId"),
+        "locale": "en",
+        "dateFormat": "dd MMMM yyyy",
+    }
+    
+    # Remove None values
+    payload = {k: v for k, v in payload.items() if v is not None}
+    
+    return fineract_client.execute_put(f"clients/{client_id}", payload)
+
+@tool
 def close_client(client_id: int, closure_reason_id: int = 17):
     """Answers: 'Close this client's profile, they are leaving the bank'"""
     print(f"[Tool] Closing Client #{client_id}...")
@@ -95,6 +121,11 @@ def close_client(client_id: int, closure_reason_id: int = 17):
     }
     return fineract_client.execute_post(f"clients/{client_id}?command=close", payload)
 
+@tool
+def delete_client(client_id: int):
+    """Answers: 'Delete client #123' or 'Remove client profile'"""
+    print(f"[Tool] Deleting Client #{client_id}...")
+    return fineract_client.execute_delete(f"clients/{client_id}")
 
 # --- GROUP & CENTER OPERATIONS ---
 

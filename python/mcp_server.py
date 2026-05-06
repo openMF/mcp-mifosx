@@ -31,6 +31,7 @@ from tools.domains.clients import (
     get_client_identifiers,
     get_client_transactions,
     search_clients_by_name,
+    update_client,
     update_client_mobile,
 )
 from tools.domains.codetables import get_code_values as get_code_values_domain
@@ -57,6 +58,7 @@ from tools.domains.loans import (
     reschedule_loan,
     undo_loan_approval,
     undo_loan_disbursal,
+    update_loan,
     waive_interest,
 )
 from tools.domains.products import get_loan_product, get_savings_product, list_loan_products, list_savings_products
@@ -208,6 +210,17 @@ def update_mobile(clientId: int, newMobileNo: str) -> dict:
 def close_client_profile(clientId: int, closureReasonId: int = 17) -> dict:
     """Close a client's profile"""
     return close_client.func(clientId, closureReasonId)
+
+@mcp.tool()
+def update_existing_client(clientId: int, firstname: str = None, lastname: str = None, 
+                          mobileNo: str = None, externalId: str = None) -> dict:
+    """Update an existing client's details.
+    Validates clientId exists before executing."""
+    check = get_client_details.func(clientId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Client ID {clientId} not found."}
+    
+    return update_client.func(clientId, firstname, lastname, mobileNo, externalId)
 
 @mcp.tool()
 def create_lending_group(name: str, officeId: int = 1, externalId: str = None) -> dict:
@@ -466,6 +479,21 @@ def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: s
         return {"error": f"Loan {loanId} is in status '{status}'. Only active loans can be rescheduled."}
     return reschedule_loan.func(loanId, rescheduleFromDate, adjustedDueDate,
                                 newInterestRate, graceOnPrincipal, extraTerms, reason)
+
+@mcp.tool()
+def delete_loan_app(loanId: int) -> dict:
+    """Delete a draft or submitted loan application.
+    Validates loanId exists and is in deletable state before executing.
+    Only pending/submitted loans can be deleted."""
+    check = get_loan_details.func(loanId)
+    if not isinstance(check, dict) or check.get("httpStatusCode") == 404:
+        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+    
+    status = check.get("status", {}).get("value", "").lower()
+    if "active" in status or "closed" in status:
+        return {"error": f"Loan {loanId} is in status '{status}'. Only pending/submitted loans can be deleted."}
+    
+    return delete_loan.func(loanId)
 
 # --- SAVINGS ---
 

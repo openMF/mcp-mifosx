@@ -26,6 +26,50 @@ def get_repayment_schedule(loan_id: int):
     return response.get("repaymentSchedule", {})
 
 @tool
+def update_loan(loan_id: int, principal: float = None, months: int = None, product_id: int = None):
+    """Answers: 'Update Loan #123 to increase principal to $25,000' or 'Change loan term to 18 months'"""
+    print(f"[Tool] Updating Loan #{loan_id}...")
+    
+    current = fineract_client.execute_get(f"loans/{loan_id}")
+    if "error" in current:
+        return current
+    
+    timeline = current.get("timeline", {})
+    
+    def fmt_date(key):
+        d = timeline.get(key)
+        if isinstance(d, list) and len(d) >= 3:
+            months_list = ["", "January", "February", "March", "April", "May", "June",
+                      "July", "August", "September", "October", "November", "December"]
+            return f"{d[2]} {months_list[d[1]]} {d[0]}"
+        return None
+    
+    payload = {
+        "productId": product_id or current.get("productId") or current.get("product", {}).get("id", 1),
+        "principal": str(principal) if principal else current.get("principal", "0"),
+        "loanTermFrequency": months or current.get("termFrequency") or current.get("loanTermFrequency", 1),
+        "loanTermFrequencyType": 2,
+        "numberOfRepayments": months or current.get("numberOfRepayments", 1),
+        "repaymentEvery": 1,
+        "repaymentFrequencyType": 2,
+        "interestRatePerPeriod": current.get("interestRatePerPeriod", 5.0),
+        "amortizationType": 1,
+        "interestType": 0,
+        "interestCalculationPeriodType": 1,
+        "transactionProcessingStrategyCode": current.get("transactionProcessingStrategyCode", "mifos-standard-strategy"),
+        "loanType": (current.get("loanType", {}).get("value") or "individual").lower(),
+        "locale": "en",
+        "dateFormat": "dd MMMM yyyy",
+    }
+    
+    if fmt_date("expectedDisbursementDate"):
+        payload["expectedDisbursementDate"] = fmt_date("expectedDisbursementDate")
+    if fmt_date("submittedOnDate"):
+        payload["submittedOnDate"] = fmt_date("submittedOnDate")
+    
+    return fineract_client.execute_put(f"loans/{loan_id}", payload)
+
+@tool
 def get_loan_history(loan_id: int):
     """Answers: 'Show me the full transaction history for Loan #12345', 'What was the last repayment?',
     'How much has been paid so far on this loan?', 'Create a loan with the same terms as the previous cycle'"""
@@ -305,7 +349,13 @@ def reschedule_loan(loan_id: int, reschedule_from_date: str, adjusted_due_date: 
         payload["newInterestRate"] = new_interest_rate
     if grace_on_principal is not None:
         payload["graceOnPrincipal"] = grace_on_principal
-    if extra_terms is not None:
-        payload["extraTerms"] = extra_terms
+        if extra_terms is not None:
+            payload["extraTerms"] = extra_terms
 
     return fineract_client.execute_post("rescheduleloans", payload)
+
+@tool
+def delete_loan(loan_id: int):
+    """Answers: 'Delete loan application #123' or 'Cancel this draft loan'"""
+    print(f"[Tool] Deleting Loan #{loan_id}...")
+    return fineract_client.execute_delete(f"loans/{loan_id}")
