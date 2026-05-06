@@ -25,6 +25,9 @@ def get_repayment_schedule(loan_id: int):
     if "error" in response: return response
     return response.get("repaymentSchedule", {})
 
+MONTHS = ["", "January", "February", "March", "April", "May", "June",
+          "July", "August", "September", "October", "November", "December"]
+
 @tool
 def update_loan(loan_id: int, principal: float = None, months: int = None, product_id: int = None):
     """Answers: 'Update Loan #123 to increase principal to $25,000' or 'Change loan term to 18 months'"""
@@ -34,19 +37,22 @@ def update_loan(loan_id: int, principal: float = None, months: int = None, produ
     if "error" in current:
         return current
     
+    # Validate loan is in updatable state
+    status = current.get("status", {}).get("value", "").lower()
+    if "pending" not in status and "submitted" not in status:
+        return {"error": f"Loan {loan_id} is in status '{status}'. Only pending/submitted loans can be updated."}
+    
     timeline = current.get("timeline", {})
     
     def fmt_date(key):
         d = timeline.get(key)
         if isinstance(d, list) and len(d) >= 3:
-            months_list = ["", "January", "February", "March", "April", "May", "June",
-                      "July", "August", "September", "October", "November", "December"]
-            return f"{d[2]} {months_list[d[1]]} {d[0]}"
+            return f"{d[2]} {MONTHS[d[1]]} {d[0]}"
         return None
     
     payload = {
         "productId": product_id or current.get("productId") or current.get("product", {}).get("id", 1),
-        "principal": str(principal) if principal else current.get("principal", "0"),
+        "principal": str(principal) if principal else str(current.get("principal", 0)),
         "loanTermFrequency": months or current.get("termFrequency") or current.get("loanTermFrequency", 1),
         "loanTermFrequencyType": 2,
         "numberOfRepayments": months or current.get("numberOfRepayments", 1),
