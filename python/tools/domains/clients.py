@@ -87,6 +87,20 @@ def update_client(client_id: int, firstname: str = None, lastname: str = None,
     """Answers: 'Update client #5 firstname to John' or 'Change mobile number for client 123'"""
     print(f"[Tool] Updating Client #{client_id}...")
     
+    # Validate client_id
+    if not isinstance(client_id, int) or client_id <= 0:
+        return {"error": f"Invalid client_id: {client_id}. Must be a positive integer."}
+    
+    # Validate string inputs are non-empty if provided
+    if firstname is not None and (not isinstance(firstname, str) or firstname.strip() == ""):
+        return {"error": "firstname must be a non-empty string if provided."}
+    if lastname is not None and (not isinstance(lastname, str) or lastname.strip() == ""):
+        return {"error": "lastname must be a non-empty string if provided."}
+    if mobile_no is not None and (not isinstance(mobile_no, str) or mobile_no.strip() == ""):
+        return {"error": "mobile_no must be a non-empty string if provided."}
+    if external_id is not None and (not isinstance(external_id, str) or external_id.strip() == ""):
+        return {"error": "external_id must be a non-empty string if provided."}
+    
     # Fetch current state to get mandatory fields
     current = fineract_client.execute_get(f"clients/{client_id}")
     if "error" in current:
@@ -94,10 +108,10 @@ def update_client(client_id: int, firstname: str = None, lastname: str = None,
     
     # Build payload with existing values as defaults
     payload = {
-        "firstname": firstname if firstname else current.get("firstname"),
-        "lastname": lastname if lastname else current.get("lastname"),
-        "mobileNo": mobile_no if mobile_no else current.get("mobileNo"),
-        "externalId": external_id if external_id else current.get("externalId"),
+        "firstname": firstname.strip() if firstname else current.get("firstname"),
+        "lastname": lastname.strip() if lastname else current.get("lastname"),
+        "mobileNo": mobile_no.strip() if mobile_no else current.get("mobileNo"),
+        "externalId": external_id.strip() if external_id else current.get("externalId"),
         "locale": "en",
         "dateFormat": "dd MMMM yyyy",
     }
@@ -105,25 +119,19 @@ def update_client(client_id: int, firstname: str = None, lastname: str = None,
     # Remove None values
     payload = {k: v for k, v in payload.items() if v is not None}
     
+    # Ensure payload is not empty
+    if len(payload) == 2:  # Only locale and dateFormat
+        return {"error": "No valid fields to update. Provide at least one: firstname, lastname, mobile_no, external_id."}
+    
     return fineract_client.execute_put(f"clients/{client_id}", payload)
-
-@tool
-def close_client(client_id: int, closure_reason_id: int = 17):
-    """Answers: 'Close this client's profile, they are leaving the bank'"""
-    print(f"[Tool] Closing Client #{client_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
-
-    payload = {
-        "closureDate": today,
-        "closureReasonId": closure_reason_id,  # Requires a valid code table ID from Fineract
-        "dateFormat": "dd MMMM yyyy",
-        "locale": "en"
-    }
-    return fineract_client.execute_post(f"clients/{client_id}?command=close", payload)
 
 @tool
 def delete_client(client_id: int):
     """Answers: 'Delete client #123' or 'Remove client profile'"""
+    # Validate client_id
+    if not isinstance(client_id, int) or client_id <= 0:
+        return {"error": f"Invalid client_id: {client_id}. Must be a positive integer."}
+    
     print(f"[Tool] Deleting Client #{client_id}...")
     return fineract_client.execute_delete(f"clients/{client_id}")
 

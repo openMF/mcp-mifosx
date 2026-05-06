@@ -214,8 +214,8 @@ def close_client_profile(clientId: int, closureReasonId: int = 17) -> dict:
     return close_client.func(clientId, closureReasonId)
 
 @mcp.tool()
-def update_existing_client(clientId: int, firstname: str = None, lastname: str = None, 
-                          mobileNo: str = None, externalId: str = None) -> dict:
+def update_existing_client(clientId: int, firstname: Optional[str] = None, lastname: Optional[str] = None, 
+                          mobileNo: Optional[str] = None, externalId: Optional[str] = None) -> dict:
     """Update an existing client's details.
     Validates clientId exists before executing."""
     check = get_client_details.func(clientId)
