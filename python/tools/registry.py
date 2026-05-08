@@ -57,6 +57,47 @@ from tools.domains.savings import (
     withdraw_savings,
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
+from tools.domains.self_service import (
+    authenticate,
+    get_self_client,
+    list_self_loans,
+    list_self_savings,
+    self_authenticate,
+)
+from tools.domains.batch import send_batch
+from tools.domains.group_banking import (
+    add_loan_guarantor,
+    advance_cycle,
+    assign_member_role,
+    create_invitation,
+    get_group_config,
+    get_group_corpus,
+    get_loan_policy,
+    get_loan_vote,
+    get_member_ceiling,
+    get_member_role,
+    get_social_fund,
+    get_sync_state,
+    list_attendance,
+    list_invitations,
+    list_loan_guarantors,
+    list_loan_requests,
+    list_meetings,
+    list_notifications,
+    list_share_outs,
+    push_notification,
+    record_attendance,
+    record_loan_vote,
+    record_meeting,
+    record_share_out,
+    set_loan_policy,
+    set_member_ceiling,
+    submit_loan_request,
+    update_group_corpus,
+    update_social_fund,
+    update_sync_state,
+    upsert_group_config,
+)
 
 
 class DomainRegistry:
@@ -128,6 +169,30 @@ class DomainRegistry:
             ],
             "codetables": [
                 list_codes, get_code_values, list_datatables
+            ],
+            "self_service": [
+                authenticate, self_authenticate, get_self_client,
+                list_self_savings, list_self_loans
+            ],
+            "batch": [
+                send_batch
+            ],
+            "group_banking": [
+                get_group_config, upsert_group_config, advance_cycle,
+                list_meetings, record_meeting,
+                list_attendance, record_attendance,
+                get_member_role, assign_member_role,
+                list_share_outs, record_share_out,
+                get_social_fund, update_social_fund,
+                get_loan_vote, record_loan_vote,
+                get_sync_state, update_sync_state,
+                list_loan_requests, submit_loan_request,
+                get_group_corpus, update_group_corpus,
+                get_loan_policy, set_loan_policy,
+                get_member_ceiling, set_member_ceiling,
+                list_loan_guarantors, add_loan_guarantor,
+                list_notifications, push_notification,
+                list_invitations, create_invitation,
             ]
         }
 
@@ -212,6 +277,22 @@ class DomainRegistry:
         # Code Tables
         if matches_keyword(["code", "dropdown", "code value", "gender", "id type", "datatable", "custom field"]):
             active_domains.add("codetables")
+
+        # Self-service / End-user auth
+        if matches_keyword(["self", "self-service", "my profile", "my savings", "my loans",
+                            "authenticate", "login", "sign in"]):
+            active_domains.add("self_service")
+
+        # Batch
+        if matches_keyword(["batch", "bulk", "outbox", "drain", "queue"]):
+            active_domains.add("batch")
+
+        # Group banking / VSLA
+        if matches_keyword(["meeting", "attendance", "share-out", "share out", "cycle",
+                            "corpus", "social fund", "guarantor", "ceiling", "policy",
+                            "invitation", "stewardship", "notification", "vote",
+                            "vsla", "rosca", "group banking"]):
+            active_domains.add("group_banking")
 
         # Default: return clients for basic lookup if nothing matched
         if not active_domains:

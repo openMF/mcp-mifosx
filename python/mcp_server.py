@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+from functools import wraps
 
 from fastmcp import FastMCP
 
@@ -13,10 +14,18 @@ logger = logging.getLogger(__name__)
 
 # 2. Import all the available domain functions from the existing codebase
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
-from tools.domains.charges import create_charge as create_charge_domain
-from tools.domains.charges import get_charge as get_charge_domain
-from tools.domains.charges import list_charges as list_charges_domain
-from tools.domains.charges import update_charge as update_charge_domain
+from tools.domains.charges import (
+    create_charge as create_charge_domain,
+)
+from tools.domains.charges import (
+    get_charge as get_charge_domain,
+)
+from tools.domains.charges import (
+    list_charges as list_charges_domain,
+)
+from tools.domains.charges import (
+    update_charge as update_charge_domain,
+)
 from tools.domains.clients import (
     activate_client,
     apply_client_charge,
@@ -33,15 +42,50 @@ from tools.domains.clients import (
     search_clients_by_name,
     update_client_mobile,
 )
-from tools.domains.codetables import get_code_values as get_code_values_domain
-from tools.domains.codetables import list_codes as list_codes_domain
-from tools.domains.codetables import list_datatables as list_datatables_domain
-from tools.domains.groups import activate_group as activate_group_domain
-from tools.domains.groups import add_group_member, list_centers, list_groups
-from tools.domains.groups import create_center as create_center_domain
-from tools.domains.groups import create_group as create_group_domain
-from tools.domains.groups import get_center as get_center_domain
-from tools.domains.groups import get_group as get_group_domain
+from tools.domains.codetables import (
+    create_datatable as create_datatable_domain,
+)
+from tools.domains.codetables import (
+    create_datatable_entry as create_datatable_entry_domain,
+)
+from tools.domains.codetables import (
+    delete_datatable_entry as delete_datatable_entry_domain,
+)
+from tools.domains.codetables import (
+    get_code_values as get_code_values_domain,
+)
+from tools.domains.codetables import (
+    get_datatable_entries as get_datatable_entries_domain,
+)
+from tools.domains.codetables import (
+    list_codes as list_codes_domain,
+)
+from tools.domains.codetables import (
+    list_datatables as list_datatables_domain,
+)
+from tools.domains.codetables import (
+    update_datatable_entry as update_datatable_entry_domain,
+)
+from tools.domains.groups import (
+    activate_group as activate_group_domain,
+)
+from tools.domains.groups import (
+    add_group_member,
+    list_centers,
+    list_groups,
+)
+from tools.domains.groups import (
+    create_center as create_center_domain,
+)
+from tools.domains.groups import (
+    create_group as create_group_domain,
+)
+from tools.domains.groups import (
+    get_center as get_center_domain,
+)
+from tools.domains.groups import (
+    get_group as get_group_domain,
+)
 from tools.domains.loans import (
     apply_late_fee,
     approve_and_disburse_loan,
@@ -73,9 +117,74 @@ from tools.domains.savings import (
     withdraw_savings,
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
+from tools.domains.self_service import (
+    authenticate as authenticate_domain,
+    get_self_client as get_self_client_domain,
+    list_self_loans as list_self_loans_domain,
+    list_self_savings as list_self_savings_domain,
+    self_authenticate as self_authenticate_domain,
+)
+from tools.domains.batch import send_batch as send_batch_domain
+from tools.domains.group_banking import (
+    add_loan_guarantor as add_loan_guarantor_domain,
+    advance_cycle as advance_cycle_domain,
+    assign_member_role as assign_member_role_domain,
+    create_invitation as create_invitation_domain,
+    get_group_config as get_group_config_domain,
+    get_group_corpus as get_group_corpus_domain,
+    get_loan_policy as get_loan_policy_domain,
+    get_loan_vote as get_loan_vote_domain,
+    get_member_ceiling as get_member_ceiling_domain,
+    get_member_role as get_member_role_domain,
+    get_social_fund as get_social_fund_domain,
+    get_sync_state as get_sync_state_domain,
+    list_attendance as list_attendance_domain,
+    list_invitations as list_invitations_domain,
+    list_loan_guarantors as list_loan_guarantors_domain,
+    list_loan_requests as list_loan_requests_domain,
+    list_meetings as list_meetings_domain,
+    list_notifications as list_notifications_domain,
+    list_share_outs as list_share_outs_domain,
+    push_notification as push_notification_domain,
+    record_attendance as record_attendance_domain,
+    record_loan_vote as record_loan_vote_domain,
+    record_meeting as record_meeting_domain,
+    record_share_out as record_share_out_domain,
+    set_loan_policy as set_loan_policy_domain,
+    set_member_ceiling as set_member_ceiling_domain,
+    submit_loan_request as submit_loan_request_domain,
+    update_group_corpus as update_group_corpus_domain,
+    update_social_fund as update_social_fund_domain,
+    update_sync_state as update_sync_state_domain,
+    upsert_group_config as upsert_group_config_domain,
+)
 
 # 3. Initialize the FastMCP Server
 mcp = FastMCP("Mifos-Banking-Agent")
+
+# FastMCP 3.x rejects bare list / scalar tool returns ("structured_content must
+# be a dict or None"). Many list_*/get_*_entries Fineract endpoints return JSON
+# arrays. Monkey-patch mcp.tool so any tool can keep returning whatever Fineract
+# gives back; we wrap it once at the boundary.
+_original_mcp_tool = mcp.tool
+
+def _safe_tool(*tool_args, **tool_kwargs):
+    decorator = _original_mcp_tool(*tool_args, **tool_kwargs)
+
+    def register(fn):
+        @wraps(fn)
+        def safe_fn(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            if isinstance(result, list):
+                return {"items": result}
+            if result is not None and not isinstance(result, dict):
+                return {"value": result}
+            return result
+        return decorator(safe_fn)
+
+    return register
+
+mcp.tool = _safe_tool
 
 # --- Shared helpers ---
 
@@ -704,6 +813,308 @@ def get_code_values(codeId: int) -> dict:
 def list_all_datatables() -> dict:
     """List all registered data tables (custom fields, additional data extensions)"""
     return list_datatables_domain.func()
+
+
+# --- DATATABLE CRUD ---
+
+@mcp.tool()
+def create_datatable(datatable_name: str, apptable_name: str, columns: list) -> dict:
+    """Create a new datatable (custom data extension) attached to a Fineract entity.
+    apptable_name: m_client, m_group, m_loan, m_savings_account, m_office, m_center
+    columns: list of dicts [{name, type, length?, mandatory?}]
+    type: string, int, decimal, boolean, date, datetime, text, dropdown"""
+    valid_apptables = ["m_client", "m_group", "m_loan", "m_savings_account", "m_office", "m_center"]
+    if apptable_name not in valid_apptables:
+        return {"error": f"Invalid apptable '{apptable_name}'. Must be one of: {valid_apptables}"}
+    if not columns or not isinstance(columns, list):
+        return {"error": "columns must be a non-empty list of dicts with 'name' and 'type' keys"}
+    for col in columns:
+        if not isinstance(col, dict) or "name" not in col:
+            return {"error": f"Each column must be a dict with at least 'name'. Got: {col}"}
+    return create_datatable_domain.func(datatable_name, apptable_name, columns)
+
+
+@mcp.tool()
+def get_datatable_entries(datatable_name: str, entity_id: int) -> dict:
+    """Read all datatable rows for a specific entity.
+    datatable_name: the registered datatable name (e.g., dt_group_meetings)
+    entity_id: the ID of the entity (clientId, groupId, loanId, etc.)"""
+    result = get_datatable_entries_domain.func(datatable_name, entity_id)
+    if isinstance(result, list):
+        return {"entries": result, "count": len(result)}
+    return result
+
+
+@mcp.tool()
+def create_datatable_entry(datatable_name: str, entity_id: int, data: dict) -> dict:
+    """Add a row to a datatable for a specific entity.
+    datatable_name: the registered datatable name
+    entity_id: the ID of the entity
+    data: column values, e.g. {"meeting_date": "2026-05-15", "status": "scheduled"}
+    For date columns include dateFormat and locale in data."""
+    if not data or not isinstance(data, dict):
+        return {"error": "data must be a non-empty dict of column values"}
+    return create_datatable_entry_domain.func(datatable_name, entity_id, data)
+
+
+@mcp.tool()
+def update_datatable_entry(datatable_name: str, entity_id: int, data: dict) -> dict:
+    """Update a datatable entry for a specific entity.
+    data: dict of column values to update."""
+    if not data or not isinstance(data, dict):
+        return {"error": "data must be a non-empty dict of column values to update"}
+    return update_datatable_entry_domain.func(datatable_name, entity_id, data)
+
+
+@mcp.tool()
+def delete_datatable_entry(datatable_name: str, entity_id: int) -> dict:
+    """Delete all datatable entries for a specific entity.
+    datatable_name: the registered datatable name
+    entity_id: the ID of the entity"""
+    return delete_datatable_entry_domain.func(datatable_name, entity_id)
+
+
+# --- SELF-SERVICE & AUTH (TIER 1) ---
+
+@mcp.tool()
+def authenticate(username: str, password: str) -> dict:
+    """Authenticate as a Fineract staff user. Returns base64EncodedAuthenticationKey + roles."""
+    return authenticate_domain.func(username, password)
+
+
+@mcp.tool()
+def self_authenticate(username: str, password: str) -> dict:
+    """Authenticate as a self-service end-user (member). Returns base64 key + clientId + displayName."""
+    return self_authenticate_domain.func(username, password)
+
+
+@mcp.tool()
+def get_self_client(username: str = None, password: str = None) -> dict:
+    """Get the authenticated self-service user's own client profile."""
+    return get_self_client_domain.func(username, password)
+
+
+@mcp.tool()
+def list_self_savings(username: str = None, password: str = None) -> dict:
+    """List the authenticated self-service user's own savings accounts."""
+    return list_self_savings_domain.func(username, password)
+
+
+@mcp.tool()
+def list_self_loans(username: str = None, password: str = None) -> dict:
+    """List the authenticated self-service user's own loan accounts."""
+    return list_self_loans_domain.func(username, password)
+
+
+# --- BATCH API (TIER 1) ---
+
+@mcp.tool()
+def send_batch(operations: list, enclosing_transaction: bool = False) -> dict:
+    """Send a Fineract batch (up to 200 operations). enclosing_transaction=True for atomic batches.
+    operations: list of {requestId:int, method:str, relativeUrl:str, headers?:list, body?:dict}."""
+    if not operations or not isinstance(operations, list):
+        return {"error": "operations must be a non-empty list"}
+    return send_batch_domain.func(operations, enclosing_transaction)
+
+
+# --- GROUP BANKING / VSLA (TIER 2 — datatable wrappers) ---
+
+@mcp.tool()
+def get_group_config(centerId: int) -> dict:
+    """Get cycle config for a group (savings min/max, loan multiplier, fines, status)."""
+    return get_group_config_domain.func(centerId)
+
+
+@mcp.tool()
+def upsert_group_config(centerId: int, config: dict) -> dict:
+    """Create or update the dt_group_config row for a center."""
+    return upsert_group_config_domain.func(centerId, config)
+
+
+@mcp.tool()
+def advance_cycle(centerId: int, new_cycle_number: int, new_start_date: str, new_end_date: str) -> dict:
+    """Start a new cycle after share-out. Bumps cycle_number, resets cycle_status to 'active'."""
+    return advance_cycle_domain.func(centerId, new_cycle_number, new_start_date, new_end_date)
+
+
+@mcp.tool()
+def list_meetings(centerId: int) -> dict:
+    """List all dt_meeting_record entries for a center."""
+    return list_meetings_domain.func(centerId)
+
+
+@mcp.tool()
+def record_meeting(centerId: int, meeting: dict) -> dict:
+    """Append a meeting summary record to dt_meeting_record."""
+    return record_meeting_domain.func(centerId, meeting)
+
+
+@mcp.tool()
+def list_attendance(clientId: int) -> dict:
+    """List a member's attendance history from dt_meeting_attendance."""
+    return list_attendance_domain.func(clientId)
+
+
+@mcp.tool()
+def record_attendance(clientId: int, meeting_number: int, meeting_date: str, present: bool,
+                      late: bool = False, fine_applied: float = 0.0, fine_reason: str = None) -> dict:
+    """Record a member's attendance at one meeting."""
+    return record_attendance_domain.func(clientId, meeting_number, meeting_date, present,
+                                         late, fine_applied, fine_reason)
+
+
+@mcp.tool()
+def get_member_role(clientId: int) -> dict:
+    """Get a member's role within their group (chairperson | treasurer | secretary | member)."""
+    return get_member_role_domain.func(clientId)
+
+
+@mcp.tool()
+def assign_member_role(clientId: int, role: str, assigned_date: str, assigned_by: str = None) -> dict:
+    """Assign or change a member's role."""
+    return assign_member_role_domain.func(clientId, role, assigned_date, assigned_by)
+
+
+@mcp.tool()
+def list_share_outs(centerId: int) -> dict:
+    """List all share-out records for a center."""
+    return list_share_outs_domain.func(centerId)
+
+
+@mcp.tool()
+def record_share_out(centerId: int, share_out: dict) -> dict:
+    """Record a cycle's share-out distribution (preview or final)."""
+    return record_share_out_domain.func(centerId, share_out)
+
+
+@mcp.tool()
+def get_social_fund(centerId: int) -> dict:
+    """Get the social-fund balance + disbursement state for a center."""
+    return get_social_fund_domain.func(centerId)
+
+
+@mcp.tool()
+def update_social_fund(centerId: int, payload: dict) -> dict:
+    """Update the social-fund row for a center."""
+    return update_social_fund_domain.func(centerId, payload)
+
+
+@mcp.tool()
+def get_loan_vote(loanId: int) -> dict:
+    """Get the in-meeting vote record for a loan."""
+    return get_loan_vote_domain.func(loanId)
+
+
+@mcp.tool()
+def record_loan_vote(loanId: int, payload: dict) -> dict:
+    """Record an in-meeting vote on a loan (votes_for, votes_against, approved, etc.)."""
+    return record_loan_vote_domain.func(loanId, payload)
+
+
+@mcp.tool()
+def get_sync_state(centerId: int) -> dict:
+    """Get last-sync metadata for a center (timestamp, pending ops, conflicts, device)."""
+    return get_sync_state_domain.func(centerId)
+
+
+@mcp.tool()
+def update_sync_state(centerId: int, payload: dict) -> dict:
+    """Update sync metadata for a center."""
+    return update_sync_state_domain.func(centerId, payload)
+
+
+@mcp.tool()
+def list_loan_requests(clientId: int) -> dict:
+    """List a member's loan requests (pending or reviewed)."""
+    return list_loan_requests_domain.func(clientId)
+
+
+@mcp.tool()
+def submit_loan_request(clientId: int, requested_amount: float, purpose: str,
+                        desired_duration_weeks: int, request_date: str,
+                        eligibility_amount: float = None) -> dict:
+    """Submit a member's loan request from the personal dashboard. Status set to 'pending'."""
+    return submit_loan_request_domain.func(clientId, requested_amount, purpose,
+                                           desired_duration_weeks, request_date, eligibility_amount)
+
+
+@mcp.tool()
+def get_group_corpus(centerId: int) -> dict:
+    """Get the running corpus balance for a group."""
+    return get_group_corpus_domain.func(centerId)
+
+
+@mcp.tool()
+def update_group_corpus(centerId: int, payload: dict) -> dict:
+    """Update the corpus row after a meeting inflow/outflow."""
+    return update_group_corpus_domain.func(centerId, payload)
+
+
+@mcp.tool()
+def get_loan_policy(centerId: int) -> dict:
+    """Get the loan-ceiling policy for a group (flat | savings_multiplier | hybrid)."""
+    return get_loan_policy_domain.func(centerId)
+
+
+@mcp.tool()
+def set_loan_policy(centerId: int, payload: dict) -> dict:
+    """Configure or update the loan-ceiling policy for a group."""
+    return set_loan_policy_domain.func(centerId, payload)
+
+
+@mcp.tool()
+def get_member_ceiling(clientId: int) -> dict:
+    """Get a member's ceiling override (if any)."""
+    return get_member_ceiling_domain.func(clientId)
+
+
+@mcp.tool()
+def set_member_ceiling(clientId: int, override_pct: float, reason: str,
+                       granted_by: str, granted_at: str) -> dict:
+    """Grant or update a member's ceiling override."""
+    return set_member_ceiling_domain.func(clientId, override_pct, reason, granted_by, granted_at)
+
+
+@mcp.tool()
+def list_loan_guarantors(loanId: int) -> dict:
+    """List all guarantors backing a loan + their pro-rata shares."""
+    return list_loan_guarantors_domain.func(loanId)
+
+
+@mcp.tool()
+def add_loan_guarantor(loanId: int, guarantor_client_id: int, share_pct: float) -> dict:
+    """Add a guarantor to a loan with a pro-rata share. signed=False until in-meeting confirmation."""
+    return add_loan_guarantor_domain.func(loanId, guarantor_client_id, share_pct)
+
+
+@mcp.tool()
+def list_notifications(clientId: int) -> dict:
+    """List notifications for a member (full feed, read + unread)."""
+    return list_notifications_domain.func(clientId)
+
+
+@mcp.tool()
+def push_notification(clientId: int, event_type: str, title: str, body: str,
+                      event_created_at: str, priority: str = "normal",
+                      delivered_via: str = "in-app", payload_json: str = None) -> dict:
+    """Push an in-app notification to a member. priority: low|normal|high. delivered_via: in-app|fcm|sms.
+    event_created_at is the app-level event timestamp (Fineract row metadata is separate)."""
+    return push_notification_domain.func(clientId, event_type, title, body, event_created_at,
+                                         priority, delivered_via, payload_json)
+
+
+@mcp.tool()
+def list_invitations(clientId: int) -> dict:
+    """List invitations issued by a member (stewardship codes)."""
+    return list_invitations_domain.func(clientId)
+
+
+@mcp.tool()
+def create_invitation(clientId: int, stewardship_code: str, invited_at: str, expires_at: str,
+                      target_center_id: int, channel: str = "sms") -> dict:
+    """Issue a one-time member-invitation code (6-char, single-use, 7-day default expiry)."""
+    return create_invitation_domain.func(clientId, stewardship_code, invited_at, expires_at,
+                                         target_center_id, channel)
 
 
 # 5. START SERVER
