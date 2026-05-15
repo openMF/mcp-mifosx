@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import datetime
+from typing import Optional
 
 from langchain_core.tools import tool
 
@@ -311,7 +312,12 @@ def reschedule_loan(loan_id: int, reschedule_from_date: str, adjusted_due_date: 
     return fineract_client.execute_post("rescheduleloans", payload)
 
 @tool
-def update_loan(loan_id: int, principal: float = None, months: int = None, product_id: int = None):
+def update_loan(
+    loan_id: int,
+    principal: Optional[float] = None,
+    months: Optional[int] = None,
+    product_id: Optional[int] = None,
+):
     """Answers: 'Update Loan #123 to increase principal to $25,000' or 'Change loan term to 18 months'"""
     print(f"[Tool] Updating Loan #{loan_id}...")
 

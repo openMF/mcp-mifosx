@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+from typing import Optional
 
 from fastmcp import FastMCP
 
@@ -49,6 +50,7 @@ from tools.domains.loans import (
     approve_and_disburse_loan,
     create_group_loan,
     create_loan,
+    delete_loan,
     get_loan_details,
     get_loan_history,
     get_loan_template,
@@ -60,7 +62,6 @@ from tools.domains.loans import (
     undo_loan_approval,
     undo_loan_disbursal,
     update_loan,
-    delete_loan,
     waive_interest,
 )
 from tools.domains.products import get_loan_product, get_savings_product, list_loan_products, list_savings_products
@@ -214,14 +215,14 @@ def close_client_profile(clientId: int, closureReasonId: int = 17) -> dict:
     return close_client.func(clientId, closureReasonId)
 
 @mcp.tool()
-def update_existing_client(clientId: int, firstname: Optional[str] = None, lastname: Optional[str] = None, 
+def update_existing_client(clientId: int, firstname: Optional[str] = None, lastname: Optional[str] = None,
                           mobileNo: Optional[str] = None, externalId: Optional[str] = None) -> dict:
     """Update an existing client's details.
     Validates clientId exists before executing."""
     check = get_client_details.func(clientId)
     if not isinstance(check, dict) or "error" in check:
         return {"error": f"Client ID {clientId} not found."}
-    
+
     return update_client.func(clientId, firstname, lastname, mobileNo, externalId)
 
 @mcp.tool()
@@ -492,18 +493,23 @@ def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: s
                             newInterestRate, graceOnPrincipal, extraTerms, reason)
 
 @mcp.tool()
-def update_existing_loan(loanId: int, principal: float = None, months: int = None, productId: int = None) -> dict:
+def update_existing_loan(
+    loanId: int,
+    principal: Optional[float] = None,
+    months: Optional[int] = None,
+    productId: Optional[int] = None,
+) -> dict:
     """Update a draft or submitted loan application.
     Validates loanId exists and is in editable state before executing.
     Only principal, term (months), and productId can be updated."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found."}
-    
+
     status = check.get("status", {}).get("value", "").lower()
     if "pending" not in status and "submitted" not in status:
         return {"error": f"Loan {loanId} is in status '{status}'. Only pending/submitted loans can be updated."}
-    
+
     return update_loan.func(loanId, principal, months, productId)
 
 @mcp.tool()
@@ -514,11 +520,11 @@ def delete_loan_app(loanId: int) -> dict:
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
-    
+
     status = check.get("status", {}).get("value", "").lower()
     if "pending" not in status and "submitted" not in status:
         return {"error": f"Loan {loanId} is in status '{status}'. Only pending/submitted loans can be deleted."}
-    
+
     return delete_loan.func(loanId)
 
 # --- SAVINGS ---
