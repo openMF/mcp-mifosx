@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import datetime
+from typing import Optional
 
 from langchain_core.tools import tool
 
@@ -183,3 +184,71 @@ def get_client_addresses(client_id: int):
     """Answers: 'Where does this client live?' or 'Show me the home address for client 844'"""
     print(f"[Tool] Fetching addresses for Client #{client_id}...")
     return fineract_client.execute_get(f"clients/{client_id}/addresses")
+
+@tool
+def update_client(
+    client_id: int,
+    firstname: Optional[str] = None,
+    lastname: Optional[str] = None,
+    mobile_no: Optional[str] = None,
+    external_id: Optional[str] = None,
+):
+    """Answers: 'Update client #5 firstname to John' or 'Change mobile number for client 123'"""
+    print(f"[Tool] Updating Client #{client_id}...")
+
+    # Validate client_id
+    if not isinstance(client_id, int) or client_id <= 0:
+        return {"error": f"Invalid client_id: {client_id}. Must be a positive integer."}
+
+    # Validate string inputs are non-empty if provided
+    if firstname is not None and (not isinstance(firstname, str) or firstname.strip() == ""):
+        return {"error": "firstname must be a non-empty string if provided."}
+    if lastname is not None and (not isinstance(lastname, str) or lastname.strip() == ""):
+        return {"error": "lastname must be a non-empty string if provided."}
+    if mobile_no is not None and (not isinstance(mobile_no, str) or mobile_no.strip() == ""):
+        return {"error": "mobile_no must be a non-empty string if provided."}
+    if external_id is not None and (not isinstance(external_id, str) or external_id.strip() == ""):
+        return {"error": "external_id must be a non-empty string if provided."}
+
+    # Fetch current state to get mandatory fields
+    current = fineract_client.execute_get(f"clients/{client_id}")
+    if "error" in current:
+        return current
+
+    # Build payload with existing values as defaults
+    payload = {
+        "firstname": firstname.strip() if firstname else current.get("firstname"),
+        "lastname": lastname.strip() if lastname else current.get("lastname"),
+        "mobileNo": mobile_no.strip() if mobile_no else current.get("mobileNo"),
+        "externalId": external_id.strip() if external_id else current.get("externalId"),
+        "locale": "en",
+        "dateFormat": "dd MMMM yyyy",
+    }
+
+    # Remove None values
+    payload = {k: v for k, v in payload.items() if v is not None}
+
+    # Ensure payload is not empty (only locale and dateFormat)
+    if len(payload) <= 2:
+        return {"error": "No valid fields to update. Provide at least one: firstname, lastname, mobile_no, external_id."}
+
+    return fineract_client.execute_put(f"clients/{client_id}", payload)
+
+@tool
+def delete_client(client_id: int):
+    """Answers: 'Delete client #123' or 'Remove client profile'"""
+    # Validate client_id
+    if not isinstance(client_id, int) or client_id <= 0:
+        return {"error": f"Invalid client_id: {client_id}. Must be a positive integer."}
+
+    # Check client exists and get status
+    check = fineract_client.execute_get(f"clients/{client_id}")
+    if "error" in check:
+        return check
+
+    # Validate client is in deletable state (pending only)
+    status = check.get("status", {}).get("value", "").lower()
+    if "pending" not in status and "closed" not in status:
+        return {"error": f"Client {client_id} is in status '{status}'. Only pending/closed clients can be deleted."}
+
+    return fineract_client.execute_delete(f"clients/{client_id}")

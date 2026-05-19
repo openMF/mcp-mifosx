@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import datetime
+from typing import Optional
 
 from langchain_core.tools import tool
 
@@ -309,3 +310,90 @@ def reschedule_loan(loan_id: int, reschedule_from_date: str, adjusted_due_date: 
         payload["extraTerms"] = extra_terms
 
     return fineract_client.execute_post("rescheduleloans", payload)
+
+@tool
+def update_loan(
+    loan_id: int,
+    principal: Optional[float] = None,
+    months: Optional[int] = None,
+    product_id: Optional[int] = None,
+):
+    """Answers: 'Update Loan #123 to increase principal to $25,000' or 'Change loan term to 18 months'"""
+    print(f"[Tool] Updating Loan #{loan_id}...")
+
+    # Validate input types
+    if not isinstance(loan_id, int) or loan_id <=0:
+        return {"error": f"Invalid loan_id: {loan_id}. Must be a positive integer."}
+    if principal is not None:
+        if not isinstance(principal, (int, float)) or principal <= 0:
+            return {"error": f"Invalid principal: {principal}. Must be a positive number."}
+    if months is not None:
+        if not isinstance(months, int) or months <= 0:
+            return {"error": f"Invalid months: {months}. Must be a positive integer."}
+    if product_id is not None:
+        if not isinstance(product_id, int) or product_id <= 0:
+            return {"error": f"Invalid product_id: {product_id}. Must be a positive integer."}
+
+    current = fineract_client.execute_get(f"loans/{loan_id}")
+    if "error" in current:
+        return current
+
+    # Validate loan is in updatable state
+    status = current.get("status", {}).get("value", "").lower()
+    if "pending" not in status and "submitted" not in status:
+        return {"error": f"Loan {loan_id} is in status '{status}'. Only pending/submitted loans can be updated."}
+
+    timeline = current.get("timeline", {})
+
+    MONTHS = ["", "January", "February", "March", "April", "May", "June",
+              "July", "August", "September", "October", "November", "December"]
+
+    def fmt_date(key):
+        d = timeline.get(key)
+        if isinstance(d, list) and len(d) >= 3:
+            return f"{d[2]} {MONTHS[d[1]]} {d[0]}"
+        return None
+
+    payload = {
+        "productId": product_id or current.get("productId") or current.get("product", {}).get("id", 1),
+        "principal": str(principal) if principal else str(current.get("principal", 0)),
+        "loanTermFrequency": months or current.get("termFrequency") or current.get("loanTermFrequency", 1),
+        "loanTermFrequencyType": 2,
+        "numberOfRepayments": months or current.get("numberOfRepayments", 1),
+        "repaymentEvery": 1,
+        "repaymentFrequencyType": 2,
+        "interestRatePerPeriod": current.get("interestRatePerPeriod", 5.0),
+        "amortizationType": 1,
+        "interestType": 0,
+        "interestCalculationPeriodType": 1,
+        "transactionProcessingStrategyCode": current.get("transactionProcessingStrategyCode", "mifos-standard-strategy"),
+        "loanType": (current.get("loanType", {}).get("value") or "individual").lower(),
+        "locale": "en",
+        "dateFormat": "dd MMMM yyyy",
+    }
+
+    if fmt_date("expectedDisbursementDate"):
+        payload["expectedDisbursementDate"] = fmt_date("expectedDisbursementDate")
+    if fmt_date("submittedOnDate"):
+        payload["submittedOnDate"] = fmt_date("submittedOnDate")
+
+    return fineract_client.execute_put(f"loans/{loan_id}", payload)
+
+@tool
+def delete_loan(loan_id: int):
+    """Answers: 'Delete loan application #123' or 'Cancel this draft loan'"""
+    # Validate loan_id
+    if not isinstance(loan_id, int) or loan_id <= 0:
+        return {"error": f"Invalid loan_id: {loan_id}. Must be a positive integer."}
+
+    # Check loan exists and get status
+    check = fineract_client.execute_get(f"loans/{loan_id}")
+    if "error" in check:
+        return check
+
+    # Validate loan is in deletable state
+    status = check.get("status", {}).get("value", "").lower()
+    if "pending" not in status and "submitted" not in status:
+        return {"error": f"Loan {loan_id} is in status '{status}'. Only pending/submitted loans can be deleted."}
+
+    return fineract_client.execute_delete(f"loans/{loan_id}")
