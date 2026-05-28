@@ -3,11 +3,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import datetime
 
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
+from tools.utils import get_fineract_today
 
 # --- GROUP OPERATIONS ---
 
@@ -42,7 +42,7 @@ def create_group(name: str, office_id: int, external_id: str = None):
 def activate_group(group_id: int):
     """Answers: 'Activate this pending group'"""
     print(f"[Tool] Activating Group #{group_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
     payload = {
         "activationDate": today,
         "dateFormat": "dd MMMM yyyy",
