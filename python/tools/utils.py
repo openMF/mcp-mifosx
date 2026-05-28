@@ -5,6 +5,12 @@
 
 import datetime
 
+_ENGLISH_MONTHS = (
+    "", "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+)
+
 def get_fineract_today() -> str:
     """Returns today's date formatted as expected by Fineract (e.g., '14 March 2026')."""
-    return datetime.datetime.now().strftime("%d %B %Y")
+    now = datetime.datetime.now()
+    return f"{now.day:02d} {_ENGLISH_MONTHS[now.month]} {now.year}"
