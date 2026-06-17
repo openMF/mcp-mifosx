@@ -3,11 +3,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import datetime
 
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
+from tools.utils import get_fineract_today
 
 # --- SAVINGS READ & SEARCH OPERATIONS ---
 
@@ -33,7 +33,7 @@ def get_savings_transactions(account_id: int):
 def create_savings_account(client_id: int, product_id: int = 1):
     """Answers: 'Open a new savings account for this client'"""
     print(f"[Tool] Opening Savings Account for Client #{client_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "clientId": client_id,
@@ -48,7 +48,7 @@ def create_savings_account(client_id: int, product_id: int = 1):
 def approve_and_activate_savings(account_id: int):
     """Answers: 'Approve and activate this pending savings account'"""
     print(f"[Tool] Approving & Activating Savings Account #{account_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
     base_payload = {"dateFormat": "dd MMMM yyyy", "locale": "en"}
 
     # Step 1: Approve
@@ -64,7 +64,7 @@ def approve_and_activate_savings(account_id: int):
 def close_savings_account(account_id: int):
     """Answers: 'Close this savings account'"""
     print(f"[Tool] Closing Savings Account #{account_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "closedOnDate": today,
@@ -80,7 +80,7 @@ def close_savings_account(account_id: int):
 def deposit_savings(account_id: int, amount: float):
     """Answers: 'Deposit $500 into this savings account'"""
     print(f"[Tool] Depositing {amount} into Savings Account #{account_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "transactionDate": today,
@@ -95,7 +95,7 @@ def deposit_savings(account_id: int, amount: float):
 def withdraw_savings(account_id: int, amount: float):
     """Answers: 'Withdraw $100 from this savings account'"""
     print(f"[Tool] Withdrawing {amount} from Savings Account #{account_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "transactionDate": today,
@@ -110,7 +110,7 @@ def withdraw_savings(account_id: int, amount: float):
 def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1):
     """Answers: 'Deduct a $15 account maintenance fee from this savings account'"""
     print(f"[Tool] Applying charge of {amount} to Savings Account #{account_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "chargeId": charge_id,

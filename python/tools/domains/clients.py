@@ -3,12 +3,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import datetime
 from typing import Optional
 
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
+from tools.utils import get_fineract_today
 
 # --- CLIENT SEARCH & READ OPERATIONS ---
 
@@ -38,7 +38,7 @@ def get_client_accounts(client_id: int):
 def create_client(firstname: str, lastname: str, mobile_no: str = None, office_id: int = 1, is_active: bool = True):
     """Answers: 'Create a new client named John Doe'"""
     print(f"[Tool] Creating client: {firstname} {lastname}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "officeId": office_id,
@@ -63,7 +63,7 @@ def create_client(firstname: str, lastname: str, mobile_no: str = None, office_i
 def activate_client(client_id: int):
     """Answers: 'Activate this pending client profile'"""
     print(f"[Tool] Activating Client #{client_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "activationDate": today,
@@ -86,7 +86,7 @@ def update_client_mobile(client_id: int, new_mobile_no: str):
 def close_client(client_id: int, closure_reason_id: int = 17):
     """Answers: 'Close this client's profile, they are leaving the bank'"""
     print(f"[Tool] Closing Client #{client_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "closureDate": today,
@@ -103,7 +103,7 @@ def close_client(client_id: int, closure_reason_id: int = 17):
 def create_group(name: str, office_id: int = 1, client_members: list = None):
     """Answers: 'Create a new lending group called The Innovators'"""
     print(f"[Tool] Creating Group: {name}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "officeId": office_id,
@@ -163,7 +163,7 @@ def get_client_charges(client_id: int):
 def apply_client_charge(client_id: int, charge_id: int, amount: float):
     """Answers: 'Apply a one-time onboarding fee of $50 to this client'"""
     print(f"[Tool] Applying charge {charge_id} to Client #{client_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
     payload = {
         "chargeId": charge_id,
         "amount": amount,

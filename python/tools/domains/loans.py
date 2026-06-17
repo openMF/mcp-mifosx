@@ -3,12 +3,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import datetime
 from typing import Optional
 
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
+from tools.utils import get_fineract_today
 
 # --- LOAN READ OPERATIONS ---
 
@@ -118,7 +118,7 @@ def get_overdue_loans(client_id: int):
 def create_loan(client_id: int, principal: float, months: int, product_id: int = 1):
     """Answers: 'Create a new loan for Client X for MXN 20,000 over 12 months'"""
     print(f"[Tool] Creating {principal} loan for Client #{client_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "clientId": client_id,
@@ -146,7 +146,7 @@ def create_loan(client_id: int, principal: float, months: int, product_id: int =
 def create_group_loan(group_id: int, principal: float, months: int, product_id: int = 1):
     """Answers: 'Create a group loan for Group #5 for $10,000 over 6 months'"""
     print(f"[Tool] Creating {principal} group loan for Group #{group_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "groupId": group_id,
@@ -173,7 +173,7 @@ def create_group_loan(group_id: int, principal: float, months: int, product_id: 
 @tool
 def approve_and_disburse_loan(loan_id: int, amount: float = None):
     """Answers: 'Approve this loan and disburse today'"""
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
     base_payload = {"dateFormat": "dd MMMM yyyy", "locale": "en"}
 
     # Step 1: Approve
@@ -193,7 +193,7 @@ def approve_and_disburse_loan(loan_id: int, amount: float = None):
 def reject_loan_application(loan_id: int, note: str = "Rejected via AI Agent due to risk profile"):
     """Answers: 'Reject this loan application'"""
     print(f"[Tool] Rejecting Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "rejectedOnDate": today,
@@ -210,7 +210,7 @@ def reject_loan_application(loan_id: int, note: str = "Rejected via AI Agent due
 def make_loan_repayment(loan_id: int, amount: float):
     """Answers: 'The client just paid $150 towards their loan.'"""
     print(f"[Tool] Logging repayment of {amount} on Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "transactionDate": today,
@@ -225,7 +225,7 @@ def make_loan_repayment(loan_id: int, amount: float):
 def apply_late_fee(loan_id: int, fee_amount: float, charge_id: int = 2):
     """Answers: 'Apply a late fee to the last missed installment'"""
     print(f"[Tool] Applying late fee of {fee_amount} to Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "chargeId": charge_id,
@@ -240,7 +240,7 @@ def apply_late_fee(loan_id: int, fee_amount: float, charge_id: int = 2):
 def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waiver"):
     """Answers: 'Waive $50 of interest on this loan to help the client'"""
     print(f"[Tool] Waiving interest of {amount} on Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "transactionDate": today,
@@ -290,7 +290,7 @@ def reschedule_loan(loan_id: int, reschedule_from_date: str, adjusted_due_date: 
     Submits a loan reschedule request. Dates must be in 'dd MMMM yyyy' format (e.g. '15 March 2026').
     At least one modification (adjusted_due_date, new_interest_rate, grace_on_principal, or extra_terms) is required."""
     print(f"[Tool] Submitting reschedule request for Loan #{loan_id}...")
-    today = datetime.datetime.now().strftime("%d %B %Y")
+    today = get_fineract_today()
 
     payload = {
         "loanId": loan_id,
