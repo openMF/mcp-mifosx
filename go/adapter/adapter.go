@@ -37,6 +37,7 @@ func New() *FineractClient {
 	tenantID := os.Getenv("MIFOSX_TENANT_ID")
 	username := os.Getenv("MIFOSX_USERNAME")
 	password := os.Getenv("MIFOSX_PASSWORD")
+	skipTLSVerify := os.Getenv("MIFOSX_SKIP_TLS_VERIFY")
 
 	if baseURL == "" {
 		baseURL = "https://localhost:8443/fineract-provider/api/v1"
@@ -48,6 +49,9 @@ func New() *FineractClient {
 		username = "mifos"
 	}
 
+	// Default to false for security, only skip verification if explicitly set
+	insecureSkipVerify := strings.ToLower(skipTLSVerify) == "true"
+
 	return &FineractClient{
 		BaseURL:  strings.TrimRight(baseURL, "/"),
 		TenantID: tenantID,
@@ -56,7 +60,7 @@ func New() *FineractClient {
 		HTTP: &http.Client{
 			Timeout: 45 * time.Second,
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
 			},
 		},
 	}
