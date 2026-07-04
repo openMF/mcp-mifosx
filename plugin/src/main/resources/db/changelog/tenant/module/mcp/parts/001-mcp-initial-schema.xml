@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+ Copyright since 2026 Mifos Initiative
+ 
+ <p>This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy
+ of the MPL was not distributed with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+-->
+<databaseChangeLog
+        xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+        http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!-- Initial MCP Plugin Schema -->
+    <changeSet id="mcp-plugin-001" author="fineract-mcp-plugin">
+        <comment>Create MCP tool execution audit log table</comment>
+
+        <createTable tableName="mcp_tool_execution_log">
+            <column name="id" type="BIGINT" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+            <column name="tool_name" type="VARCHAR(255)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="tool_category" type="VARCHAR(100)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="user_id" type="BIGINT"/>
+            <column name="username" type="VARCHAR(100)"/>
+            <column name="execution_status" type="VARCHAR(50)">
+                <constraints nullable="false"/>
+            </column>
+            <column name="request_params" type="TEXT"/>
+            <column name="response_data" type="TEXT"/>
+            <column name="error_message" type="TEXT"/>
+            <column name="execution_time_ms" type="BIGINT"/>
+            <column name="created_at" type="TIMESTAMP" defaultValueComputed="CURRENT_TIMESTAMP">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <createIndex tableName="mcp_tool_execution_log" indexName="idx_mcp_tool_execution_user">
+            <column name="user_id"/>
+        </createIndex>
+
+        <createIndex tableName="mcp_tool_execution_log" indexName="idx_mcp_tool_execution_date">
+            <column name="created_at"/>
+        </createIndex>
+
+        <createIndex tableName="mcp_tool_execution_log" indexName="idx_mcp_tool_execution_tool">
+            <column name="tool_name"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>
