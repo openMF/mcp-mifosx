@@ -73,3 +73,4 @@ java/target/
 
 # Testing Scripts
 ollama_context_eval.py
+/plugin/target/
