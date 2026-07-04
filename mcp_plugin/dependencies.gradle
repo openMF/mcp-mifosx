@@ -1,0 +1,33 @@
+// Copyright since 2025 Mifos Initiative
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+/**
+ * Centralized dependency versions for the mcp_plugin module.
+ *
+ * When integrating into Apache Fineract's build, some of these versions
+ * should be aligned with Fineract's own dependency management.
+ */
+
+ext {
+    // Spring AI & MCP
+    springAiVersion = '1.1.8'
+
+    // Spring Framework
+    springFrameworkVersion = '6.2.7'
+    springBootVersion = '3.4.5'
+
+    // Jackson
+    jacksonVersion = '2.18.3'
+
+    // Logging
+    slf4jVersion = '2.0.16'
+
+    // Lombok
+    lombokVersion = '1.18.36'
+
+    // Testing
+    junitVersion = '5.11.4'
+    mockitoVersion = '5.15.2'
+}
