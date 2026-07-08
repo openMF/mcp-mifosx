@@ -76,10 +76,10 @@ public class ClientCreateTool implements FineractMcpTool {
                     LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("dd MMMM yyyy")));
 
             CommandProcessingResult result = clientWritePlatformService.createClient(
-                    new org.apache.fineract.commands.domain.CommandWrapper.Builder()
-                            .createClient()
-                            .build(),
-                    new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    org.apache.fineract.infrastructure.core.api.JsonCommand.fromJsonElement(
+                            null,
+                            new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    )
             );
 
             return new ClientCreateResult(

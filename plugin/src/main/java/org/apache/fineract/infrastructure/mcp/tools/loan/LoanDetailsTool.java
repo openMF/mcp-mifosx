@@ -36,7 +36,7 @@ public class LoanDetailsTool implements FineractMcpTool {
         log.info("MCP Tool: Getting details for loan ID: {}", loanId);
 
         try {
-            LoanAccountData loanData = loanReadPlatformService.retrieveLoan(loanId);
+            LoanAccountData loanData = loanReadPlatformService.retrieveOne(loanId);
 
             return new LoanDetailResult(
                     loanData.getId(),
@@ -50,11 +50,10 @@ public class LoanDetailsTool implements FineractMcpTool {
                     loanData.getRepaymentEvery(),
                     loanData.getSummary() != null ? loanData.getSummary().getTotalOutstanding() != null
                             ? loanData.getSummary().getTotalOutstanding().doubleValue() : 0.0 : 0.0,
-                    loanData.getSummary() != null && loanData.getSummary().getTotalOverpaid() != null
-                            ? loanData.getSummary().getTotalOverpaid().doubleValue() : 0.0,
+                    loanData.getTotalOverpaid() != null ? loanData.getTotalOverpaid().doubleValue() : 0.0,
                     loanData.getStatus() != null ? loanData.getStatus().getValue() : "Unknown",
-                    loanData.getDisbursementDate() != null ? loanData.getDisbursementDate().toString() : null,
-                    loanData.getMaturityDate() != null ? loanData.getMaturityDate().toString() : null
+                    loanData.getTimeline() != null && loanData.getTimeline().getActualDisbursementDate() != null ? loanData.getTimeline().getActualDisbursementDate().toString() : null,
+                    loanData.getTimeline() != null && loanData.getTimeline().getExpectedMaturityDate() != null ? loanData.getTimeline().getExpectedMaturityDate().toString() : null
             );
 
         } catch (Exception e) {

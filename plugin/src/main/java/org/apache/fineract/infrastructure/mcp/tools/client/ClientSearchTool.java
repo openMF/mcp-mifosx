@@ -3,7 +3,6 @@ package org.apache.fineract.infrastructure.mcp.tools.client;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.fineract.infrastructure.core.search.SearchService;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.client.data.ClientData;
 import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
@@ -45,13 +44,18 @@ public class ClientSearchTool implements FineractMcpTool {
 
         try {
             // Use Fineract's search service to find matching clients
-            var searchResults = clientReadPlatformService.retrieveAllSearchResults(query, limit);
+            var searchParameters = org.apache.fineract.infrastructure.core.service.SearchParameters.builder()
+                    .name(query)
+                    .limit(limit)
+                    .build();
+            var clientDataPage = clientReadPlatformService.retrieveAll(searchParameters);
+            var searchResults = clientDataPage.getPageItems();
 
             return searchResults.stream()
                     .map(clientData -> new ClientSearchResult(
                             clientData.getId(),
                             clientData.getDisplayName(),
-                            clientData.getExternalId(),
+                            clientData.getExternalId() != null ? clientData.getExternalId().getValue() : null,
                             clientData.getOfficeName(),
                             clientData.getStatus() != null ? clientData.getStatus().getValue() : "Unknown"
                     ))
