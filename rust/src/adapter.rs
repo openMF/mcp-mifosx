@@ -21,9 +21,14 @@ impl FineractAdapter {
         let tenant_id = env::var("MIFOSX_TENANT_ID").unwrap_or_else(|_| "default".to_string());
         let _username = env::var("MIFOSX_USERNAME").expect("MIFOSX_USERNAME must be set");
         let _password = env::var("MIFOSX_PASSWORD").expect("MIFOSX_PASSWORD must be set");
+        
+        // Default to false for security, only skip verification if explicitly set
+        let skip_tls_verify = env::var("MIFOSX_SKIP_TLS_VERIFY")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(false);
 
         let client = Client::builder()
-            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_certs(skip_tls_verify)
             .build()?;
 
         Ok(Self {
