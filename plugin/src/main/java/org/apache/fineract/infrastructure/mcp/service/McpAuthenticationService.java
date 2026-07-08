@@ -2,7 +2,7 @@ package org.apache.fineract.infrastructure.mcp.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.fineract.infrastructure.core.domain.AppUser;
+import org.apache.fineract.useradministration.domain.AppUser;
 import org.apache.fineract.infrastructure.security.service.SpringSecurityPlatformSecurityContext;
 import org.apache.fineract.useradministration.domain.AppUserRepository;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -37,8 +37,7 @@ public class McpAuthenticationService {
 
         String username = authentication.getName();
 
-        return appUserRepository.findAppUserByName(username)
-                .orElse(null);
+        return appUserRepository.findAppUserByName(username);
     }
 
     /**
@@ -47,10 +46,17 @@ public class McpAuthenticationService {
      * @return true if the user is authenticated and authorized
      */
     public boolean isAuthorized() {
-        if (!springSecurityPlatformSecurityContext.doesCurrentUserHavePermission()) {
-            log.warn("Current user does not have permission for MCP operations");
+        try {
+            springSecurityPlatformSecurityContext.isAuthenticated();
+            
+            AppUser user = getAuthenticatedUser();
+            if (user != null) {
+                return user.hasAnyPermission("ALL_FUNCTIONS", "USE_MCP_TOOLS");
+            }
+            return false;
+        } catch (Exception e) {
+            log.warn("Current user is not authenticated for MCP operations", e);
             return false;
         }
-        return true;
     }
 }

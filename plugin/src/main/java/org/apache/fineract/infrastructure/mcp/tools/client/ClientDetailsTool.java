@@ -43,7 +43,7 @@ public class ClientDetailsTool implements FineractMcpTool {
                     clientData.getDisplayName(),
                     clientData.getFirstname(),
                     clientData.getLastname(),
-                    clientData.getExternalId(),
+                    clientData.getExternalId() != null ? clientData.getExternalId().getValue() : null,
                     clientData.getOfficeName(),
                     clientData.getActivationDate() != null ? clientData.getActivationDate().toString() : null,
                     clientData.getStatus() != null ? clientData.getStatus().getValue() : "Unknown",

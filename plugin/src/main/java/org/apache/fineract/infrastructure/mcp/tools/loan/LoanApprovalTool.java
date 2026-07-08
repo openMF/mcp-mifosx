@@ -59,10 +59,11 @@ public class LoanApprovalTool implements FineractMcpTool {
             }
 
             CommandProcessingResult result = loanApplicationWritePlatformService.approveApplication(
-                    new org.apache.fineract.commands.domain.CommandWrapper.Builder()
-                            .approveLoanApplication(loanId)
-                            .build(),
-                    new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    loanId,
+                    org.apache.fineract.infrastructure.core.api.JsonCommand.fromJsonElement(
+                            loanId,
+                            new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    )
             );
 
             return new LoanApprovalResult(

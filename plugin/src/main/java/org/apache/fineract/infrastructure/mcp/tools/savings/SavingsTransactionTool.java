@@ -56,12 +56,12 @@ public class SavingsTransactionTool implements FineractMcpTool {
                 commandJson.put("note", note);
             }
 
-            CommandProcessingResult result = savingsAccountWritePlatformService.handleDepositTransactions(
+            CommandProcessingResult result = savingsAccountWritePlatformService.deposit(
                     savingsId,
-                    new org.apache.fineract.commands.domain.CommandWrapper.Builder()
-                            .savingsAccountDeposit(savingsId)
-                            .build(),
-                    new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    org.apache.fineract.infrastructure.core.api.JsonCommand.fromJsonElement(
+                            savingsId,
+                            new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    )
             );
 
             return new SavingsTransactionResult(
@@ -110,12 +110,12 @@ public class SavingsTransactionTool implements FineractMcpTool {
                 commandJson.put("note", note);
             }
 
-            CommandProcessingResult result = savingsAccountWritePlatformService.handleWithdrawalTransactions(
+            CommandProcessingResult result = savingsAccountWritePlatformService.withdrawal(
                     savingsId,
-                    new org.apache.fineract.commands.domain.CommandWrapper.Builder()
-                            .savingsAccountWithdrawal(savingsId)
-                            .build(),
-                    new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    org.apache.fineract.infrastructure.core.api.JsonCommand.fromJsonElement(
+                            savingsId,
+                            new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    )
             );
 
             return new SavingsTransactionResult(

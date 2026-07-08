@@ -61,12 +61,14 @@ public class LoanTransactionTool implements FineractMcpTool {
                 commandJson.put("note", note);
             }
 
-            CommandProcessingResult result = loanWritePlatformService.executeLoanTransaction(
+            CommandProcessingResult result = loanWritePlatformService.makeLoanRepayment(
+                    org.apache.fineract.portfolio.loanaccount.domain.LoanTransactionType.REPAYMENT,
                     loanId,
-                    new org.apache.fineract.commands.domain.CommandWrapper.Builder()
-                            .loanRepaymentTransaction(loanId)
-                            .build(),
-                    new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    org.apache.fineract.infrastructure.core.api.JsonCommand.fromJsonElement(
+                            loanId,
+                            new com.google.gson.JsonParser().parse(new com.google.gson.Gson().toJson(commandJson)).getAsJsonObject()
+                    ),
+                    false
             );
 
             return new LoanTransactionResult(

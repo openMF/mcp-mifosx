@@ -21,7 +21,7 @@
     <properties>
         <java.version>21</java.version>
         <fineract.version>0.0.1479-73c501e</fineract.version>
-        <spring-ai.version>1.0.0</spring-ai.version>
+        <spring-ai.version>1.0.0-SNAPSHOT</spring-ai.version>
         <spotless.version>3.8.0</spotless.version>
         <google-java-format.version>1.17.0</google-java-format.version>
     </properties>
@@ -54,6 +54,12 @@
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-mcp-server-webflux-spring-boot-starter</artifactId>
             <version>${spring-ai.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>io.modelcontextprotocol.sdk</groupId>
+                    <artifactId>mcp-spring-webflux</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- Liquibase for DB migrations -->
@@ -102,6 +108,30 @@
             <groupId>org.apache.fineract</groupId>
             <artifactId>fineract-report</artifactId>
             <version>${fineract.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.fineract</groupId>
+            <artifactId>fineract-loan</artifactId>
+            <version>${fineract.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.fineract</groupId>
+            <artifactId>fineract-savings</artifactId>
+            <version>${fineract.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.fineract</groupId>
+            <artifactId>fineract-validation</artifactId>
+            <version>${fineract.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId>
+            <artifactId>gson</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.persistence</groupId>
+            <artifactId>org.eclipse.persistence.jpa</artifactId>
+            <version>4.0.2</version>
         </dependency>
         <dependency>
             <groupId>org.apache.fineract</groupId>
@@ -234,6 +264,14 @@
 			<id>spring-snapshots</id>
 			<name>Spring Snapshots</name>
 			<url>https://repo.spring.io/snapshot</url>
+		</repository>
+		<repository>
+			<snapshots>
+				<enabled>true</enabled>
+			</snapshots>
+			<id>s01-oss-sonatype</id>
+			<name>s01-oss-sonatype</name>
+			<url>https://s01.oss.sonatype.org/content/repositories/snapshots/</url>
 		</repository>
 		<repository>
 			<id>spring-milestones</id>

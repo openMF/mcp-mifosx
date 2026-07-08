@@ -7,7 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.infrastructure.report.service.ReportingProcessService;
-import org.apache.fineract.infrastructure.security.utils.SQLInjectionValidator;
+import org.apache.fineract.infrastructure.security.service.SqlValidator;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Service;
@@ -21,6 +21,7 @@ import org.springframework.stereotype.Service;
 public class ReportExecutionTool implements FineractMcpTool {
 
     private final Map<String, ReportingProcessService> reportingProcessServices;
+    private final SqlValidator sqlValidator;
 
     @Override
     public String getCategory() {
@@ -49,7 +50,7 @@ public class ReportExecutionTool implements FineractMcpTool {
         log.info("MCP Tool: Running report '{}' with output type '{}'", reportName, outputType);
 
         // Validate report name to prevent SQL injection
-        SQLInjectionValidator.validateReportInput(reportName);
+        sqlValidator.validate(reportName);
 
         try {
             // Build query parameters

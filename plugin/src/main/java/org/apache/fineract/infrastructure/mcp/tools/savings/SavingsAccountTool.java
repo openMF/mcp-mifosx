@@ -49,7 +49,7 @@ public class SavingsAccountTool implements FineractMcpTool {
                     savingsData.getNominalAnnualInterestRate() != null
                             ? savingsData.getNominalAnnualInterestRate().doubleValue() : 0.0,
                     savingsData.getStatus() != null ? savingsData.getStatus().getValue() : "Unknown",
-                    savingsData.getActivationDate() != null ? savingsData.getActivationDate().toString() : null
+                    savingsData.getActivatedOnDate() != null ? savingsData.getActivatedOnDate().toString() : null
             );
 
         } catch (Exception e) {
