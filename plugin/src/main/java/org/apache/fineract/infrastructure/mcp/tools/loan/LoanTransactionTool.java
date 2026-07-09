@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
+import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.loanaccount.service.LoanWritePlatformService;
 import org.springframework.ai.tool.annotation.Tool;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 public class LoanTransactionTool implements FineractMcpTool {
 
     private final LoanWritePlatformService loanWritePlatformService;
+    private final McpErrorSanitizer mcpErrorSanitizer;
 
     @Override
     public String getCategory() {
@@ -81,8 +83,7 @@ public class LoanTransactionTool implements FineractMcpTool {
             );
 
         } catch (Exception e) {
-            log.error("Error processing repayment for loan ID: {}", loanId, e);
-            throw new RuntimeException("Failed to process repayment: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_loan_repayment"));
         }
     }
 

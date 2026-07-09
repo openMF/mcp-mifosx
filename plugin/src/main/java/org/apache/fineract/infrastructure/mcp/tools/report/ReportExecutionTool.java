@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.infrastructure.report.service.ReportingProcessService;
 import org.apache.fineract.infrastructure.security.service.SqlValidator;
@@ -22,6 +23,7 @@ public class ReportExecutionTool implements FineractMcpTool {
 
     private final Map<String, ReportingProcessService> reportingProcessServices;
     private final SqlValidator sqlValidator;
+    private final McpErrorSanitizer mcpErrorSanitizer;
 
     @Override
     public String getCategory() {
@@ -93,8 +95,7 @@ public class ReportExecutionTool implements FineractMcpTool {
             );
 
         } catch (Exception e) {
-            log.error("Error executing report '{}'", reportName, e);
-            throw new RuntimeException("Failed to execute report: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_report_run"));
         }
     }
 
