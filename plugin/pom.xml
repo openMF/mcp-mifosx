@@ -20,7 +20,7 @@
 
     <properties>
         <java.version>21</java.version>
-        <fineract.version>0.0.1479-73c501e</fineract.version>
+        <fineract.version>0.0.1493-02abd14</fineract.version>
         <spring-ai.version>1.0.0-SNAPSHOT</spring-ai.version>
         <spotless.version>3.8.0</spotless.version>
         <google-java-format.version>1.17.0</google-java-format.version>
