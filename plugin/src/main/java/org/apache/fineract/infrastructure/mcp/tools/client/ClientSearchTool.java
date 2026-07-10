@@ -3,6 +3,7 @@ package org.apache.fineract.infrastructure.mcp.tools.client;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.client.data.ClientData;
 import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
@@ -22,6 +23,7 @@ import org.springframework.stereotype.Service;
 public class ClientSearchTool implements FineractMcpTool {
 
     private final ClientReadPlatformService clientReadPlatformService;
+    private final McpErrorSanitizer mcpErrorSanitizer;
 
     @Override
     public String getCategory() {
@@ -62,8 +64,7 @@ public class ClientSearchTool implements FineractMcpTool {
                     .toList();
 
         } catch (Exception e) {
-            log.error("Error searching clients with query: '{}'", query, e);
-            throw new RuntimeException("Failed to search clients: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_client_search"));
         }
     }
 

@@ -2,6 +2,7 @@ package org.apache.fineract.infrastructure.mcp.tools.loan;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.loanaccount.data.LoanAccountData;
 import org.apache.fineract.portfolio.loanaccount.service.LoanReadPlatformService;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 public class LoanDetailsTool implements FineractMcpTool {
 
     private final LoanReadPlatformService loanReadPlatformService;
+    private final McpErrorSanitizer mcpErrorSanitizer;
 
     @Override
     public String getCategory() {
@@ -57,8 +59,7 @@ public class LoanDetailsTool implements FineractMcpTool {
             );
 
         } catch (Exception e) {
-            log.error("Error retrieving loan details for ID: {}", loanId, e);
-            throw new RuntimeException("Failed to retrieve loan details: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_loan_get"));
         }
     }
 

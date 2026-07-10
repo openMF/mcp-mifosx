@@ -2,6 +2,7 @@ package org.apache.fineract.infrastructure.mcp.tools.savings;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.savings.data.SavingsAccountData;
 import org.apache.fineract.portfolio.savings.service.SavingsAccountReadPlatformService;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 public class SavingsAccountTool implements FineractMcpTool {
 
     private final SavingsAccountReadPlatformService savingsAccountReadPlatformService;
+    private final McpErrorSanitizer mcpErrorSanitizer;
 
     @Override
     public String getCategory() {
@@ -53,8 +55,7 @@ public class SavingsAccountTool implements FineractMcpTool {
             );
 
         } catch (Exception e) {
-            log.error("Error retrieving savings account details for ID: {}", savingsId, e);
-            throw new RuntimeException("Failed to retrieve savings details: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_savings_get"));
         }
     }
 

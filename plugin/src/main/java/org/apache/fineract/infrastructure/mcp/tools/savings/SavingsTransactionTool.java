@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
+import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.savings.service.SavingsAccountWritePlatformService;
 import org.springframework.ai.tool.annotation.Tool;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Service;
 public class SavingsTransactionTool implements FineractMcpTool {
 
     private final SavingsAccountWritePlatformService savingsAccountWritePlatformService;
+    private final McpErrorSanitizer mcpErrorSanitizer;
 
     @Override
     public String getCategory() {
@@ -74,8 +76,7 @@ public class SavingsTransactionTool implements FineractMcpTool {
             );
 
         } catch (Exception e) {
-            log.error("Error processing deposit for savings account ID: {}", savingsId, e);
-            throw new RuntimeException("Failed to process deposit: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_savings_deposit"));
         }
     }
 
@@ -128,8 +129,7 @@ public class SavingsTransactionTool implements FineractMcpTool {
             );
 
         } catch (Exception e) {
-            log.error("Error processing withdrawal for savings account ID: {}", savingsId, e);
-            throw new RuntimeException("Failed to process withdrawal: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_savings_withdrawal"));
         }
     }
 

@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
+import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.client.api.ClientApiConstants;
 import org.apache.fineract.portfolio.client.service.ClientWritePlatformService;
@@ -20,6 +21,7 @@ import org.springframework.stereotype.Service;
 public class ClientCreateTool implements FineractMcpTool {
 
     private final ClientWritePlatformService clientWritePlatformService;
+    private final McpErrorSanitizer mcpErrorSanitizer;
 
     @Override
     public String getCategory() {
@@ -90,8 +92,7 @@ public class ClientCreateTool implements FineractMcpTool {
             );
 
         } catch (Exception e) {
-            log.error("Error creating client '{}' '{}'", firstName, lastName, e);
-            throw new RuntimeException("Failed to create client: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_client_create"));
         }
     }
 

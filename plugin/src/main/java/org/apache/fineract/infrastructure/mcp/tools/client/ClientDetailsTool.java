@@ -2,6 +2,7 @@ package org.apache.fineract.infrastructure.mcp.tools.client;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.client.data.ClientData;
 import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Service;
 public class ClientDetailsTool implements FineractMcpTool {
 
     private final ClientReadPlatformService clientReadPlatformService;
+    private final McpErrorSanitizer mcpErrorSanitizer;
 
     @Override
     public String getCategory() {
@@ -52,8 +54,7 @@ public class ClientDetailsTool implements FineractMcpTool {
             );
 
         } catch (Exception e) {
-            log.error("Error retrieving client details for ID: {}", clientId, e);
-            throw new RuntimeException("Failed to retrieve client details: " + e.getMessage(), e);
+            throw new RuntimeException(mcpErrorSanitizer.sanitize(e, "fineract_client_get"));
         }
     }
 
