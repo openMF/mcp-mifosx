@@ -46,6 +46,12 @@ public class LoanTransactionTool implements FineractMcpTool {
         log.info("MCP Tool: Processing repayment of {} for loan ID: {}", amount, loanId);
 
         try {
+            if (loanId == null) {
+                throw new IllegalArgumentException("loanId is required");
+            }
+            if (amount == null || !Double.isFinite(amount) || amount <= 0) {
+                throw new IllegalArgumentException("amount is required, must be a finite number, and greater than zero");
+            }
             LocalDate txnDate = (transactionDate != null && !transactionDate.isBlank())
                     ? LocalDate.parse(transactionDate)
                     : LocalDate.now();

@@ -44,6 +44,12 @@ public class SavingsTransactionTool implements FineractMcpTool {
         log.info("MCP Tool: Processing deposit of {} for savings account ID: {}", amount, savingsId);
 
         try {
+            if (savingsId == null) {
+                throw new IllegalArgumentException("savingsId is required");
+            }
+            if (amount == null || !Double.isFinite(amount) || amount <= 0) {
+                throw new IllegalArgumentException("amount is required, must be a finite number, and greater than zero");
+            }
             LocalDate txnDate = (transactionDate != null && !transactionDate.isBlank())
                     ? LocalDate.parse(transactionDate)
                     : LocalDate.now();
@@ -97,6 +103,12 @@ public class SavingsTransactionTool implements FineractMcpTool {
         log.info("MCP Tool: Processing withdrawal of {} for savings account ID: {}", amount, savingsId);
 
         try {
+            if (savingsId == null) {
+                throw new IllegalArgumentException("savingsId is required");
+            }
+            if (amount == null || !Double.isFinite(amount) || amount <= 0) {
+                throw new IllegalArgumentException("amount is required, must be a finite number, and greater than zero");
+            }
             LocalDate txnDate = (transactionDate != null && !transactionDate.isBlank())
                     ? LocalDate.parse(transactionDate)
                     : LocalDate.now();

@@ -38,6 +38,9 @@ public class LoanDetailsTool implements FineractMcpTool {
         log.info("MCP Tool: Getting details for loan ID: {}", loanId);
 
         try {
+            if (loanId == null) {
+                throw new IllegalArgumentException("loanId is required");
+            }
             LoanAccountData loanData = loanReadPlatformService.retrieveOne(loanId);
 
             return new LoanDetailResult(

@@ -37,6 +37,9 @@ public class SavingsAccountTool implements FineractMcpTool {
         log.info("MCP Tool: Getting details for savings account ID: {}", savingsId);
 
         try {
+            if (savingsId == null) {
+                throw new IllegalArgumentException("savingsId is required");
+            }
             SavingsAccountData savingsData = savingsAccountReadPlatformService.retrieveOne(savingsId);
 
             return new SavingsDetailResult(

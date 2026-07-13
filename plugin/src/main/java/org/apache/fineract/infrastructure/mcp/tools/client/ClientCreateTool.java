@@ -51,6 +51,15 @@ public class ClientCreateTool implements FineractMcpTool {
         log.info("MCP Tool: Creating client '{}' '{}' in office {}", firstName, lastName, officeId);
 
         try {
+            if (firstName == null || firstName.isBlank()) {
+                throw new IllegalArgumentException("firstName is required and must not be blank");
+            }
+            if (lastName == null || lastName.isBlank()) {
+                throw new IllegalArgumentException("lastName is required and must not be blank");
+            }
+            if (officeId == null) {
+                throw new IllegalArgumentException("officeId is required");
+            }
             // Build the command JSON for client creation
             var commandJson = new java.util.HashMap<String, Object>();
             commandJson.put(ClientApiConstants.firstnameParamName, firstName);

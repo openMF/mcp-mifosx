@@ -45,6 +45,9 @@ public class ClientSearchTool implements FineractMcpTool {
         int limit = (maxResults != null && maxResults > 0) ? maxResults : 20;
 
         try {
+            if (query == null || query.isBlank()) {
+                throw new IllegalArgumentException("query is required and must not be blank");
+            }
             // Use Fineract's search service to find matching clients
             var searchParameters = org.apache.fineract.infrastructure.core.service.SearchParameters.builder()
                     .name(query)

@@ -38,6 +38,9 @@ public class ClientDetailsTool implements FineractMcpTool {
         log.info("MCP Tool: Getting details for client ID: {}", clientId);
 
         try {
+            if (clientId == null) {
+                throw new IllegalArgumentException("clientId is required");
+            }
             ClientData clientData = clientReadPlatformService.retrieveOne(clientId);
 
             return new ClientDetailResult(
