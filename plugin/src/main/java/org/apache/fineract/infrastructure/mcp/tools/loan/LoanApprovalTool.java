@@ -44,6 +44,9 @@ public class LoanApprovalTool implements FineractMcpTool {
         log.info("MCP Tool: Approving loan ID: {}", loanId);
 
         try {
+            if (loanId == null) {
+                throw new IllegalArgumentException("loanId is required");
+            }
             LocalDate approveDate = (approvalDate != null && !approvalDate.isBlank())
                     ? LocalDate.parse(approvalDate)
                     : LocalDate.now();

@@ -51,10 +51,12 @@ public class ReportExecutionTool implements FineractMcpTool {
 
         log.info("MCP Tool: Running report '{}' with output type '{}'", reportName, outputType);
 
-        // Validate report name to prevent SQL injection
-        sqlValidator.validate(reportName);
-
         try {
+            if (reportName == null || reportName.isBlank()) {
+                throw new IllegalArgumentException("reportName is required and must not be blank");
+            }
+            // Validate report name to prevent SQL injection
+            sqlValidator.validate(reportName);
             // Build query parameters
             Map<String, String> queryParams = new HashMap<>();
             queryParams.put("output-type", outputType != null ? outputType : "JSON");
