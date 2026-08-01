@@ -3,6 +3,7 @@ package org.apache.fineract.infrastructure.mcp.tools.savings;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
+import org.apache.fineract.infrastructure.mcp.service.McpAuthenticationService;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.savings.data.SavingsAccountData;
 import org.apache.fineract.portfolio.savings.service.SavingsAccountReadPlatformService;
@@ -20,6 +21,7 @@ public class SavingsAccountTool implements FineractMcpTool {
 
     private final SavingsAccountReadPlatformService savingsAccountReadPlatformService;
     private final McpErrorSanitizer mcpErrorSanitizer;
+    private final McpAuthenticationService mcpAuthenticationService;
 
     @Override
     public String getCategory() {
@@ -35,6 +37,10 @@ public class SavingsAccountTool implements FineractMcpTool {
             Long savingsId) {
 
         log.info("MCP Tool: Getting details for savings account ID: {}", savingsId);
+
+        if (!mcpAuthenticationService.isAuthorized()) {
+            throw new SecurityException("User is not authorized to execute MCP tools. Required permissions: ALL_FUNCTIONS or USE_MCP_TOOLS");
+        }
 
         try {
             if (savingsId == null) {

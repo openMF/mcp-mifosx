@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
 import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
+import org.apache.fineract.infrastructure.mcp.service.McpAuthenticationService;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.savings.service.SavingsAccountWritePlatformService;
 import org.springframework.ai.tool.annotation.Tool;
@@ -21,6 +22,7 @@ public class SavingsTransactionTool implements FineractMcpTool {
 
     private final SavingsAccountWritePlatformService savingsAccountWritePlatformService;
     private final McpErrorSanitizer mcpErrorSanitizer;
+    private final McpAuthenticationService mcpAuthenticationService;
 
     @Override
     public String getCategory() {
@@ -42,6 +44,10 @@ public class SavingsTransactionTool implements FineractMcpTool {
             String note) {
 
         log.info("MCP Tool: Processing deposit of {} for savings account ID: {}", amount, savingsId);
+
+        if (!mcpAuthenticationService.isAuthorized()) {
+            throw new SecurityException("User is not authorized to execute MCP tools. Required permissions: ALL_FUNCTIONS or USE_MCP_TOOLS");
+        }
 
         try {
             if (savingsId == null) {
@@ -101,6 +107,10 @@ public class SavingsTransactionTool implements FineractMcpTool {
             String note) {
 
         log.info("MCP Tool: Processing withdrawal of {} for savings account ID: {}", amount, savingsId);
+
+        if (!mcpAuthenticationService.isAuthorized()) {
+            throw new SecurityException("User is not authorized to execute MCP tools. Required permissions: ALL_FUNCTIONS or USE_MCP_TOOLS");
+        }
 
         try {
             if (savingsId == null) {

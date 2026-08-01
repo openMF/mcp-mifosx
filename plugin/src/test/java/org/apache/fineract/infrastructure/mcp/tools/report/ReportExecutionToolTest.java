@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import jakarta.ws.rs.core.Response;
 import java.util.Map;
 import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
+import org.apache.fineract.infrastructure.mcp.service.McpAuthenticationService;
 import org.apache.fineract.infrastructure.report.service.ReportingProcessService;
 import org.apache.fineract.infrastructure.security.service.SqlValidator;
 import org.junit.jupiter.api.BeforeEach;
@@ -30,12 +31,16 @@ public class ReportExecutionToolTest {
     @Mock
     private McpErrorSanitizer sanitizer;
 
+    @Mock
+    private McpAuthenticationService mcpAuthenticationService;
+
     private ReportExecutionTool tool;
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(mcpAuthenticationService.isAuthorized()).thenReturn(true);
         Map<String, ReportingProcessService> reportingProcessServices = Map.of("default", reportingProcessService);
-        tool = new ReportExecutionTool(reportingProcessServices, sqlValidator, sanitizer);
+        tool = new ReportExecutionTool(reportingProcessServices, sqlValidator, sanitizer, mcpAuthenticationService);
 
         org.mockito.Mockito.lenient().when(sanitizer.sanitize(any(), any())).thenAnswer(invocation -> {
             Exception e = invocation.getArgument(0);
