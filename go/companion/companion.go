@@ -68,6 +68,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerLoanDetailRoutes(mux)
 	h.registerGroupTypeCatalogRoutes(mux)
 	h.registerPassthroughRoutes(mux)
+	// COMP-CAL: meeting-lifecycle facade (calendar/conduct/summary/previous-review + reschedule;
+	// see meeting.go).
+	h.registerMeetingRoutes(mux)
 }
 
 // ---- Wire contract (exactly what the app sends / expects) ----
