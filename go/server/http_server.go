@@ -13,6 +13,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/openMF/mcp-mifosx/go/companion"
 	"github.com/openMF/mcp-mifosx/go/tools"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -49,6 +50,10 @@ func (s *MifosHTTPServer) Serve() error {
 			s.handleRESTToolCall(w, r, d)
 		})
 	}
+
+	// COMP-AUTH companion facade (CommonPurse app login). Inherits CORS from the
+	// outer handler below since it registers on the same mux.
+	companion.New(s.McpServer.Registry.Fineract).RegisterRoutes(mux)
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
