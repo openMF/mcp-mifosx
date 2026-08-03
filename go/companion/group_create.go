@@ -153,6 +153,12 @@ func (h *Handler) fineractCreateGroup(name string, officeID int64) (int64, error
 		"name":     name,
 		"officeId": officeID,
 		"active":   false,
+		// Submit with the same backdated date the activation uses: Fineract requires
+		// submittedOnDate <= activationDate, and both must be <= the (behind-the-host) business
+		// date, so a plain "today" submit + backdated activate is rejected.
+		"submittedOnDate": time.Now().AddDate(0, 0, -3).Format("02 January 2006"),
+		"dateFormat":      "dd MMMM yyyy",
+		"locale":          "en",
 	}
 	raw, err := h.Fineract.DoRequest("POST", "groups", body, nil)
 	if err != nil {
@@ -178,7 +184,9 @@ func (h *Handler) fineractCreateGroup(name string, officeID int64) (int64, error
 // fineractActivateGroup activates a pending group as of today.
 func (h *Handler) fineractActivateGroup(groupID int64) error {
 	body := map[string]string{
-		"activationDate": time.Now().Format("02 January 2006"), // Fineract "dd MMMM yyyy"
+		// Backdate a few days: mifos-bank-2's business date runs behind the host clock, so "today"
+		// is rejected as a future activation date (same skew the client activation handles).
+		"activationDate": time.Now().AddDate(0, 0, -3).Format("02 January 2006"), // Fineract "dd MMMM yyyy"
 		"dateFormat":     "dd MMMM yyyy",
 		"locale":         "en",
 	}
