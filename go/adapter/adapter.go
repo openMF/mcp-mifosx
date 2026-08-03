@@ -67,59 +67,86 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 	endpoint = strings.TrimPrefix(endpoint, "/")
 	url := fmt.Sprintf("%s/%s", c.BaseURL, endpoint)
 
-	var reqBody io.Reader
+	var jsonBody []byte
 	if body != nil {
-		jsonBody, err := json.Marshal(body)
+		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		reqBody = bytes.NewBuffer(jsonBody)
+		jsonBody = b
 	}
 
-	req, err := http.NewRequest(method, url, reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	req.SetBasicAuth(c.Username, c.Password)
-	req.Header.Set("fineract-platform-tenantid", c.TenantID)
-	req.Header.Set("Content-Type", "application/json")
-
-	if isAttachment {
-		req.Header.Set("Accept", "*/*")
-	} else {
-		req.Header.Set("Accept", "application/json")
-	}
-
-	if queryParams != nil {
-		q := req.URL.Query()
-		for k, v := range queryParams {
-			q.Add(k, v)
+	// Retry transient upstream failures so a flaky-backend blip never surfaces to the app.
+	// The live Fineract instance intermittently returns 502 under load; retry a bounded number
+	// of times with a short linear backoff. SAFETY: a transport error (connection never
+	// completed) is retried for ANY method; a gateway 5xx (502/503/504) is retried only for
+	// idempotent reads (GET/HEAD) so a write is never double-submitted.
+	idempotent := method == http.MethodGet || method == http.MethodHead
+	const maxAttempts = 3
+	var respBody []byte
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var reqBody io.Reader
+		if jsonBody != nil {
+			reqBody = bytes.NewReader(jsonBody)
 		}
-		req.URL.RawQuery = q.Encode()
-	}
+		req, err := http.NewRequest(method, url, reqBody)
+		if err != nil {
+			return nil, err
+		}
+		req.SetBasicAuth(c.Username, c.Password)
+		req.Header.Set("fineract-platform-tenantid", c.TenantID)
+		req.Header.Set("Content-Type", "application/json")
+		if isAttachment {
+			req.Header.Set("Accept", "*/*")
+		} else {
+			req.Header.Set("Accept", "application/json")
+		}
+		if queryParams != nil {
+			q := req.URL.Query()
+			for k, v := range queryParams {
+				q.Add(k, v)
+			}
+			req.URL.RawQuery = q.Encode()
+		}
 
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			lastErr = err
+			if attempt < maxAttempts {
+				time.Sleep(time.Duration(attempt) * 400 * time.Millisecond)
+				continue
+			}
+			return nil, err
+		}
+		respBody, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+		// transient gateway 5xx on an idempotent read → retry
+		if idempotent && (resp.StatusCode == http.StatusBadGateway ||
+			resp.StatusCode == http.StatusServiceUnavailable ||
+			resp.StatusCode == http.StatusGatewayTimeout) && attempt < maxAttempts {
+			lastErr = fmt.Errorf("API Error %d", resp.StatusCode)
+			time.Sleep(time.Duration(attempt) * 400 * time.Millisecond)
+			continue
+		}
 
-	if resp.StatusCode >= 400 {
-		return respBody, fmt.Errorf("API Error %d", resp.StatusCode)
+		if resp.StatusCode >= 400 {
+			return respBody, fmt.Errorf("API Error %d", resp.StatusCode)
+		}
+		// If it's a binary/attachment response, return a descriptive string instead of a huge blob
+		contentType := resp.Header.Get("Content-Type")
+		if isAttachment && !strings.Contains(contentType, "json") {
+			return []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))), nil
+		}
+		return respBody, nil
 	}
-
-	// If it's a binary/attachment response, return a descriptive string instead of a huge blob
-	contentType := resp.Header.Get("Content-Type")
-	if isAttachment && !strings.Contains(contentType, "json") {
-		return []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))), nil
+	if lastErr != nil {
+		return respBody, lastErr
 	}
-
 	return respBody, nil
 }
 

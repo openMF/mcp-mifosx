@@ -226,24 +226,46 @@ func (h *Handler) fineractPost(endpoint string, body interface{}) (int, []byte, 
 	if err != nil {
 		return 0, nil, err
 	}
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("fineract-platform-tenantid", h.Fineract.TenantID)
+	// This path is only /authentication (login/me/self-register auth) — side-effect-free,
+	// so a transient gateway 5xx or transport blip from the flaky live Fineract is retried
+	// (bounded, short backoff) rather than surfaced to the app as a spurious login failure.
+	const maxAttempts = 3
+	var status int
+	var raw []byte
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, rerr := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+		if rerr != nil {
+			return 0, nil, rerr
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("fineract-platform-tenantid", h.Fineract.TenantID)
 
-	resp, err := h.Fineract.HTTP.Do(req)
-	if err != nil {
-		return 0, nil, err
+		resp, derr := h.Fineract.HTTP.Do(req)
+		if derr != nil {
+			lastErr = derr
+			if attempt < maxAttempts {
+				time.Sleep(time.Duration(attempt) * 400 * time.Millisecond)
+				continue
+			}
+			return 0, nil, derr
+		}
+		raw, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		status = resp.StatusCode
+		if err != nil {
+			return status, nil, err
+		}
+		if (status == http.StatusBadGateway || status == http.StatusServiceUnavailable ||
+			status == http.StatusGatewayTimeout) && attempt < maxAttempts {
+			lastErr = fmt.Errorf("upstream %d", status)
+			time.Sleep(time.Duration(attempt) * 400 * time.Millisecond)
+			continue
+		}
+		return status, raw, nil
 	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, nil, err
-	}
-	return resp.StatusCode, raw, nil
+	return status, raw, lastErr
 }
 
 // resolveGroups returns the caller's group memberships. mifos-bank-2 exposes no
