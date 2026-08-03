@@ -7,6 +7,7 @@ import static org.mockito.Mockito.when;
 
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
 import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
+import org.apache.fineract.infrastructure.mcp.service.McpAuthenticationService;
 import org.apache.fineract.portfolio.client.service.ClientWritePlatformService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,11 +25,15 @@ public class ClientCreateToolTest {
     @Mock
     private McpErrorSanitizer sanitizer;
 
+    @Mock
+    private McpAuthenticationService mcpAuthenticationService;
+
     @InjectMocks
     private ClientCreateTool tool;
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(mcpAuthenticationService.isAuthorized()).thenReturn(true);
         org.mockito.Mockito.lenient().when(sanitizer.sanitize(any(), any())).thenAnswer(invocation -> {
             Exception e = invocation.getArgument(0);
             return e.getMessage();

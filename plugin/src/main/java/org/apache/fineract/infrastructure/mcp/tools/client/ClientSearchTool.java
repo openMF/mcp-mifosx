@@ -4,6 +4,7 @@ import java.util.List;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
+import org.apache.fineract.infrastructure.mcp.service.McpAuthenticationService;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.client.data.ClientData;
 import org.apache.fineract.portfolio.client.service.ClientReadPlatformService;
@@ -24,6 +25,7 @@ public class ClientSearchTool implements FineractMcpTool {
 
     private final ClientReadPlatformService clientReadPlatformService;
     private final McpErrorSanitizer mcpErrorSanitizer;
+    private final McpAuthenticationService mcpAuthenticationService;
 
     @Override
     public String getCategory() {
@@ -43,6 +45,10 @@ public class ClientSearchTool implements FineractMcpTool {
         log.info("MCP Tool: Searching clients with query: '{}'", query);
 
         int limit = (maxResults != null && maxResults > 0) ? maxResults : 20;
+
+        if (!mcpAuthenticationService.isAuthorized()) {
+            throw new SecurityException("User is not authorized to execute MCP tools. Required permissions: ALL_FUNCTIONS or USE_MCP_TOOLS");
+        }
 
         try {
             if (query == null || query.isBlank()) {

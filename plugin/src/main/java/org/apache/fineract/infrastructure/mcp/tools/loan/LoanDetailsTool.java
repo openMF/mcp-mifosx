@@ -3,6 +3,7 @@ package org.apache.fineract.infrastructure.mcp.tools.loan;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
+import org.apache.fineract.infrastructure.mcp.service.McpAuthenticationService;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.loanaccount.data.LoanAccountData;
 import org.apache.fineract.portfolio.loanaccount.service.LoanReadPlatformService;
@@ -20,6 +21,7 @@ public class LoanDetailsTool implements FineractMcpTool {
 
     private final LoanReadPlatformService loanReadPlatformService;
     private final McpErrorSanitizer mcpErrorSanitizer;
+    private final McpAuthenticationService mcpAuthenticationService;
 
     @Override
     public String getCategory() {
@@ -36,6 +38,10 @@ public class LoanDetailsTool implements FineractMcpTool {
             Long loanId) {
 
         log.info("MCP Tool: Getting details for loan ID: {}", loanId);
+
+        if (!mcpAuthenticationService.isAuthorized()) {
+            throw new SecurityException("User is not authorized to execute MCP tools. Required permissions: ALL_FUNCTIONS or USE_MCP_TOOLS");
+        }
 
         try {
             if (loanId == null) {

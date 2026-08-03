@@ -5,6 +5,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
 import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
+import org.apache.fineract.infrastructure.mcp.service.McpAuthenticationService;
 import org.apache.fineract.infrastructure.mcp.tools.FineractMcpTool;
 import org.apache.fineract.portfolio.client.api.ClientApiConstants;
 import org.apache.fineract.portfolio.client.service.ClientWritePlatformService;
@@ -22,6 +23,7 @@ public class ClientCreateTool implements FineractMcpTool {
 
     private final ClientWritePlatformService clientWritePlatformService;
     private final McpErrorSanitizer mcpErrorSanitizer;
+    private final McpAuthenticationService mcpAuthenticationService;
 
     @Override
     public String getCategory() {
@@ -49,6 +51,10 @@ public class ClientCreateTool implements FineractMcpTool {
             String emailAddress) {
 
         log.info("MCP Tool: Creating client '{}' '{}' in office {}", firstName, lastName, officeId);
+
+        if (!mcpAuthenticationService.isAuthorized()) {
+            throw new SecurityException("User is not authorized to execute MCP tools. Required permissions: ALL_FUNCTIONS or USE_MCP_TOOLS");
+        }
 
         try {
             if (firstName == null || firstName.isBlank()) {

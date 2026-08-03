@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 
 import org.apache.fineract.infrastructure.core.data.CommandProcessingResult;
 import org.apache.fineract.infrastructure.mcp.service.McpErrorSanitizer;
+import org.apache.fineract.infrastructure.mcp.service.McpAuthenticationService;
 import org.apache.fineract.portfolio.loanaccount.service.LoanWritePlatformService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -25,11 +26,15 @@ public class LoanTransactionToolTest {
     @Mock
     private McpErrorSanitizer sanitizer;
 
+    @Mock
+    private McpAuthenticationService mcpAuthenticationService;
+
     @InjectMocks
     private LoanTransactionTool tool;
 
     @BeforeEach
     void setUp() {
+        org.mockito.Mockito.lenient().when(mcpAuthenticationService.isAuthorized()).thenReturn(true);
         // Mock sanitizer to just throw RuntimeException with the original message for easier testing of guards
         org.mockito.Mockito.lenient().when(sanitizer.sanitize(any(), any())).thenAnswer(invocation -> {
             Exception e = invocation.getArgument(0);
