@@ -36,6 +36,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"sync"
 	"time"
 )
 
@@ -328,15 +329,28 @@ func (h *Handler) HandleGroupDashboard(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
 	}
-	savings, _, err := h.aggregateSavings(gid)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
+	// savings, loans and per-member accounts are independent given the member list — fetch them
+	// concurrently so the dashboard costs ~one aggregation's latency instead of the sum (each
+	// mifos-bank-2 round-trip is ~0.5-1.3s and these fan out per member).
+	var (
+		savings    float64
+		savingsErr error
+		loansOut   float64
+		accounts   GroupAccountsDto
+		accErr     error
+		wg         sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() { defer wg.Done(); savings, _, savingsErr = h.aggregateSavings(gid) }()
+	go func() { defer wg.Done(); loansOut, _, _, _ = h.aggregateLoans(members) }()
+	go func() { defer wg.Done(); accounts, accErr = h.buildAccounts(gid, members) }()
+	wg.Wait()
+	if savingsErr != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", savingsErr.Error())
 		return
 	}
-	loansOut, _, _, _ := h.aggregateLoans(members)
-	accounts, err := h.buildAccounts(gid, members)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
+	if accErr != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", accErr.Error())
 		return
 	}
 	_ = json.NewEncoder(w).Encode(GroupDashboardResponseDto{

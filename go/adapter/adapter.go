@@ -61,8 +61,17 @@ func New() *FineractClient {
 		Password: password,
 		HTTP: &http.Client{
 			Timeout: 45 * time.Second,
+			// Connection reuse + HTTP/2 is the single biggest latency win against mifos-bank-2:
+			// each fresh TLS handshake costs ~1.2s, and composite endpoints fan out to many calls.
+			// Setting TLSClientConfig manually otherwise DISABLES Go's automatic HTTP/2, so we must
+			// ForceAttemptHTTP2 (mifos-bank-2 speaks h2) and keep a warm idle-connection pool so
+			// every call after the first reuses the handshake (~0.5s vs ~1.3s per call).
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+				ForceAttemptHTTP2:   true,
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 16,
+				IdleConnTimeout:     120 * time.Second,
 			},
 		},
 	}
