@@ -195,13 +195,17 @@ func (h *Handler) resolveSelfServiceRoleID() (int, error) {
 
 // provisionClient creates a real active PERSON client in office 1.
 func (h *Handler) provisionClient(first, last string) (int, []byte, error) {
-	today := time.Now().Format("02 January 2006") // Fineract "dd MMMM yyyy"
+	// Backdate the activation a few days: Fineract rejects an activationDate after its own
+	// business date, and mifos-bank-2's server clock runs behind the host (timezone/clock skew),
+	// so "today" is seen as the future ("Activation date cannot be in the future"). A small
+	// backdate is harmless for a fresh signup and absorbs the skew with margin.
+	activationDate := time.Now().AddDate(0, 0, -3).Format("02 January 2006") // Fineract "dd MMMM yyyy"
 	body := map[string]interface{}{
 		"firstname":      first,
 		"lastname":       last,
 		"officeId":       1,
 		"active":         true,
-		"activationDate": today,
+		"activationDate": activationDate,
 		"dateFormat":     "dd MMMM yyyy",
 		"locale":         "en",
 		"legalFormId":    1, // PERSON
