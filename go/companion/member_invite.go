@@ -118,7 +118,22 @@ type revokeInviteResponseDto struct {
 // inviter_client_id are present on the wire but unused here.
 type invitationRow struct {
 	ID                int64   `json:"id"`
+	GroupID           int64   `json:"group_id"`
+	InviterClientID   int64   `json:"inviter_client_id"`
 	Token             string  `json:"token"`
+	InvitedEmailPhone string  `json:"invited_email_phone"`
+	RoleToAssign      string  `json:"role_to_assign"`
+	ExpiresAt         string  `json:"expires_at"`
+	AcceptedAt        *string `json:"accepted_at"`
+}
+
+// inviteRowWithGroupDto == InvitationRowDto — the join-with-code validate shape, which (unlike the
+// organizer's pendingInviteDto) MUST carry group_id so the joiner can preview + associate to the
+// right group after entering just a token.
+type inviteRowWithGroupDto struct {
+	Token             string  `json:"token"`
+	GroupID           int64   `json:"group_id"`
+	InviterClientID   int64   `json:"inviter_client_id"`
 	InvitedEmailPhone string  `json:"invited_email_phone"`
 	RoleToAssign      string  `json:"role_to_assign"`
 	ExpiresAt         string  `json:"expires_at"`
@@ -185,28 +200,62 @@ func (h *Handler) HandleGenerateInvite(w http.ResponseWriter, r *http.Request) {
 // rows for the group.
 func (h *Handler) HandleListInvites(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	groupID, ok := groupIDParam(w, r)
-	if !ok {
-		return
-	}
-	rows, err := h.fetchInvitationRows(groupID)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", "read invitations: "+err.Error())
-		return
-	}
-	out := make([]pendingInviteDto, 0, len(rows))
-	for _, row := range rows {
-		if row.AcceptedAt != nil && strings.TrimSpace(*row.AcceptedAt) != "" {
-			continue // pending only — the app expects accepted_at IS NULL filtered server-side.
+	param := strings.TrimSpace(r.PathValue("groupId"))
+	// NUMERIC path param → the organizer's pending-invites list for that group.
+	if groupID, err := strconv.ParseInt(param, 10, 64); err == nil {
+		rows, err := h.fetchInvitationRows(groupID)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "upstream_error", "read invitations: "+err.Error())
+			return
 		}
-		out = append(out, pendingInviteDto{
-			RowID:             row.ID,
-			Token:             row.Token,
-			InvitedEmailPhone: row.InvitedEmailPhone,
-			RoleToAssign:      row.RoleToAssign,
-			ExpiresAt:         row.ExpiresAt,
-			AcceptedAt:        nil,
-		})
+		out := make([]pendingInviteDto, 0, len(rows))
+		for _, row := range rows {
+			if row.AcceptedAt != nil && strings.TrimSpace(*row.AcceptedAt) != "" {
+				continue // pending only — the app expects accepted_at IS NULL filtered server-side.
+			}
+			out = append(out, pendingInviteDto{
+				RowID:             row.ID,
+				Token:             row.Token,
+				InvitedEmailPhone: row.InvitedEmailPhone,
+				RoleToAssign:      row.RoleToAssign,
+				ExpiresAt:         row.ExpiresAt,
+				AcceptedAt:        nil,
+			})
+		}
+		_ = json.NewEncoder(w).Encode(out)
+		return
+	}
+	// NON-NUMERIC path param → the JOIN-WITH-CODE validate call: the app passes a bare invite
+	// TOKEN with no group, so resolve it by scanning every active group's invitation rows and
+	// return the matching row WITH its group_id (the app then previews that group + associates).
+	out := make([]inviteRowWithGroupDto, 0, 1)
+	raw, err := h.Fineract.DoRequest("GET", "groups", nil, nil)
+	if err == nil {
+		var groups []fnGroup
+		if json.Unmarshal(raw, &groups) == nil {
+			for _, g := range groups {
+				if !g.Active {
+					continue
+				}
+				rows, rerr := h.fetchInvitationRows(g.ID)
+				if rerr != nil {
+					continue
+				}
+				for _, row := range rows {
+					if strings.EqualFold(strings.TrimSpace(row.Token), param) {
+						out = append(out, inviteRowWithGroupDto{
+							Token:             row.Token,
+							GroupID:           g.ID,
+							InviterClientID:   row.InviterClientID,
+							InvitedEmailPhone: row.InvitedEmailPhone,
+							RoleToAssign:      row.RoleToAssign,
+							ExpiresAt:         row.ExpiresAt,
+							AcceptedAt:        row.AcceptedAt,
+						})
+					}
+				}
+			}
+		}
 	}
 	_ = json.NewEncoder(w).Encode(out)
 }
