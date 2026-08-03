@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
+	"sync"
 )
 
 // OrganizerDashboardSummaryDto mirrors the app DTO (field names/casing exact).
@@ -83,38 +84,67 @@ func (h *Handler) HandleOrganizerDashboard(w http.ResponseWriter, r *http.Reques
 		TodaySchedule:  []OrganizerScheduledMeeting{},
 		RecentActivity: []OrganizerActivityItem{},
 	}
+	// Aggregate each group CONCURRENTLY — every group is an independent aggregateGroup +
+	// aggregateLoans fan-out, and doing them serially made the first post-login screen the
+	// slowest (~11s for 4 groups). Each goroutine writes only its own result slot; the merge
+	// into the summary is done sequentially afterwards, preserving group order.
+	activeGroups := make([]fnGroup, 0, len(groups))
 	for _, g := range groups {
-		if !g.Active {
-			continue
+		if g.Active {
+			activeGroups = append(activeGroups, g)
 		}
-		detail, members, aerr := h.aggregateGroup(g.ID)
-		if aerr != nil {
+	}
+	type grpResult struct {
+		ok          bool
+		memberCount int
+		schedule    OrganizerScheduledMeeting
+		activity    []OrganizerActivityItem
+	}
+	results := make([]grpResult, len(activeGroups))
+	var wg sync.WaitGroup
+	for i, g := range activeGroups {
+		wg.Add(1)
+		go func(i int, g fnGroup) {
+			defer wg.Done()
+			detail, members, aerr := h.aggregateGroup(g.ID)
+			if aerr != nil {
+				return
+			}
+			res := grpResult{
+				ok:          true,
+				memberCount: detail.MemberCount,
+				// Meeting schedule is a VSLA-cadence default (WEEKLY) — mifos-bank-2 exposes no
+				// per-group calendar yet; surface the real group + member count.
+				schedule: OrganizerScheduledMeeting{
+					GroupID:     strconv.FormatInt(g.ID, 10),
+					GroupName:   g.Name,
+					MeetingTime: "14:00",
+					MemberCount: detail.MemberCount,
+				},
+			}
+			_, loanRows, _, _ := h.aggregateLoans(members)
+			for _, row := range loanRows {
+				res.activity = append(res.activity, OrganizerActivityItem{
+					ID:          row.ID,
+					Type:        row.Type,
+					Description: row.Description,
+					Amount:      row.Amount,
+					Date:        row.Date,
+					GroupName:   g.Name,
+				})
+			}
+			results[i] = res
+		}(i, g)
+	}
+	wg.Wait()
+	for _, res := range results {
+		if !res.ok {
 			continue
 		}
 		summary.MyGroupCount++
-		summary.TotalMembers += detail.MemberCount
-		// Meeting schedule is a VSLA-cadence default (WEEKLY) — no per-group
-		// Fineract calendar on mifos-bank-2 yet; surface the group so the
-		// Today's-Schedule card is populated with a real group + member count.
-		summary.TodaySchedule = append(summary.TodaySchedule, OrganizerScheduledMeeting{
-			GroupID:     strconv.FormatInt(g.ID, 10),
-			GroupName:   g.Name,
-			MeetingTime: "14:00",
-			MemberCount: detail.MemberCount,
-		})
-		// Recent activity: reuse the real loan/savings activity rows aggregated
-		// for the group (deposits, disbursements) — mapped to the organizer feed.
-		_, loanRows, _, _ := h.aggregateLoans(members)
-		for _, row := range loanRows {
-			summary.RecentActivity = append(summary.RecentActivity, OrganizerActivityItem{
-				ID:          row.ID,
-				Type:        row.Type,
-				Description: row.Description,
-				Amount:      row.Amount,
-				Date:        row.Date,
-				GroupName:   g.Name,
-			})
-		}
+		summary.TotalMembers += res.memberCount
+		summary.TodaySchedule = append(summary.TodaySchedule, res.schedule)
+		summary.RecentActivity = append(summary.RecentActivity, res.activity...)
 	}
 	summary.MeetingsTodayCount = len(summary.TodaySchedule)
 	_ = json.NewEncoder(w).Encode(summary)
