@@ -86,7 +86,10 @@ func (h *Handler) HandleSelfRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	emailPhone := strings.TrimSpace(req.EmailPhone)
+	// Normalise the identifier to lowercase: the app's email field can auto-capitalise the first
+	// letter, and Fineract usernames are case-sensitive — so the stored username must match what
+	// the user types at login. Lowercasing is a no-op for E.164 phones/digits and admin usernames.
+	emailPhone := strings.ToLower(strings.TrimSpace(req.EmailPhone))
 	if emailPhone == "" || strings.TrimSpace(req.Name) == "" || req.Password == "" {
 		writeErr(w, http.StatusBadRequest, "bad_request", "name, emailPhone and password are required")
 		return

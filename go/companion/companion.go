@@ -136,12 +136,15 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	if strings.TrimSpace(req.EmailPhone) == "" || req.Password == "" {
+	// Match self-register's lowercase normalisation so a login with the exact email a user typed
+	// authenticates against the (case-sensitive) Fineract username stored at registration.
+	emailPhone := strings.ToLower(strings.TrimSpace(req.EmailPhone))
+	if emailPhone == "" || req.Password == "" {
 		writeErr(w, http.StatusBadRequest, "bad_request", "emailPhone and password are required")
 		return
 	}
 
-	fa, status, raw, err := h.fineractAuthenticate(req.EmailPhone, req.Password)
+	fa, status, raw, err := h.fineractAuthenticate(emailPhone, req.Password)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
