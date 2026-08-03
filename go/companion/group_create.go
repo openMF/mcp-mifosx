@@ -116,20 +116,14 @@ func (h *Handler) HandleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		officeID = 1 // Head Office default — the only office the app's dropdown seeds against.
 	}
 
-	// 1. Create the group (pending).
+	// 1. Create the group ALREADY ACTIVE (single call — see fineractCreateGroup).
 	groupID, err := h.fineractCreateGroup(req.Name, officeID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", "create group: "+err.Error())
 		return
 	}
 
-	// 2. Activate it.
-	if err := h.fineractActivateGroup(groupID); err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", "activate group: "+err.Error())
-		return
-	}
-
-	// 3. Persist the VSLA typeConfig datatable row.
+	// 2. Persist the VSLA typeConfig datatable row.
 	if err := h.fineractWriteGroupTypeConfig(groupID, req.TypeConfig); err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", "write group_type_config: "+err.Error())
 		return
@@ -149,14 +143,19 @@ func (h *Handler) HandleCreateGroup(w http.ResponseWriter, r *http.Request) {
 
 // fineractCreateGroup POSTs a new pending group and returns its id.
 func (h *Handler) fineractCreateGroup(name string, officeID int64) (int64, error) {
+	// Create the group ALREADY ACTIVE in a single call (active:true + activationDate) instead of a
+	// separate create-then-activate. This drops one ~1.3s mifos-bank-2 round-trip so the whole
+	// create stays under the app's request timeout — a slow create was making the app time out and
+	// RETRY, and the retry then failed on the now-duplicate group name even though the first attempt
+	// had already succeeded. Dates are backdated to clear the behind-the-host business-date skew
+	// (Fineract requires submittedOnDate <= activationDate <= business date).
+	backdated := time.Now().AddDate(0, 0, -3).Format("02 January 2006")
 	body := map[string]interface{}{
-		"name":     name,
-		"officeId": officeID,
-		"active":   false,
-		// Submit with the same backdated date the activation uses: Fineract requires
-		// submittedOnDate <= activationDate, and both must be <= the (behind-the-host) business
-		// date, so a plain "today" submit + backdated activate is rejected.
-		"submittedOnDate": time.Now().AddDate(0, 0, -3).Format("02 January 2006"),
+		"name":            name,
+		"officeId":        officeID,
+		"active":          true,
+		"activationDate":  backdated,
+		"submittedOnDate": backdated,
 		"dateFormat":      "dd MMMM yyyy",
 		"locale":          "en",
 	}
