@@ -49,6 +49,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // invitationsTable is the Fineract datatable (apptable m_group) invite rows are
@@ -233,26 +234,45 @@ func (h *Handler) HandleListInvites(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		var groups []fnGroup
 		if json.Unmarshal(raw, &groups) == nil {
+			active := make([]fnGroup, 0, len(groups))
 			for _, g := range groups {
-				if !g.Active {
-					continue
+				if g.Active {
+					active = append(active, g)
 				}
-				rows, rerr := h.fetchInvitationRows(g.ID)
-				if rerr != nil {
-					continue
-				}
-				for _, row := range rows {
-					if strings.EqualFold(strings.TrimSpace(row.Token), param) {
-						out = append(out, inviteRowWithGroupDto{
-							Token:             row.Token,
-							GroupID:           g.ID,
-							InviterClientID:   row.InviterClientID,
-							InvitedEmailPhone: row.InvitedEmailPhone,
-							RoleToAssign:      row.RoleToAssign,
-							ExpiresAt:         row.ExpiresAt,
-							AcceptedAt:        row.AcceptedAt,
-						})
+			}
+			// Scan every group's invitation rows CONCURRENTLY — a serial scan over all groups was
+			// ~1.3s/group and blew past the app's request timeout (surfacing as "no connection").
+			// Each goroutine writes only its own slot; the token is unique so at most one matches.
+			hits := make([]*inviteRowWithGroupDto, len(active))
+			var wg sync.WaitGroup
+			for i, g := range active {
+				wg.Add(1)
+				go func(i int, gid int64) {
+					defer wg.Done()
+					rows, rerr := h.fetchInvitationRows(gid)
+					if rerr != nil {
+						return
 					}
+					for _, row := range rows {
+						if strings.EqualFold(strings.TrimSpace(row.Token), param) {
+							hits[i] = &inviteRowWithGroupDto{
+								Token:             row.Token,
+								GroupID:           gid,
+								InviterClientID:   row.InviterClientID,
+								InvitedEmailPhone: row.InvitedEmailPhone,
+								RoleToAssign:      row.RoleToAssign,
+								ExpiresAt:         row.ExpiresAt,
+								AcceptedAt:        row.AcceptedAt,
+							}
+							return
+						}
+					}
+				}(i, g.ID)
+			}
+			wg.Wait()
+			for _, hit := range hits {
+				if hit != nil {
+					out = append(out, *hit)
 				}
 			}
 		}
