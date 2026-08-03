@@ -218,7 +218,7 @@ func (h *Handler) HandleListInvites(w http.ResponseWriter, r *http.Request) {
 				RowID:             row.ID,
 				Token:             row.Token,
 				InvitedEmailPhone: row.InvitedEmailPhone,
-				RoleToAssign:      row.RoleToAssign,
+				RoleToAssign:      normalizeRole(row.RoleToAssign),
 				ExpiresAt:         row.ExpiresAt,
 				AcceptedAt:        nil,
 			})
@@ -229,55 +229,66 @@ func (h *Handler) HandleListInvites(w http.ResponseWriter, r *http.Request) {
 	// NON-NUMERIC path param → the JOIN-WITH-CODE validate call: the app passes a bare invite
 	// TOKEN with no group, so resolve it by scanning every active group's invitation rows and
 	// return the matching row WITH its group_id (the app then previews that group + associates).
-	out := make([]inviteRowWithGroupDto, 0, 1)
+	//
+	// WIRE SHAPE: the app's InvitationApiImpl.validateInviteToken deserializes the body as a SINGLE
+	// InvitationRowDto object (response.body<InvitationRowDto>()), NOT an array — returning a JSON
+	// array here fails deserialization (NoTransformationFoundException → NetworkError.SERIALIZATION)
+	// which the app surfaces as "No internet connection". So emit exactly one object on a hit, and a
+	// real 404 on a miss (the app maps 404 → NetworkError.NOT_FOUND → a clean "invite not found",
+	// never the misleading connection error).
 	raw, err := h.Fineract.DoRequest("GET", "groups", nil, nil)
-	if err == nil {
-		var groups []fnGroup
-		if json.Unmarshal(raw, &groups) == nil {
-			active := make([]fnGroup, 0, len(groups))
-			for _, g := range groups {
-				if g.Active {
-					active = append(active, g)
-				}
-			}
-			// Scan every group's invitation rows CONCURRENTLY — a serial scan over all groups was
-			// ~1.3s/group and blew past the app's request timeout (surfacing as "no connection").
-			// Each goroutine writes only its own slot; the token is unique so at most one matches.
-			hits := make([]*inviteRowWithGroupDto, len(active))
-			var wg sync.WaitGroup
-			for i, g := range active {
-				wg.Add(1)
-				go func(i int, gid int64) {
-					defer wg.Done()
-					rows, rerr := h.fetchInvitationRows(gid)
-					if rerr != nil {
-						return
-					}
-					for _, row := range rows {
-						if strings.EqualFold(strings.TrimSpace(row.Token), param) {
-							hits[i] = &inviteRowWithGroupDto{
-								Token:             row.Token,
-								GroupID:           gid,
-								InviterClientID:   row.InviterClientID,
-								InvitedEmailPhone: row.InvitedEmailPhone,
-								RoleToAssign:      row.RoleToAssign,
-								ExpiresAt:         row.ExpiresAt,
-								AcceptedAt:        row.AcceptedAt,
-							}
-							return
-						}
-					}
-				}(i, g.ID)
-			}
-			wg.Wait()
-			for _, hit := range hits {
-				if hit != nil {
-					out = append(out, *hit)
-				}
-			}
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", "read groups: "+err.Error())
+		return
+	}
+	var groups []fnGroup
+	if json.Unmarshal(raw, &groups) != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", "decode groups")
+		return
+	}
+	active := make([]fnGroup, 0, len(groups))
+	for _, g := range groups {
+		if g.Active {
+			active = append(active, g)
 		}
 	}
-	_ = json.NewEncoder(w).Encode(out)
+	// Scan every group's invitation rows CONCURRENTLY — a serial scan over all groups was
+	// ~1.3s/group and blew past the app's request timeout (surfacing as "no connection").
+	// Each goroutine writes only its own slot; the token is unique so at most one matches.
+	hits := make([]*inviteRowWithGroupDto, len(active))
+	var wg sync.WaitGroup
+	for i, g := range active {
+		wg.Add(1)
+		go func(i int, gid int64) {
+			defer wg.Done()
+			rows, rerr := h.fetchInvitationRows(gid)
+			if rerr != nil {
+				return
+			}
+			for _, row := range rows {
+				if strings.EqualFold(strings.TrimSpace(row.Token), param) {
+					hits[i] = &inviteRowWithGroupDto{
+						Token:             row.Token,
+						GroupID:           gid,
+						InviterClientID:   row.InviterClientID,
+						InvitedEmailPhone: row.InvitedEmailPhone,
+						RoleToAssign:      normalizeRole(row.RoleToAssign),
+						ExpiresAt:         row.ExpiresAt,
+						AcceptedAt:        row.AcceptedAt,
+					}
+					return
+				}
+			}
+		}(i, g.ID)
+	}
+	wg.Wait()
+	for _, hit := range hits {
+		if hit != nil {
+			_ = json.NewEncoder(w).Encode(*hit) // single object — matches InvitationRowDto
+			return
+		}
+	}
+	writeErr(w, http.StatusNotFound, "not_found", "no invitation found for code "+param)
 }
 
 // HandleRevokeInvite (COMP-DT-005) deletes a pending invite row by id and returns
@@ -377,6 +388,20 @@ func inviteToken(groupID, seq int64) string {
 		n /= int64(len(inviteAlphabet))
 	}
 	return string(b)
+}
+
+// normalizeRole upper-cases the stored role_to_assign so it matches the app's
+// GroupRoleDto @SerialName values (ORGANIZER/MEMBER/TREASURER/SECRETARY, all
+// uppercase). Invites are written with a lowercase "member" default, but the app
+// coerces any non-matching wire value to UNKNOWN — which would drop the invitee's
+// role on association. Uppercasing round-trips "member"->"MEMBER" cleanly; an
+// empty/blank role falls back to MEMBER (least privilege, the invite default).
+func normalizeRole(role string) string {
+	r := strings.ToUpper(strings.TrimSpace(role))
+	if r == "" {
+		return "MEMBER"
+	}
+	return r
 }
 
 // inviteLinkFor builds the shareable deep-link the app surfaces on the success

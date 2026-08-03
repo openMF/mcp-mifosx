@@ -30,6 +30,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // registerMemberDashboardRoutes wires the COMP-MEMBERDASH endpoint. Called from RegisterRoutes.
@@ -82,41 +83,108 @@ type MemberDashboardResponseDto struct {
 func (h *Handler) HandleMemberDashboard(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
 
-	// Resolve the selected group: the query param if valid, else the first active group.
-	groups, err := h.activeGroups()
+	allGroups, err := h.activeGroups()
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
 	}
-	if len(groups) == 0 {
+	if len(allGroups) == 0 {
 		writeErr(w, http.StatusNotFound, "not_found", "no active groups")
 		return
 	}
-	selectedID := selectGroupID(r.URL.Query().Get("selectedGroupId"), groups)
 
-	_, members, err := h.aggregateGroup(selectedID)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
+	// DATA ISOLATION: scope the dashboard to the AUTHENTICATED caller. A self-service member sees
+	// ONLY their own groups + their own identity/savings; an admin/staff caller (no linked client)
+	// keeps the unscoped all-groups back-office view. Without this, the dashboard leaked the first
+	// group's first member (e.g. "Alice") and ALL groups to EVERY logged-in user — the same
+	// isolation resolveGroups/HandleMe already enforce, previously missing here.
+	fa := h.callerFromRequest(r)
+	var callerClients map[int64]bool
+	if fa != nil {
+		callerClients = h.userClientIDs(fa)
+	}
+
+	// Probe each group's client members concurrently (light clientMembers read) to isolate the
+	// caller's groups. Serial probing made this the slowest post-login screen; fan out instead.
+	type probeResult struct {
+		g       fnGroup
+		clients []centerClient
+		mine    bool
+	}
+	probes := make([]probeResult, len(allGroups))
+	var wg sync.WaitGroup
+	for i, g := range allGroups {
+		wg.Add(1)
+		go func(i int, g fnGroup) {
+			defer wg.Done()
+			clients, e := h.groupClients(g.ID)
+			if e != nil {
+				return
+			}
+			mine := callerClients == nil // admin/staff -> all groups in scope (back-office)
+			for _, c := range clients {
+				if callerClients != nil && callerClients[c.ID] {
+					mine = true
+					break
+				}
+			}
+			probes[i] = probeResult{g: g, clients: clients, mine: mine}
+		}(i, g)
+	}
+	wg.Wait()
+
+	myGroupsFn := make([]fnGroup, 0, len(allGroups))
+	clientsByGroup := make(map[int64][]centerClient, len(allGroups))
+	for _, p := range probes {
+		if !p.mine || p.g.ID == 0 {
+			continue
+		}
+		myGroupsFn = append(myGroupsFn, p.g)
+		clientsByGroup[p.g.ID] = p.clients
+	}
+
+	// Caller belongs to no group -> a valid EMPTY dashboard (never another member's data).
+	if len(myGroupsFn) == 0 {
+		_ = json.NewEncoder(w).Encode(MemberDashboardResponseDto{
+			MemberName:         h.resolveDisplayName(fa),
+			MyGroups:           []GroupSummaryDto{},
+			PoolModel:          defaultVSLAConfig().PoolModel,
+			RecentTransactions: []SavingsTransactionDto{},
+		})
 		return
 	}
-	// A freshly-created, member-less group (or the default groups[0] fallback
-	// landing on one) must NOT brick the member dashboard. When the resolved
-	// group has no members, fall back to the first active group that DOES —
-	// so the dashboard always renders real data instead of a 404.
-	if len(members) == 0 {
-		for _, g := range groups {
-			if _, m, e := h.aggregateGroup(g.ID); e == nil && len(m) > 0 {
-				selectedID = g.ID
-				members = m
+
+	selectedID := selectGroupID(r.URL.Query().Get("selectedGroupId"), myGroupsFn)
+	clients := clientsByGroup[selectedID]
+
+	// The dashboard identity is the CALLER (their client + display name), not the first group
+	// member. Resolve their member row in the selected group; fall back to the resolved login
+	// display name, then to a representative member for the admin/back-office view.
+	member := memberRef{Name: h.resolveDisplayName(fa)}
+	if callerClients != nil {
+		for _, c := range clients {
+			if callerClients[c.ID] {
+				member.ID = c.ID
+				if member.Name == "" {
+					member.Name = c.Name
+				}
 				break
 			}
 		}
 	}
-	if len(members) == 0 {
-		writeErr(w, http.StatusNotFound, "not_found", "no active group has members")
-		return
+	if member.ID == 0 && callerClients == nil && len(clients) > 0 {
+		rep := clients[0] // admin/back-office view -> representative member for the KPI figures
+		member.ID = rep.ID
+		if member.Name == "" {
+			member.Name = rep.Name
+		}
 	}
-	member := defaultDashboardMember(members)
+
+	// Member refs for the selected group's loan aggregation (memberRef{id,name}).
+	members := make([]memberRef, 0, len(clients))
+	for _, c := range clients {
+		members = append(members, memberRef{ID: c.ID, Name: c.Name})
+	}
 
 	total, savingsIDs, err := h.aggregateSavings(selectedID)
 	if err != nil {
@@ -157,9 +225,9 @@ func (h *Handler) HandleMemberDashboard(w http.ResponseWriter, r *http.Request) 
 
 	// Build the group-summary chips. poolModel is ACCUMULATING (defaultVSLAConfig.PoolModel).
 	poolModel := defaultVSLAConfig().PoolModel
-	myGroups := make([]GroupSummaryDto, 0, len(groups))
+	myGroups := make([]GroupSummaryDto, 0, len(myGroupsFn))
 	var selected GroupSummaryDto
-	for _, g := range groups {
+	for _, g := range myGroupsFn {
 		gs := GroupSummaryDto{GroupID: strconv.FormatInt(g.ID, 10), Name: g.Name, PoolModel: poolModel}
 		myGroups = append(myGroups, gs)
 		if g.ID == selectedID {

@@ -74,7 +74,14 @@ type GroupInstanceConfigDto struct {
 	FineAmount        float64 `json:"fine_amount"`
 }
 
-// GroupDetailDto == GET /companion/groups/{groupId}.
+// GroupDetailDto == GET /companion/groups/{groupId}. This one endpoint backs TWO app
+// consumers with different DTOs (both parsed with ignoreUnknownKeys, so one superset
+// body satisfies both): GroupDashboardApiImpl.getGroupIdentity reads the camelCase
+// detail fields (id/name/cycleNumber/typeConfig...), and InvitationApiImpl.getGroupPreview
+// (join-with-code) reads GroupPreviewDto's REQUIRED fields (groupId/groupName/organizerName/
+// memberCount/officeId + optional groupType/roleToAssign). The GroupPreview* fields below are
+// the join-preview superset — omitting any REQUIRED one made the invitee's preview fail
+// deserialization (SerializationException → the app's misleading "No internet connection").
 type GroupDetailDto struct {
 	ID                string                 `json:"id"`
 	FineractCenterID  int64                  `json:"fineractCenterId"`
@@ -86,6 +93,14 @@ type GroupDetailDto struct {
 	OverdueLoansCount int                    `json:"overdueLoansCount"`
 	Status            string                 `json:"status"`
 	TypeConfig        GroupInstanceConfigDto `json:"typeConfig"`
+
+	// GroupPreviewDto superset (join-with-code invitee preview) — same entity, second consumer.
+	GroupID        int64  `json:"groupId"`
+	GroupName      string `json:"groupName"`
+	GroupType      string `json:"groupType"`
+	OrganizerName  string `json:"organizerName"`
+	OfficeID       int64  `json:"officeId"`
+	RoleToAssign   string `json:"roleToAssign"`
 }
 
 // ViewerRoleInfoDto == GET /companion/groups/{groupId}/my-role.
@@ -398,6 +413,14 @@ func (h *Handler) aggregateGroup(groupID int64) (GroupDetailDto, []memberRef, er
 		OverdueLoansCount: overdue,
 		Status:            statusValue(g.Status),
 		TypeConfig:        defaultVSLAConfig(),
+
+		// GroupPreviewDto superset — join-with-code invitee preview (see GroupDetailDto kdoc).
+		GroupID:       g.ID,
+		GroupName:     g.Name,
+		GroupType:     "VSLA",             // matches GroupTypeSlugDto.VSLA (default seed type)
+		OrganizerName: "Group Organizer",  // mifos-bank-2 exposes no per-group staff name yet
+		OfficeID:      g.OfficeID,
+		RoleToAssign:  "MEMBER",           // invitees join as members (GroupRoleDto.MEMBER)
 	}
 	_ = activeLoans
 	return detail, members, nil

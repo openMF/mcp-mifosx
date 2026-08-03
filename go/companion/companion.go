@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/openMF/mcp-mifosx/go/adapter"
@@ -50,6 +51,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerGroupCreateRoutes(mux)
 	// COMP-DT-002/003/005: member-INVITE write facade (see member_invite.go).
 	h.registerMemberInviteRoutes(mux)
+	h.registerAssociateRoutes(mux)
 	h.registerOrganizerRoutes(mux)
 
 	// COMP-MEMBERLIST / COMP-SAVINGS / COMP-MEMBERDASH / COMP-LOANLIST: group-scoped read
@@ -331,36 +333,64 @@ func (h *Handler) resolveGroups(fa *fineractAuthResponse) []GroupMembership {
 		clientIDs = ids
 		scopedRole = "MEMBER" // a client-member is a MEMBER unless a group role says otherwise
 	}
-	for _, g := range groups {
-		if !g.Active {
-			continue
-		}
-		role := "ORGANIZER"
-		if clientIDs != nil {
-			members, mErr := h.groupClients(g.ID)
-			if mErr != nil {
+
+	// Admin/staff (no linked client) → all active groups as ORGANIZER, no per-group membership
+	// probe needed (the cheap path).
+	if clientIDs == nil {
+		for _, g := range groups {
+			if !g.Active {
 				continue
 			}
-			isMember := false
+			out = append(out, GroupMembership{
+				GroupID:   strconv.FormatInt(g.ID, 10),
+				GroupName: g.Name,
+				Role:      "ORGANIZER",
+				JoinedAt:  fmtFineractInstant(g.ActivationDate),
+			})
+		}
+		return out
+	}
+
+	// Self-service member: probe each active group's client list to isolate the user's groups.
+	// These probes are independent Fineract reads (~0.6s each) — running them SERIALLY made login
+	// the slowest screen (~6s for ~10 groups). Fan them out concurrently (own result slot per
+	// group; assemble in group order afterward) so login costs ~one probe's latency.
+	active := make([]fnGroup, 0, len(groups))
+	for _, g := range groups {
+		if g.Active {
+			active = append(active, g)
+		}
+	}
+	memberships := make([]*GroupMembership, len(active))
+	var wg sync.WaitGroup
+	for i, g := range active {
+		wg.Add(1)
+		go func(i int, g fnGroup) {
+			defer wg.Done()
+			members, mErr := h.groupClients(g.ID)
+			if mErr != nil {
+				return
+			}
 			for _, m := range members {
 				if clientIDs[m.ID] {
-					isMember = true
-					break
+					memberships[i] = &GroupMembership{
+						GroupID:   strconv.FormatInt(g.ID, 10),
+						GroupName: g.Name,
+						Role:      scopedRole,
+						// The app parses joinedAt with kotlinx Instant.parse (LoginSignupMappers.kt:52),
+						// which requires a full ISO-8601 instant — a date-only string crashes it.
+						JoinedAt: fmtFineractInstant(g.ActivationDate),
+					}
+					return
 				}
 			}
-			if !isMember {
-				continue // not this user's group — isolate it out
-			}
-			role = scopedRole
+		}(i, g)
+	}
+	wg.Wait()
+	for _, m := range memberships {
+		if m != nil {
+			out = append(out, *m)
 		}
-		out = append(out, GroupMembership{
-			GroupID:   strconv.FormatInt(g.ID, 10),
-			GroupName: g.Name,
-			Role:      role,
-			// The app parses joinedAt with kotlinx Instant.parse (LoginSignupMappers.kt:52),
-			// which requires a full ISO-8601 instant — a date-only string crashes it.
-			JoinedAt: fmtFineractInstant(g.ActivationDate),
-		})
 	}
 	return out
 }
