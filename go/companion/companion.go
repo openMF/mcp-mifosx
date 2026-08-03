@@ -278,7 +278,44 @@ func (h *Handler) fineractPost(endpoint string, body interface{}) (int, []byte, 
 // administers via the companion). Fail-soft: any upstream error returns an empty
 // (never nil) slice so login still succeeds → the app's ZeroGroups branch. This is
 // the documented hook for real per-user resolution once member linkage lands.
-func (h *Handler) resolveGroups(_ *fineractAuthResponse) []GroupMembership {
+// userClientIDs returns the Fineract client id(s) that belong to the logged-in person, resolved
+// via the client's externalId (== the account email, set at self-registration). Admin/staff
+// users (username is not an email — e.g. the seeded `mifos` organizer) have no matching client
+// and get nil, which grants them the unscoped all-groups view in resolveGroups.
+func (h *Handler) userClientIDs(fa *fineractAuthResponse) map[int64]bool {
+	if fa == nil || !strings.Contains(fa.Username, "@") {
+		return nil
+	}
+	raw, err := h.Fineract.DoRequest("GET", "clients", nil, map[string]string{"externalId": fa.Username})
+	if err != nil {
+		return nil
+	}
+	set := make(map[int64]bool)
+	var paged struct {
+		PageItems []struct {
+			ID         int64  `json:"id"`
+			ExternalID string `json:"externalId"`
+		} `json:"pageItems"`
+	}
+	if json.Unmarshal(raw, &paged) == nil {
+		for _, c := range paged.PageItems {
+			// Guard against a Fineract build that ignores the externalId filter and returns all.
+			if c.ExternalID == fa.Username {
+				set[c.ID] = true
+			}
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return set
+}
+
+// resolveGroups returns the caller's group memberships with per-user data isolation:
+//   - a self-service user (has a linked client) sees ONLY groups their client belongs to;
+//   - an admin/staff user (no linked client, e.g. the seeded `mifos` organizer) sees all
+//     active groups (the organizer/back-office view).
+func (h *Handler) resolveGroups(fa *fineractAuthResponse) []GroupMembership {
 	out := []GroupMembership{}
 	raw, err := h.Fineract.DoRequest("GET", "groups", nil, nil)
 	if err != nil {
@@ -288,14 +325,38 @@ func (h *Handler) resolveGroups(_ *fineractAuthResponse) []GroupMembership {
 	if err := json.Unmarshal(raw, &groups); err != nil {
 		return out
 	}
+	var clientIDs map[int64]bool
+	scopedRole := "ORGANIZER"
+	if ids := h.userClientIDs(fa); len(ids) > 0 {
+		clientIDs = ids
+		scopedRole = "MEMBER" // a client-member is a MEMBER unless a group role says otherwise
+	}
 	for _, g := range groups {
 		if !g.Active {
 			continue
 		}
+		role := "ORGANIZER"
+		if clientIDs != nil {
+			members, mErr := h.groupClients(g.ID)
+			if mErr != nil {
+				continue
+			}
+			isMember := false
+			for _, m := range members {
+				if clientIDs[m.ID] {
+					isMember = true
+					break
+				}
+			}
+			if !isMember {
+				continue // not this user's group — isolate it out
+			}
+			role = scopedRole
+		}
 		out = append(out, GroupMembership{
 			GroupID:   strconv.FormatInt(g.ID, 10),
 			GroupName: g.Name,
-			Role:      "ORGANIZER",
+			Role:      role,
 			// The app parses joinedAt with kotlinx Instant.parse (LoginSignupMappers.kt:52),
 			// which requires a full ISO-8601 instant — a date-only string crashes it.
 			JoinedAt: fmtFineractInstant(g.ActivationDate),

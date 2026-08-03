@@ -106,17 +106,29 @@ func (h *Handler) HandleSelfRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Create the real client (active, PERSON).
-	if status, raw, err := h.provisionClient(first, last); err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", "create client: "+err.Error())
-		return
-	} else if status < 200 || status >= 300 {
-		writeUpstreamFailure(w, status, raw)
+	// 1. Create the real client (active, PERSON), tagged with the email as externalId.
+	cStatus, cRaw, cErr := h.provisionClient(first, last, emailPhone)
+	if cErr != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", "create client: "+cErr.Error())
 		return
 	}
+	if cStatus < 200 || cStatus >= 300 {
+		writeUpstreamFailure(w, cStatus, cRaw)
+		return
+	}
+	var cResp struct {
+		ClientID   int64 `json:"clientId"`
+		ResourceID int64 `json:"resourceId"`
+	}
+	_ = json.Unmarshal(cRaw, &cResp)
+	clientID := cResp.ClientID
+	if clientID == 0 {
+		clientID = cResp.ResourceID
+	}
 
-	// 2. Create the real login user (username == emailPhone).
-	status, raw, err := h.provisionUser(emailPhone, first, last, req.Password, roleID)
+	// 2. Create the real login user (username == emailPhone), LINKED to the client so the
+	//    user's real group memberships can be resolved by client scoping (data isolation).
+	status, raw, err := h.provisionUser(emailPhone, first, last, req.Password, roleID, clientID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", "create user: "+err.Error())
 		return
@@ -197,7 +209,7 @@ func (h *Handler) resolveSelfServiceRoleID() (int, error) {
 }
 
 // provisionClient creates a real active PERSON client in office 1.
-func (h *Handler) provisionClient(first, last string) (int, []byte, error) {
+func (h *Handler) provisionClient(first, last, externalID string) (int, []byte, error) {
 	// Backdate the activation a few days: Fineract rejects an activationDate after its own
 	// business date, and mifos-bank-2's server clock runs behind the host (timezone/clock skew),
 	// so "today" is seen as the future ("Activation date cannot be in the future"). A small
@@ -213,6 +225,11 @@ func (h *Handler) provisionClient(first, last string) (int, []byte, error) {
 		"locale":         "en",
 		"legalFormId":    1, // PERSON
 	}
+	// Tag the client with the account email as its externalId so the login user can be mapped
+	// back to this client (data isolation) without making the login a self-service user.
+	if externalID != "" {
+		body["externalId"] = externalID
+	}
 	return h.fineractAdminPost("/clients", body)
 }
 
@@ -220,7 +237,12 @@ func (h *Handler) provisionClient(first, last string) (int, []byte, error) {
 // Fineract fork isSelfServiceUser/clientId are unsupported, so we provision a
 // plain office-1 user carrying the self-service role — it authenticates via
 // POST /authentication, which is all the app's login path consumes.
-func (h *Handler) provisionUser(username, first, last, password string, roleID int) (int, []byte, error) {
+func (h *Handler) provisionUser(username, first, last, password string, roleID int, clientID int64) (int, []byte, error) {
+	// NOTE: the login user is intentionally a REGULAR (non-self-service) user so it keeps
+	// authenticating via POST /authentication (self-service users are forced onto
+	// /self/authentication, which the companion does not use). The user↔client link for data
+	// isolation is instead carried on the CLIENT's externalId (== the email), resolved at login.
+	_ = clientID
 	body := map[string]interface{}{
 		"username":            username,
 		"firstname":           first,
