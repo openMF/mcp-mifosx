@@ -613,6 +613,9 @@ func (h *Handler) HandlePreviousMeetingRecord(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	// App forwards groupId as centerId (documented nav-param drift) — map it to the real
+	// center id so the previous-meeting record is read from the correct dt_meeting_record rows.
+	centerID = h.resolveMeetingCenter(centerID)
 	records, err := h.readMeetingRecords(centerID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
@@ -679,6 +682,8 @@ func (h *Handler) HandleGroupCorpusRead(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	// App forwards groupId as centerId (documented nav-param drift) — map it to the real center id.
+	centerID = h.resolveMeetingCenter(centerID)
 	rows, err := h.readCorpusRows(centerID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
@@ -1067,29 +1072,42 @@ func (h *Handler) centerName(centerID int64) (string, error) {
 // deduped list. This is the real Fineract member linkage (a Fineract center contains groups,
 // groups contain clients — there is no direct center<->client membership).
 func (h *Handler) resolveCenterClients(centerID int64) ([]centerClient, error) {
-	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("centers/%d", centerID), nil, map[string]string{"associations": "groupMembers"})
-	if err != nil {
-		return nil, fmt.Errorf("read center groups: %s", strings.TrimSpace(string(nonEmpty(raw))))
-	}
-	var c struct {
-		GroupMembers []struct {
-			ID int64 `json:"id"`
-		} `json:"groupMembers"`
-	}
-	if err := json.Unmarshal(raw, &c); err != nil {
-		return nil, fmt.Errorf("decode center groups: %w", err)
-	}
 	seen := make(map[int64]bool)
 	out := make([]centerClient, 0)
-	for _, g := range c.GroupMembers {
-		clients, gerr := h.groupClients(g.ID)
-		if gerr != nil {
-			continue
+	// Primary path: walk the center's group members → each group's clients.
+	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("centers/%d", centerID), nil, map[string]string{"associations": "groupMembers"})
+	if err == nil {
+		var c struct {
+			GroupMembers []struct {
+				ID int64 `json:"id"`
+			} `json:"groupMembers"`
 		}
-		for _, m := range clients {
-			if !seen[m.ID] {
-				seen[m.ID] = true
-				out = append(out, m)
+		if jerr := json.Unmarshal(raw, &c); jerr == nil {
+			for _, g := range c.GroupMembers {
+				clients, gerr := h.groupClients(g.ID)
+				if gerr != nil {
+					continue
+				}
+				for _, m := range clients {
+					if !seen[m.ID] {
+						seen[m.ID] = true
+						out = append(out, m)
+					}
+				}
+			}
+		}
+	}
+	// Fallback: the app forwards a groupId where a centerId is expected (documented nav-param
+	// drift — group-dashboard has no centerId, so it keys meeting-calendar/-conduct by groupId,
+	// and the meeting endpoints already tolerate that). When the center walk yields nothing,
+	// resolve the id AS a group directly so the attendance roster is never empty for a real group.
+	if len(out) == 0 {
+		if clients, gerr := h.groupClients(centerID); gerr == nil {
+			for _, m := range clients {
+				if !seen[m.ID] {
+					seen[m.ID] = true
+					out = append(out, m)
+				}
 			}
 		}
 	}

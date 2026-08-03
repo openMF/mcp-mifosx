@@ -38,14 +38,20 @@ func New() *FineractClient {
 	username := os.Getenv("MIFOSX_USERNAME")
 	password := os.Getenv("MIFOSX_PASSWORD")
 
+	// Primary instance is mifos-bank-2 everywhere (user directive 2026-08-01): the companion
+	// defaults to the live mifos-bank-2 Fineract with no env needed. MIFOSX_* env still overrides
+	// (e.g. sandbox tenant `default` as the fallback instance).
 	if baseURL == "" {
-		baseURL = "https://localhost:8443/fineract-provider/api/v1"
+		baseURL = "https://mifos-bank-2.mifos.community/fineract-provider/api/v1"
 	}
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = "mifos-bank-2"
 	}
 	if username == "" {
 		username = "mifos"
+	}
+	if password == "" {
+		password = "password"
 	}
 
 	return &FineractClient{
