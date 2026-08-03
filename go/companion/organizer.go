@@ -66,8 +66,20 @@ func (h *Handler) HandleOrganizerDashboard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Personalize the greeting from the real logged-in user (bearer token), e.g.
+	// "Welcome back, Rajan". Falls back to the generic "Organizer" only when the
+	// caller can't be resolved — personalization is best-effort, never blocking.
+	organizerName := "Organizer"
+	if fa := h.callerFromRequest(r); fa != nil {
+		if display := h.resolveDisplayName(fa); display != "" {
+			if first, _ := splitName(display); first != "" {
+				organizerName = first
+			}
+		}
+	}
+
 	summary := OrganizerDashboardSummaryDto{
-		OrganizerName:  "Organizer",
+		OrganizerName:  organizerName,
 		TodaySchedule:  []OrganizerScheduledMeeting{},
 		RecentActivity: []OrganizerActivityItem{},
 	}

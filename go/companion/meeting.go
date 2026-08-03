@@ -740,7 +740,11 @@ func (h *Handler) HandleActiveLoans(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleLoanVotes (meetingconduct.getLoanVotes) returns the single dt_loan_vote tally for a
-// loan. 404 when no votes cast (the app's zero-tally branch).
+// loan. "No votes cast yet" is a NORMAL state, NOT an error: a loan simply hasn't been voted on
+// until a meeting records votes. The app's getLoanVotes uses the generic requestAsNetworkResult
+// wrapper (no 404 branch), so a 404 would surface a spurious NetworkResult.Error mid
+// meeting-conduct. LoanVoteRecordDto defaults every field to 0, so we return a 200 ZERO-TALLY
+// for the empty case — unambiguous "0 votes so far", never a soft-fail 404.
 func (h *Handler) HandleLoanVotes(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
 	loanID := strings.TrimSpace(r.PathValue("loanId"))
@@ -748,14 +752,16 @@ func (h *Handler) HandleLoanVotes(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid loanId")
 		return
 	}
+	zeroTally := loanVoteRecordDto{LoanID: loanID} // VotesFor/Against/Abstain default to 0
 	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("datatables/%s/%s", loanVoteTable, loanID), nil, nil)
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "no loan votes")
+		// datatable empty / no row for this loan (Fineract 404) — a zero tally, not an error.
+		_ = json.NewEncoder(w).Encode(zeroTally)
 		return
 	}
 	var rows []fnLoanVoteRow
 	if json.Unmarshal(raw, &rows) != nil || len(rows) == 0 {
-		writeErr(w, http.StatusNotFound, "not_found", "no loan votes")
+		_ = json.NewEncoder(w).Encode(zeroTally)
 		return
 	}
 	v := rows[0]

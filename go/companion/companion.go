@@ -164,63 +164,9 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// HandleSelfRegister forwards a registration to Fineract's self-service API.
-// mifos-bank-2 HAS self-service registration enabled, but it (a) requires a
-// pre-existing client whose accountNumber matches, and (b) gates activation
-// behind an email/SMS confirmation token — so no usable session can be issued
-// synchronously. We therefore NEVER fake an AuthResponse: on a Fineract-accepted
-// submission we return 202-intent as a 501 (confirmation required); on a
-// Fineract rejection we mirror the real upstream error.
-func (h *Handler) HandleSelfRegister(w http.ResponseWriter, r *http.Request) {
-	setJSON(w)
-	if r.Method != http.MethodPost {
-		writeErr(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
-		return
-	}
-	var req selfRegisterRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
-		return
-	}
-	if strings.TrimSpace(req.EmailPhone) == "" || strings.TrimSpace(req.Name) == "" || req.Password == "" {
-		writeErr(w, http.StatusBadRequest, "bad_request", "name, emailPhone and password are required")
-		return
-	}
-
-	emailMode := strings.Contains(req.EmailPhone, "@")
-	first, last := splitName(req.Name)
-	payload := map[string]string{
-		"firstName": first,
-		"lastName":  last,
-		"username":  req.EmailPhone,
-		"password":  req.Password,
-	}
-	if emailMode {
-		payload["authenticationMode"] = "email"
-		payload["email"] = req.EmailPhone
-	} else {
-		payload["authenticationMode"] = "mobile"
-		payload["mobileNumber"] = req.EmailPhone
-	}
-
-	status, raw, err := h.fineractPost("/self/registration", payload)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
-		return
-	}
-	if status >= 200 && status < 300 {
-		// Submission accepted but account is not yet usable (confirmation step).
-		w.WriteHeader(http.StatusNotImplemented)
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"error":   "self_registration_confirmation_required",
-			"message": "Fineract self-service registration was submitted but requires email/SMS confirmation before a session can be issued. No sessionToken can be returned synchronously.",
-			"fineract": json.RawMessage(nonEmpty(raw)),
-		})
-		return
-	}
-	// Mirror the real Fineract rejection (missing client, weak password, etc.).
-	writeUpstreamFailure(w, status, raw)
-}
+// HandleSelfRegister lives in self_register.go — it provisions a REAL Fineract
+// client + login user via the service credential so a brand-new CommonPurse
+// signup yields an immediately-usable session (same AuthResponse as login).
 
 // HandleMe resolves the caller from a bearer token. Fineract's
 // base64EncodedAuthenticationKey IS base64(username:password), so we decode it
@@ -248,7 +194,7 @@ func (h *Handler) HandleMe(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewEncoder(w).Encode(meResponse{
 		UserID:           fmt.Sprintf("%d", fa.UserID),
-		Name:             fa.Username,
+		Name:             h.resolveDisplayName(fa), // real "Firstname Lastname", not the raw username/phone
 		EmailPhone:       fa.Username,
 		GroupMemberships: h.resolveGroups(fa),
 	})
@@ -331,6 +277,50 @@ func (h *Handler) resolveGroups(_ *fineractAuthResponse) []GroupMembership {
 		})
 	}
 	return out
+}
+
+// callerFromRequest resolves the authenticated caller from the Authorization
+// bearer token (best-effort; nil when the header is absent, malformed, or the
+// token no longer authenticates). Reuses the same base64(username:password)
+// session-token scheme as HandleMe, so any companion endpoint can identify the
+// real end-user behind the request without a new param.
+func (h *Handler) callerFromRequest(r *http.Request) *fineractAuthResponse {
+	token := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
+	if token == "" {
+		return nil
+	}
+	username, password, ok := decodeSessionToken(token)
+	if !ok {
+		return nil
+	}
+	fa, status, _, err := h.fineractAuthenticate(username, password)
+	if err != nil || status != http.StatusOK || fa == nil || !fa.Authenticated {
+		return nil
+	}
+	return fa
+}
+
+// resolveDisplayName looks up the caller's human display name ("Firstname
+// Lastname") from Fineract's GET /users/{id} (service credential), falling back
+// to the username when the lookup yields nothing. Best-effort and never errors:
+// personalization must never break a load. Empty string only when fa is nil.
+func (h *Handler) resolveDisplayName(fa *fineractAuthResponse) string {
+	if fa == nil {
+		return ""
+	}
+	if raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("users/%d", fa.UserID), nil, nil); err == nil {
+		var u struct {
+			Firstname string `json:"firstname"`
+			Lastname  string `json:"lastname"`
+		}
+		if json.Unmarshal(raw, &u) == nil {
+			name := strings.TrimSpace(strings.TrimSpace(u.Firstname) + " " + strings.TrimSpace(u.Lastname))
+			if name != "" {
+				return name
+			}
+		}
+	}
+	return fa.Username
 }
 
 // ---- helpers ----

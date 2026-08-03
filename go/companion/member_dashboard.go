@@ -99,8 +99,21 @@ func (h *Handler) HandleMemberDashboard(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
 	}
+	// A freshly-created, member-less group (or the default groups[0] fallback
+	// landing on one) must NOT brick the member dashboard. When the resolved
+	// group has no members, fall back to the first active group that DOES —
+	// so the dashboard always renders real data instead of a 404.
 	if len(members) == 0 {
-		writeErr(w, http.StatusNotFound, "not_found", "group has no members")
+		for _, g := range groups {
+			if _, m, e := h.aggregateGroup(g.ID); e == nil && len(m) > 0 {
+				selectedID = g.ID
+				members = m
+				break
+			}
+		}
+	}
+	if len(members) == 0 {
+		writeErr(w, http.StatusNotFound, "not_found", "no active group has members")
 		return
 	}
 	member := defaultDashboardMember(members)
