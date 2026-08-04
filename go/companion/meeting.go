@@ -988,11 +988,13 @@ func (h *Handler) HandleRescheduleCalendar(w http.ResponseWriter, r *http.Reques
 func (h *Handler) centerMeetingDates(centerID int64) ([][]int, error) {
 	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("centers/%d/calendars", centerID), nil, nil)
 	if err != nil {
-		return nil, fmt.Errorf("read calendars: %s", strings.TrimSpace(string(nonEmpty(raw))))
+		// No center / no calendar endpoint (a companion-created VSLA group has no parent center) —
+		// synthesize a default weekly schedule so the group still has conductable meetings.
+		return synthesizeWeeklyMeetingDates(), nil
 	}
 	var cals []fnCalendar
 	if err := json.Unmarshal(raw, &cals); err != nil {
-		return nil, fmt.Errorf("decode calendars: %w", err)
+		return synthesizeWeeklyMeetingDates(), nil
 	}
 	var chosen *fnCalendar
 	for i := range cals {
@@ -1004,10 +1006,28 @@ func (h *Handler) centerMeetingDates(centerID int64) ([][]int, error) {
 	if chosen == nil && len(cals) > 0 {
 		chosen = &cals[0]
 	}
-	if chosen == nil {
-		return [][]int{}, nil
+	// No calendar attached OR the calendar carries no recurring dates → fall back to the
+	// synthesized weekly schedule (VSLA groups created via the companion have neither).
+	if chosen == nil || len(chosen.RecurringDates) == 0 {
+		return synthesizeWeeklyMeetingDates(), nil
 	}
 	return chosen.RecurringDates, nil
+}
+
+// synthesizeWeeklyMeetingDates builds a default WEEKLY VSLA meeting schedule for groups that have
+// no Fineract meeting calendar attached (the companion's create-active-in-one-call VSLA groups).
+// It returns 8 weekly [year, month, day] dates spanning two weeks back (which render as MISSED or,
+// once conducted, COMPLETED) through six weeks ahead (UPCOMING) — so every active group always has
+// a conductable UPCOMING meeting on its calendar. Matches the WEEKLY cadence the group-dashboard
+// + organizer-dashboard already advertise.
+func synthesizeWeeklyMeetingDates() [][]int {
+	start := time.Now().AddDate(0, 0, -14) // two weeks ago → a couple of past slots + several upcoming
+	out := make([][]int, 0, 8)
+	for i := 0; i < 8; i++ {
+		d := start.AddDate(0, 0, i*7)
+		out = append(out, []int{d.Year(), int(d.Month()), d.Day()})
+	}
+	return out
 }
 
 // readMeetingRecords reads every dt_meeting_record row for the center. An empty/unprovisioned
