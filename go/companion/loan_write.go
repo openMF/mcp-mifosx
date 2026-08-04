@@ -55,6 +55,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const loansPath = "/loans"
@@ -179,10 +180,10 @@ func (h *Handler) HandleLoanTransaction(w http.ResponseWriter, r *http.Request) 
 	}
 	command := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("command")))
 	switch command {
-	case "repayment", "writeoff":
+	case "repayment", "writeoff", "disburse":
 		// supported
 	case "":
-		writeErr(w, http.StatusBadRequest, "bad_request", "command query param is required (repayment|writeoff)")
+		writeErr(w, http.StatusBadRequest, "bad_request", "command query param is required (repayment|writeoff|disburse)")
 		return
 	default:
 		writeErr(w, http.StatusBadRequest, "bad_request", "unsupported command: "+command)
@@ -196,6 +197,16 @@ func (h *Handler) HandleLoanTransaction(w http.ResponseWriter, r *http.Request) 
 	}
 	if body == nil {
 		body = map[string]interface{}{}
+	}
+
+	// disburse is the meeting-conduct loan-approval leg: the app posts it to the /transactions
+	// path with ?command=disburse, but in Fineract disburse (and its prerequisite approve) are
+	// LOAN commands on /loans/{id}, not transactions — and a member's loan-apply leaves the loan
+	// SUBMITTED (pending). So approve-then-disburse here so an approved application actually
+	// disburses the money to the member.
+	if command == "disburse" {
+		h.handleLoanDisburse(w, loanID, body)
+		return
 	}
 	// Fineract needs locale + dateFormat to parse the "dd MMMM yyyy" transactionDate. The app's
 	// DTOs force-encode these, but re-default defensively for any caller that omitted them.
@@ -218,6 +229,61 @@ func (h *Handler) HandleLoanTransaction(w http.ResponseWriter, r *http.Request) 
 	raw, err := h.Fineract.DoRequest("POST", fmt.Sprintf("loans/%d/transactions", loanID), body, map[string]string{"command": command})
 	if err != nil {
 		writeUpstreamLoanError(w, raw, command+" transaction", err)
+		return
+	}
+	writeLoanEnvelope(w, raw)
+}
+
+// handleLoanDisburse completes the meeting-conduct loan-approval leg: APPROVE the still-pending
+// loan (a member's loan-apply leaves it SUBMITTED) then DISBURSE it, both as real Fineract loan
+// commands on /loans/{id}. Dates are backdated a few days to clear mifos-bank-2's behind-the-host
+// business-date skew (approvedOnDate <= disbursementDate <= business date), same convention as
+// group-create / client-activation. The approve amount is the loan's own principal.
+func (h *Handler) handleLoanDisburse(w http.ResponseWriter, loanID int64, body map[string]interface{}) {
+	lraw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("loans/%d", loanID), nil, nil)
+	if err != nil {
+		writeUpstreamLoanError(w, lraw, "read loan", err)
+		return
+	}
+	var loan struct {
+		Principal float64 `json:"principal"`
+		Status    struct {
+			PendingApproval bool `json:"pendingApproval"`
+		} `json:"status"`
+	}
+	_ = json.Unmarshal(lraw, &loan)
+
+	amount := loan.Principal
+	if v, ok := body["transactionAmount"].(float64); ok && v > 0 {
+		amount = v
+	}
+	date := time.Now().AddDate(0, 0, -3).Format("02 January 2006") // backdated, dd MMMM yyyy
+
+	// 1. Approve the submitted loan (idempotent-ish: skip when already past pending-approval).
+	if loan.Status.PendingApproval {
+		appr := map[string]interface{}{
+			"approvedOnDate":           date,
+			"approvedLoanAmount":       amount,
+			"expectedDisbursementDate": date,
+			"locale":                   "en",
+			"dateFormat":               "dd MMMM yyyy",
+		}
+		if araw, aerr := h.Fineract.DoRequest("POST", fmt.Sprintf("loans/%d", loanID), appr, map[string]string{"command": "approve"}); aerr != nil {
+			writeUpstreamLoanError(w, araw, "approve loan", aerr)
+			return
+		}
+	}
+
+	// 2. Disburse to the member.
+	disb := map[string]interface{}{
+		"actualDisbursementDate": date,
+		"transactionAmount":      amount,
+		"locale":                 "en",
+		"dateFormat":             "dd MMMM yyyy",
+	}
+	raw, derr := h.Fineract.DoRequest("POST", fmt.Sprintf("loans/%d", loanID), disb, map[string]string{"command": "disburse"})
+	if derr != nil {
+		writeUpstreamLoanError(w, raw, "disburse loan", derr)
 		return
 	}
 	writeLoanEnvelope(w, raw)

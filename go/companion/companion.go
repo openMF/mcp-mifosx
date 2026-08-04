@@ -31,6 +31,9 @@ import (
 // would inject the service BasicAuth and mask a bad end-user password.
 type Handler struct {
 	Fineract *adapter.FineractClient
+	// selfMux is the companion's own router, retained so the offline-sync /batches drain can
+	// SELF-DISPATCH each queued write through the same mapping handlers that serve the live path.
+	selfMux *http.ServeMux
 }
 
 // New builds a companion Handler bound to the shared Fineract client.
@@ -53,6 +56,8 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerMemberInviteRoutes(mux)
 	h.registerAssociateRoutes(mux)
 	h.registerLoanProductRoutes(mux)
+	h.registerMemberAddRoutes(mux)
+	h.registerBatchRoutes(mux)
 	h.registerOrganizerRoutes(mux)
 
 	// COMP-MEMBERLIST / COMP-SAVINGS / COMP-MEMBERDASH / COMP-LOANLIST: group-scoped read
