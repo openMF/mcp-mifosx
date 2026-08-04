@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// COMP-MEMBER-ADD: the organizer-side "add member" orchestration route. The CommonPurse
+// COMP-MEMBER-ADD: the organizer-side "add member" orchestration route. The MifosSave
 // (mifos-x-group-banking) app's ONLINE member-add path runs a TWO-CALL client-side chain
 // (MemberAddRepositoryImpl.createMember): POST /clients -> read the new clientId -> POST
 // /datatables/dt_member_role/{clientId}. That chaining CANNOT be expressed as an offline

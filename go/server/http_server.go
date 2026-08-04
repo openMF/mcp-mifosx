@@ -51,7 +51,7 @@ func (s *MifosHTTPServer) Serve() error {
 		})
 	}
 
-	// COMP-AUTH companion facade (CommonPurse app login). Inherits CORS from the
+	// COMP-AUTH companion facade (MifosSave app login). Inherits CORS from the
 	// outer handler below since it registers on the same mux.
 	companion.New(s.McpServer.Registry.Fineract).RegisterRoutes(mux)
 

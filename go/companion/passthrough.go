@@ -4,7 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 package companion
 
-// Raw Fineract passthroughs the CommonPurse app calls at their bare paths (not
+// Raw Fineract passthroughs the MifosSave app calls at their bare paths (not
 // under /companion/…). The app's GroupCreateApi fetches offices via GET /offices
 // (list_all_offices) to populate the create-group wizard's Office dropdown; the
 // app's OfficeDto is {id,name,nameDecorated,externalId}, a subset of Fineract's

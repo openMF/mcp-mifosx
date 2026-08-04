@@ -5,7 +5,7 @@
 
 // COMP-MEMBERLIST: the member-list read facade. It reshapes the real Fineract group roster
 // (GET groups/{id}?associations=all + per-member clients/{id}/accounts) into the offset-paginated
-// contract the CommonPurse (mifos-x-group-banking) app's MemberApiImpl fans in:
+// contract the MifosSave (mifos-x-group-banking) app's MemberApiImpl fans in:
 //
 //	GET /groups/{groupId}/clients -> MemberPageDto   (the EXACT path + DTO the app calls)
 //

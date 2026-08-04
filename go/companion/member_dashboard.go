@@ -4,7 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // COMP-MEMBERDASH: the personal (member-scoped) dashboard read facade. It reshapes the real
-// Fineract group corpus + the member's loan into the single companion contract the CommonPurse
+// Fineract group corpus + the member's loan into the single companion contract the MifosSave
 // app's MemberDashboardApiImpl calls:
 //
 //	GET /companion/member/dashboard?selectedGroupId={id} -> MemberDashboardResponseDto

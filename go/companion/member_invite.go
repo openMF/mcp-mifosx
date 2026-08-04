@@ -4,7 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // COMP-DT-002 / COMP-DT-003 / COMP-DT-005: the organizer-side member-INVITE
-// write facade. The CommonPurse (mifos-x-group-banking) app's MemberInviteApiImpl
+// write facade. The MifosSave (mifos-x-group-banking) app's MemberInviteApiImpl
 // issues, lists, and revokes single-use invite tokens against the companion
 // invitations datatable:
 //

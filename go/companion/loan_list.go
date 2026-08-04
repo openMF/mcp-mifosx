@@ -5,7 +5,7 @@
 
 // COMP-LOANLIST: the loan-list read facade. It reshapes the real Fineract per-member loan accounts
 // (GET clients/{id}/accounts + loans/{id}?associations=repaymentSchedule) into the offset-paginated
-// contract the CommonPurse app's LoanApiImpl fans in:
+// contract the MifosSave app's LoanApiImpl fans in:
 //
 //	GET /groups/{groupId}/loans   -> LoanPageDto                 (the EXACT path + DTO the app calls)
 //	GET /clients/{clientId}/loans -> []LoanSummaryDto            (LoanApi.getClientLoans reuse, same row shape)

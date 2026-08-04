@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// Package companion is a thin REST facade the CommonPurse app talks to for
+// Package companion is a thin REST facade the MifosSave app talks to for
 // authentication. It sits IN FRONT of Fineract: it forwards the end-user's
 // credentials to Fineract's POST /authentication endpoint (rather than the
 // service credential the shared adapter.DoRequest forces) so a wrong password
@@ -62,7 +62,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerOrganizerRoutes(mux)
 
 	// COMP-MEMBERLIST / COMP-SAVINGS / COMP-MEMBERDASH / COMP-LOANLIST: group-scoped read
-	// facades the CommonPurse app fans in (see member_list.go / savings.go /
+	// facades the MifosSave app fans in (see member_list.go / savings.go /
 	// member_dashboard.go / loan_list.go).
 	h.registerMemberListRoutes(mux)
 	h.registerSavingsRoutes(mux)
@@ -177,7 +177,7 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 // HandleSelfRegister lives in self_register.go — it provisions a REAL Fineract
-// client + login user via the service credential so a brand-new CommonPurse
+// client + login user via the service credential so a brand-new MifosSave
 // signup yields an immediately-usable session (same AuthResponse as login).
 
 // HandleMe resolves the caller from a bearer token. Fineract's

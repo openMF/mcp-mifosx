@@ -5,7 +5,7 @@
 
 // COMP-GRP: the group-dashboard read facade. It reshapes a real Fineract group
 // (GET groups/{id}?associations=all + group/member accounts) into the nested
-// contract the CommonPurse (mifos-x-group-banking) app expects.
+// contract the MifosSave (mifos-x-group-banking) app expects.
 //
 // The app does NOT call a single "dashboard" endpoint — its GroupDashboardApiImpl
 // fans in FOUR sub-reads that each return one nested DTO:
@@ -636,7 +636,7 @@ func fmtFineractDate(parts []int) string {
 }
 
 // fmtFineractInstant renders a Fineract [y,m,d] date as a full ISO-8601 instant
-// (midnight UTC). The CommonPurse app parses membership joinedAt with kotlinx
+// (midnight UTC). The MifosSave app parses membership joinedAt with kotlinx
 // Instant.parse, which rejects a date-only string.
 func fmtFineractInstant(parts []int) string {
 	if len(parts) < 3 {

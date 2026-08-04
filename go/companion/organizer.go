@@ -4,7 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 package companion
 
-// Organizer-dashboard companion endpoint. The CommonPurse app's
+// Organizer-dashboard companion endpoint. The MifosSave app's
 // OrganizerDashboardApiImpl calls GET /companion/organizer/dashboard and expects
 // OrganizerDashboardSummaryDto (core/network/.../model/OrganizerDashboardDto.kt).
 // This aggregates the organizer's active groups on Fineract (same reads as

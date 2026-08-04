@@ -4,7 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 package companion
 
-// Group-type-config CATALOGUE endpoint. The CommonPurse group-type-picker calls
+// Group-type-config CATALOGUE endpoint. The MifosSave group-type-picker calls
 // GET /companion/datatables/group_type_config/{entityId} and expects a
 // List<GroupTypeConfigDto> (core/network/.../model/GroupTypeConfigDto.kt). This is
 // the app's own VSLA-archetype taxonomy (9 types) — a static catalogue, not

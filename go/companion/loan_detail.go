@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// COMP-LOANDETAIL: the loan-detail read facade. The CommonPurse
+// COMP-LOANDETAIL: the loan-detail read facade. The MifosSave
 // (mifos-x-group-banking) app's LoanDetailApiImpl calls a single composite read
 // at a bare Fineract path (its base URL points at THIS Go server):
 //

@@ -4,7 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 package companion
 
-// Share-out PREVIEW read/compute endpoint. The CommonPurse share-out-preview
+// Share-out PREVIEW read/compute endpoint. The MifosSave share-out-preview
 // screen calls GET /companion/groups/{groupId}/shareout/preview and expects a
 // ShareOutPreviewDto (core/network/.../model/ShareOutDto.kt) — the strategy-aware
 // distribution preview BEFORE the (destructive) execute. Non-destructive: reads

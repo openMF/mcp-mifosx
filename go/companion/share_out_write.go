@@ -4,7 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 // COMP-DIST-001 / COMP-DIST-002: the share-out / rotation-payout WRITE facade —
-// the DESTRUCTIVE year-end distribution. The CommonPurse (mifos-x-group-banking)
+// the DESTRUCTIVE year-end distribution. The MifosSave (mifos-x-group-banking)
 // app's ShareOutApiImpl POSTs two writes at bare companion paths (the app's base
 // URL points at THIS Go server, which serves only explicitly-registered routes —
 // there is no catch-all proxy):

@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// COMP-LOAN-APPLY reads: the loan-apply screen's 5-way template combine. The CommonPurse app's
+// COMP-LOAN-APPLY reads: the loan-apply screen's 5-way template combine. The MifosSave app's
 // LoanApplyApiImpl fetches, on mount / member-select, raw Fineract read paths this facade serves:
 //
 //	GET /loanproducts                          -> []LoanProductDto      (get_loan_products)
@@ -29,7 +29,7 @@ import (
 	"strings"
 )
 
-// appCurrencyCode is the CommonPurse app's fixed working currency. Loan-product options are
+// appCurrencyCode is the MifosSave app's fixed working currency. Loan-product options are
 // filtered to it so only the provisioned VSLA products (KES) reach the loan-apply picker.
 const appCurrencyCode = "KES"
 

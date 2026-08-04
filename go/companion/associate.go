@@ -5,7 +5,7 @@
 
 // COMP-GRP-003 / COMP-DT-004 (recipient side): the join-with-code "Join Group"
 // write facade. After the invitee validates a code and previews the group, the
-// CommonPurse app's InvitationApiImpl issues two calls (see
+// MifosSave app's InvitationApiImpl issues two calls (see
 // core/data/.../InvitationRepositoryImpl.joinGroup):
 //
 //	POST /companion/groups/{groupId}/associate-clients          -> AssociateClientsResponseDto

@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// COMP-BATCH: the OFFLINE-SYNC drain endpoint. Every CommonPurse (mifos-x-group-banking) write can
+// COMP-BATCH: the OFFLINE-SYNC drain endpoint. Every MifosSave (mifos-x-group-banking) write can
 // be queued to the app's local sync_queue when the device is offline; when connectivity returns,
 // SyncManagerImpl replays the queue as ONE batch:
 //

@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// COMP-CAL: the meeting-lifecycle facade for the CommonPurse (mifos-x-group-banking)
+// COMP-CAL: the meeting-lifecycle facade for the MifosSave (mifos-x-group-banking)
 // app's FOUR meeting features. The app's shared HttpClient base URL points at THIS
 // Go server (companion), so every path below is one the app fires; the Go server
 // serves only explicitly-registered routes (there is no catch-all Fineract proxy),
@@ -406,7 +406,7 @@ func (h *Handler) HandleCenterMeetings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// The CommonPurse app navigates meeting-calendar with centerId = groupId.toInt
+	// The MifosSave app navigates meeting-calendar with centerId = groupId.toInt
 	// (a documented app-side drift — GroupBankingNavHost flags "group-dashboard has
 	// no centerId; bridge by parsing groupId"). Resolve that groupId to its real
 	// Fineract centerId so the schedule of the group's meeting center is served.

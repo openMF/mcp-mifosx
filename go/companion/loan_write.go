@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// COMP-LOAN-WRITE: the loan WRITE facade. The CommonPurse (mifos-x-group-banking)
+// COMP-LOAN-WRITE: the loan WRITE facade. The MifosSave (mifos-x-group-banking)
 // app's three loan-write services each POST at a bare Fineract path (the app's
 // base URL points at THIS Go server, which serves only explicitly-registered
 // routes — there is no catch-all proxy):

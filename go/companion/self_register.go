@@ -3,7 +3,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-// COMP-AUTH-SIGNUP: real sign-up for the CommonPurse (mifos-x-group-banking)
+// COMP-AUTH-SIGNUP: real sign-up for the MifosSave (mifos-x-group-banking)
 // app. The app's CompanionAuthApiImpl POSTs
 //
 //	POST /companion/auth/self-register  {name, emailPhone, password}  ->  AuthResponse
@@ -43,7 +43,7 @@
 //     POST /authentication — which is all the app's login path needs — so we
 //     provision that shape. The client and user are both real, created together
 //     at signup; the user is not Fineract-linked to the client row, but nothing
-//     in the CommonPurse login/organizer flow depends on that linkage.
+//     in the MifosSave login/organizer flow depends on that linkage.
 //   - Usernames MAY contain '@' and '.' — mifos-bank-2 accepts an email verbatim
 //     as the username, and POST /authentication authenticates with that same
 //     email. So NO derived/sanitized username is needed: emailPhone is stored as
@@ -74,7 +74,7 @@ import (
 const selfServiceRoleName = "Self Service User"
 
 // HandleSelfRegister provisions a real Fineract client + login user for a new
-// CommonPurse signup and returns an immediately-usable AuthResponse.
+// MifosSave signup and returns an immediately-usable AuthResponse.
 func (h *Handler) HandleSelfRegister(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
 	if r.Method != http.MethodPost {

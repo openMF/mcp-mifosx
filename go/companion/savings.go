@@ -5,7 +5,7 @@
 
 // COMP-SAVINGS: the savings-dashboard + member-savings-detail read facade. It reshapes the real
 // Fineract group corpus (GET groups/{id}/accounts + savingsaccounts/{id}?associations=transactions)
-// into the three companion contracts the CommonPurse app's SavingsApiImpl calls:
+// into the three companion contracts the MifosSave app's SavingsApiImpl calls:
 //
 //	GET /companion/groups/{groupId}/savings                          -> GroupSavingsSummaryDto
 //	GET /companion/groups/{groupId}/savings/individual              -> IndividualSavingsSummaryDto
