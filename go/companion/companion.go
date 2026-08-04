@@ -52,6 +52,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	// COMP-DT-002/003/005: member-INVITE write facade (see member_invite.go).
 	h.registerMemberInviteRoutes(mux)
 	h.registerAssociateRoutes(mux)
+	h.registerLoanProductRoutes(mux)
 	h.registerOrganizerRoutes(mux)
 
 	// COMP-MEMBERLIST / COMP-SAVINGS / COMP-MEMBERDASH / COMP-LOANLIST: group-scoped read
