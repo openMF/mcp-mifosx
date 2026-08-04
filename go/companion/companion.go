@@ -56,6 +56,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerMemberInviteRoutes(mux)
 	h.registerAssociateRoutes(mux)
 	h.registerLoanProductRoutes(mux)
+	h.registerLoanApplicationRoutes(mux)
 	h.registerMemberAddRoutes(mux)
 	h.registerBatchRoutes(mux)
 	h.registerOrganizerRoutes(mux)
