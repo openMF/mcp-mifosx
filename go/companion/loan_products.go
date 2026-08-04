@@ -38,6 +38,60 @@ func (h *Handler) registerLoanProductRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /loans/template", h.HandleLoanTemplate)
 	mux.HandleFunc("GET /clients/{clientId}/accounts", h.HandleClientAccounts)
 	mux.HandleFunc("GET /datatables/dt_group_config/{groupId}", h.HandleGroupConfigDatatable)
+	mux.HandleFunc("POST /datatables/dt_loan_request", h.HandlePostLoanRequest)
+}
+
+// HandlePostLoanRequest writes the member's loan APPLICATION (a PENDING dt_loan_request row for
+// organizer/group review at the next meeting — the VSLA request-then-approve model). The app's
+// LoanRequestApiImpl POSTs the row to a bare /datatables/dt_loan_request with the target client
+// carried IN THE BODY as clientId, but a Fineract datatable write needs the entity id in the PATH —
+// so we lift clientId out to the path (/datatables/dt_loan_request/{clientId}) and forward the
+// remaining snake_case columns (requested_amount/purpose/duration_weeks/savings_balance_at_request/
+// submitted_at/status) as the row.
+func (h *Handler) HandlePostLoanRequest(w http.ResponseWriter, r *http.Request) {
+	setJSON(w)
+	var body map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	cidF, _ := body["clientId"].(float64)
+	clientID := int64(cidF)
+	if clientID == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "clientId is required")
+		return
+	}
+	// Map the app's wire field names to the dt_loan_request datatable columns. The app's shape
+	// (requested_amount / savings_balance_at_request / submitted_at) differs from the registered
+	// columns (amount / requested_at / …), and savings_balance_at_request has NO column — a
+	// straight pass-through 400s with "Column not exist in database". clientId is the entity FK
+	// (path), never a body column.
+	row := map[string]interface{}{"locale": "en"}
+	if v, ok := body["requested_amount"]; ok {
+		row["amount"] = v
+	}
+	if v, ok := body["purpose"]; ok {
+		row["purpose"] = v
+	}
+	if v, ok := body["duration_weeks"]; ok {
+		row["duration_weeks"] = v
+	}
+	if s, ok := body["status"].(string); ok && strings.TrimSpace(s) != "" {
+		row["status"] = s
+	} else {
+		row["status"] = "PENDING"
+	}
+	// submitted_at (ISO-8601) → requested_at (Fineract TIMESTAMP "yyyy-MM-dd HH:mm:ss").
+	if s, ok := body["submitted_at"].(string); ok && len(s) >= 19 {
+		row["requested_at"] = strings.Replace(s[:19], "T", " ", 1)
+		row["dateFormat"] = "yyyy-MM-dd HH:mm:ss"
+	}
+	raw, err := h.Fineract.DoRequest("POST", fmt.Sprintf("datatables/dt_loan_request/%d", clientID), row, nil)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", "loan request: "+strings.TrimSpace(string(nonEmpty(raw))))
+		return
+	}
+	_, _ = w.Write(raw)
 }
 
 // HandleLoanProducts proxies GET /loanproducts, filtered to the app currency (KES).
