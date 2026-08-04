@@ -91,6 +91,17 @@ func (h *Handler) HandlePostLoanRequest(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadGateway, "upstream_error", "loan request: "+strings.TrimSpace(string(nonEmpty(raw))))
 		return
 	}
+	// Fineract's datatable-create envelope is {officeId, clientId, resourceId} — it omits
+	// resourceExternalId, which the app's LoanRequestResponseDto requires (non-null). Inject an
+	// empty one so the ONLINE submit deserializes instead of falling back to the offline queue.
+	var resp map[string]interface{}
+	if json.Unmarshal(raw, &resp) == nil {
+		if _, ok := resp["resourceExternalId"]; !ok {
+			resp["resourceExternalId"] = ""
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+		return
+	}
 	_, _ = w.Write(raw)
 }
 
