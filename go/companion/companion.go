@@ -77,6 +77,12 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerLoanDetailRoutes(mux)
 	h.registerGroupTypeCatalogRoutes(mux)
 	h.registerPassthroughRoutes(mux)
+	// COMP-SELF: native self-service passthrough (/self/* forwarded with the caller's own creds).
+	h.registerSelfPassthroughRoutes(mux)
+	// COMP-FO: field-officer staff facade (groups-by-staff + FieldOfficerGroupReport).
+	h.registerFieldOfficerRoutes(mux)
+	// COMP-DT-ROLE: dt_member_role datatable facade (assign/read a member's group role).
+	h.registerMemberRoleRoutes(mux)
 	// COMP-CAL: meeting-lifecycle facade (calendar/conduct/summary/previous-review + reschedule;
 	// see meeting.go).
 	h.registerMeetingRoutes(mux)

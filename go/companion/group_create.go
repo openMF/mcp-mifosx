@@ -92,7 +92,8 @@ type createGroupRequestDto struct {
 // createGroupResponseDto == CreateGroupResponseDto.
 type createGroupResponseDto struct {
 	GroupID          string `json:"groupId"`
-	FineractCenterID int64  `json:"fineractCenterId"`
+	FineractGroupID  int64  `json:"fineractGroupId"`  // canonical (Group-centric) — the app's CreateGroupResponseDto requires this
+	FineractCenterID int64  `json:"fineractCenterId"` // legacy mirror (retained for back-compat; app ignores unknown keys)
 	InviteCode       string `json:"inviteCode"`
 }
 
@@ -134,6 +135,7 @@ func (h *Handler) HandleCreateGroup(w http.ResponseWriter, r *http.Request) {
 	// Fineract entity id; the app's success screen surfaces inviteCode.
 	_ = json.NewEncoder(w).Encode(createGroupResponseDto{
 		GroupID:          strconv.FormatInt(groupID, 10),
+		FineractGroupID:  groupID,
 		FineractCenterID: groupID,
 		InviteCode:       inviteCodeFor(req.Name, groupID),
 	})
