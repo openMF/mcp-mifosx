@@ -176,11 +176,19 @@ func (h *Handler) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	memberships, gerr := h.resolveGroups(fa)
+	if gerr != nil {
+		// Credentials were valid but the group listing flapped — return a retryable 502 rather than a
+		// successful login with an empty membership set (which the app renders as the zero-groups
+		// screen, wrongly telling a real member they belong to nothing).
+		writeErr(w, http.StatusBadGateway, "upstream_error", "resolve groups: "+gerr.Error())
+		return
+	}
 	_ = json.NewEncoder(w).Encode(AuthResponse{
 		UserID:           fmt.Sprintf("%d", fa.UserID),
 		SessionToken:     fa.Base64Key,
 		TokenExpiresAt:   time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339),
-		GroupMemberships: h.resolveGroups(fa),
+		GroupMemberships: memberships,
 	})
 }
 
@@ -212,11 +220,16 @@ func (h *Handler) HandleMe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "unauthorized", "token invalid or expired")
 		return
 	}
+	memberships, gerr := h.resolveGroups(fa)
+	if gerr != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", "resolve groups: "+gerr.Error())
+		return
+	}
 	_ = json.NewEncoder(w).Encode(meResponse{
 		UserID:           fmt.Sprintf("%d", fa.UserID),
 		Name:             h.resolveDisplayName(fa), // real "Firstname Lastname", not the raw username/phone
 		EmailPhone:       fa.Username,
-		GroupMemberships: h.resolveGroups(fa),
+		GroupMemberships: memberships,
 	})
 }
 
@@ -332,15 +345,19 @@ func (h *Handler) userClientIDs(fa *fineractAuthResponse) map[int64]bool {
 //   - a self-service user (has a linked client) sees ONLY groups their client belongs to;
 //   - an admin/staff user (no linked client, e.g. the seeded `mifos` organizer) sees all
 //     active groups (the organizer/back-office view).
-func (h *Handler) resolveGroups(fa *fineractAuthResponse) []GroupMembership {
+func (h *Handler) resolveGroups(fa *fineractAuthResponse) ([]GroupMembership, error) {
 	out := []GroupMembership{}
 	raw, err := h.Fineract.DoRequest("GET", "groups", nil, nil)
 	if err != nil {
-		return out
+		// The primary group listing failed (a mifos-bank-2 502 flap outlasting DoRequest's retry).
+		// Do NOT fail-soft to an empty list — empty is INDISTINGUISHABLE from "genuinely no groups"
+		// and strands a real member on the zero-groups screen. Surface the error so the caller
+		// returns a retryable 502 instead of a false empty membership set.
+		return nil, fmt.Errorf("list groups: %s", strings.TrimSpace(string(nonEmpty(raw))))
 	}
 	var groups []fnGroup
 	if err := json.Unmarshal(raw, &groups); err != nil {
-		return out
+		return nil, fmt.Errorf("decode groups: %w", err)
 	}
 	var clientIDs map[int64]bool
 	scopedRole := "ORGANIZER"
@@ -363,7 +380,7 @@ func (h *Handler) resolveGroups(fa *fineractAuthResponse) []GroupMembership {
 				JoinedAt:  fmtFineractInstant(g.ActivationDate),
 			})
 		}
-		return out
+		return out, nil
 	}
 
 	// Self-service member: probe each active group's client list to isolate the user's groups.
@@ -407,7 +424,7 @@ func (h *Handler) resolveGroups(fa *fineractAuthResponse) []GroupMembership {
 			out = append(out, *m)
 		}
 	}
-	return out
+	return out, nil
 }
 
 // callerFromRequest resolves the authenticated caller from the Authorization
