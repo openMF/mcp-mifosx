@@ -130,6 +130,20 @@ func (h *Handler) HandleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 3. Associate the CREATOR as the group's ORGANIZER. Without this the person who created the
+	// group is a member of NOTHING — the group never appears in their own login groupMemberships /
+	// /companion/groups, so they land on the zero-groups screen right after creating it. Resolve the
+	// authenticated caller (from their bearer token) to a Fineract client and associate + role them.
+	// Best-effort: a create must NOT fail if the caller can't be resolved (e.g. a staff/service token
+	// with no linked client), so these steps are non-fatal.
+	if cid := h.resolveCallerClientID(r); cid > 0 {
+		// associate the creator to the group + write their ORGANIZER role row (both non-fatal).
+		_, _ = h.Fineract.DoRequest("POST", fmt.Sprintf("groups/%d", groupID),
+			map[string]interface{}{"clientMembers": []int64{cid}}, map[string]string{"command": "associateClients"})
+		_, _ = h.Fineract.DoRequest("POST", fmt.Sprintf("datatables/%s/%d", memberRoleTable, cid),
+			map[string]interface{}{"role": "ORGANIZER", "client_type": "organizer", "group_id": groupID, "is_active": true, "locale": "en"}, nil)
+	}
+
 	// 4. Return the app's response shape. fineractCenterId mirrors the new group
 	// id (this flow creates a plain group, not a parent center) — a real, non-zero
 	// Fineract entity id; the app's success screen surfaces inviteCode.
@@ -139,6 +153,47 @@ func (h *Handler) HandleCreateGroup(w http.ResponseWriter, r *http.Request) {
 		FineractCenterID: groupID,
 		InviteCode:       inviteCodeFor(req.Name, groupID),
 	})
+}
+
+// resolveCallerClientID returns the Fineract client id for the authenticated caller, matched by
+// externalId == their login username (self-registration sets externalId to the email/phone). Returns
+// 0 when the caller can't be resolved to a client (a staff/service token, or no matching client) —
+// callers treat that as "don't associate", never an error. Handles both the paged {pageItems:[...]}
+// and the bare-array shapes different Fineract builds return for GET /clients?externalId=.
+func (h *Handler) resolveCallerClientID(r *http.Request) int64 {
+	fa := h.callerFromRequest(r)
+	if fa == nil || strings.TrimSpace(fa.Username) == "" {
+		return 0
+	}
+	raw, err := h.Fineract.DoRequest("GET", "clients", nil, map[string]string{"externalId": fa.Username})
+	if err != nil {
+		return 0
+	}
+	var paged struct {
+		PageItems []struct {
+			ID         int64  `json:"id"`
+			ExternalID string `json:"externalId"`
+		} `json:"pageItems"`
+	}
+	if json.Unmarshal(raw, &paged) == nil {
+		for _, c := range paged.PageItems {
+			if c.ExternalID == fa.Username {
+				return c.ID
+			}
+		}
+	}
+	var arr []struct {
+		ID         int64  `json:"id"`
+		ExternalID string `json:"externalId"`
+	}
+	if json.Unmarshal(raw, &arr) == nil {
+		for _, c := range arr {
+			if c.ExternalID == fa.Username {
+				return c.ID
+			}
+		}
+	}
+	return 0
 }
 
 // ---- Fineract writes (service credential via DoRequest) ----
