@@ -319,6 +319,15 @@ func (h *Handler) HandleRevokeInvite(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) fetchInvitationRows(groupID int64) ([]invitationRow, error) {
 	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("datatables/%s/%d", invitationsTable, groupID), nil, nil)
 	if err != nil {
+		// An empty multiRow datatable (no invite rows for this group YET) is Fineract's
+		// "data not found for datatable" 404 — NOT a real error. The FIRST invite generation
+		// for a group hits exactly this: HandleGenerateInvite pre-reads existing rows to pick a
+		// collision-free token seq, and without this tolerance a group with zero invites can never
+		// mint its first one (seed step 8 surfaced this on a fresh group). Treat it as an empty
+		// list, the same tolerance readMeetingRecords/readCorpusRows already apply.
+		if isDatatableEmptyErr(raw) {
+			return []invitationRow{}, nil
+		}
 		return nil, fmt.Errorf("%s", strings.TrimSpace(string(nonEmpty(raw))))
 	}
 	var rows []invitationRow
@@ -409,4 +418,13 @@ func normalizeRole(role string) string {
 // (https://mifos.app/join?token=<TOKEN>&group=<groupId>).
 func inviteLinkFor(token string, groupID int64) string {
 	return fmt.Sprintf("https://mifos.app/join?token=%s&group=%d", token, groupID)
+}
+
+// isDatatableEmptyErr reports whether a Fineract error body is the benign "this multiRow datatable
+// has no rows for this apptable id yet" 404 (error.msg.datatable.data.not.found) rather than a real
+// upstream failure — so a caller reading a not-yet-populated datatable can degrade to an empty list.
+func isDatatableEmptyErr(raw []byte) bool {
+	s := string(raw)
+	return strings.Contains(s, "datatable.data.not.found") ||
+		strings.Contains(s, "Data not found for datatable")
 }
