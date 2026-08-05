@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,12 +42,37 @@ func New(f *adapter.FineractClient) *Handler {
 	return &Handler{Fineract: f}
 }
 
+// HandleBuild returns the git revision + build metadata embedded by `go build` (module-aware
+// builds from a git checkout record vcs.revision/vcs.time automatically). This is the deploy-truth
+// probe: hit GET /companion/build and compare .revision to the pushed HEAD to know exactly which
+// commit onrender is serving — no guessing whether a redeploy landed.
+func (h *Handler) HandleBuild(w http.ResponseWriter, r *http.Request) {
+	setJSON(w)
+	out := map[string]string{"revision": "unknown", "time": "", "modified": ""}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		for _, s := range bi.Settings {
+			switch s.Key {
+			case "vcs.revision":
+				out["revision"] = s.Value
+			case "vcs.time":
+				out["time"] = s.Value
+			case "vcs.modified":
+				out["modified"] = s.Value
+			}
+		}
+	}
+	_ = json.NewEncoder(w).Encode(out)
+}
+
 // RegisterRoutes wires the companion endpoints onto an existing mux. The mux's
 // outer handler already sets the CORS headers, so these routes inherit them.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/companion/auth/login", h.HandleLogin)
 	mux.HandleFunc("/companion/auth/self-register", h.HandleSelfRegister)
 	mux.HandleFunc("/companion/auth/me", h.HandleMe)
+	// COMP-BUILD: deploy-truth probe — returns the VCS revision baked in at build time so we can
+	// prove WHICH commit onrender is actually running (no more "is the deploy live?" guessing).
+	mux.HandleFunc("/companion/build", h.HandleBuild)
 
 	// COMP-GRP: group-dashboard read facade (see groups.go).
 	h.registerGroupRoutes(mux)
@@ -334,6 +360,23 @@ func (h *Handler) userClientIDs(fa *fineractAuthResponse) map[int64]bool {
 			// Guard against a Fineract build that ignores the externalId filter and returns all.
 			if c.ExternalID == fa.Username {
 				set[c.ID] = true
+			}
+		}
+	}
+	// GET /clients?externalId= can also come back as a BARE ARRAY (not the paged envelope),
+	// depending on the Fineract build. If the paged decode found nothing, try the array shape —
+	// otherwise a phone/email member silently resolves to zero clients and falls through to the
+	// staff-all-groups path (the /groups/mine timeout + login-shows-39-memberships bug).
+	if len(set) == 0 {
+		var arr []struct {
+			ID         int64  `json:"id"`
+			ExternalID string `json:"externalId"`
+		}
+		if json.Unmarshal(raw, &arr) == nil {
+			for _, c := range arr {
+				if c.ExternalID == fa.Username {
+					set[c.ID] = true
+				}
 			}
 		}
 	}
