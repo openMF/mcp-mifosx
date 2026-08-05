@@ -121,6 +121,8 @@ const (
 func (h *Handler) registerMeetingRoutes(mux *http.ServeMux) {
 	// meeting-calendar / meeting-summary / previous-meeting-review — prefixed base.
 	mux.HandleFunc("GET "+fineractV1Prefix+"/centers/{centerId}/meetings", h.HandleCenterMeetings)
+	// meeting-calendar schedule read (AL-RULE dt_meeting_schedule on m_group, keyed by groupId).
+	mux.HandleFunc("GET "+fineractV1Prefix+"/datatables/dt_meeting_schedule/{groupId}", h.HandleMeetingSchedule)
 	mux.HandleFunc("GET "+fineractV1Prefix+"/datatables/dt_meeting_record/{centerId}", h.HandleMeetingRecordDatatable)
 	mux.HandleFunc("GET "+fineractV1Prefix+"/datatables/dt_meeting_attendance/{meetingId}", h.HandleMeetingAttendanceList)
 
@@ -411,10 +413,43 @@ func (h *Handler) HandleCenterMeetings(w http.ResponseWriter, r *http.Request) {
 	// no centerId; bridge by parsing groupId"). Resolve that groupId to its real
 	// Fineract centerId so the schedule of the group's meeting center is served.
 	centerID = h.resolveMeetingCenter(centerID)
-	dates, err := h.centerMeetingDates(centerID)
+	out, err := h.buildMeetingSchedule(centerID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
+	}
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// HandleMeetingSchedule (meetingcalendar.getMeetingSchedule) serves the group's meeting schedule
+// from the AL-RULE dt_meeting_schedule surface (GET /…/datatables/dt_meeting_schedule/{groupId}).
+// It reuses the SAME schedule the meetings list is built from (calendar recurrence enriched with
+// completed dt_meeting_record rows, with the synthesized-weekly fallback for companion VSLA groups),
+// so a group whose dt_meeting_schedule is not yet provisioned still returns a conductable schedule
+// rather than an empty list — the app expects List<MeetingListItemDto>.
+func (h *Handler) HandleMeetingSchedule(w http.ResponseWriter, r *http.Request) {
+	setJSON(w)
+	groupID, ok := pathInt64Param(w, r, "groupId")
+	if !ok {
+		return
+	}
+	centerID := h.resolveMeetingCenter(groupID)
+	out, err := h.buildMeetingSchedule(centerID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
+		return
+	}
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+// buildMeetingSchedule assembles the []MeetingListItemDto schedule for a center: the calendar
+// recurrence dates (synthesized weekly when none) each classified COMPLETED (a dt_meeting_record row
+// exists) / MISSED (past, no record) / UPCOMING (future), capped at upcomingMeetingCap future slots.
+// Shared by HandleCenterMeetings (meetings list) and HandleMeetingSchedule (schedule read).
+func (h *Handler) buildMeetingSchedule(centerID int64) ([]meetingListItemDto, error) {
+	dates, err := h.centerMeetingDates(centerID)
+	if err != nil {
+		return nil, err
 	}
 	records, _ := h.readMeetingRecords(centerID) // tolerant: no records yet -> all UPCOMING/MISSED
 	recByNumber := make(map[int]fnMeetingRecordRow, len(records))
@@ -449,7 +484,7 @@ func (h *Handler) HandleCenterMeetings(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	_ = json.NewEncoder(w).Encode(out)
+	return out, nil
 }
 
 // HandleMeetingRecordDatatable serves the SAME app path for two features, split by the
