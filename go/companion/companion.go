@@ -309,11 +309,13 @@ func (h *Handler) fineractPost(endpoint string, body interface{}) (int, []byte, 
 // (never nil) slice so login still succeeds → the app's ZeroGroups branch. This is
 // the documented hook for real per-user resolution once member linkage lands.
 // userClientIDs returns the Fineract client id(s) that belong to the logged-in person, resolved
-// via the client's externalId (== the account email, set at self-registration). Admin/staff
-// users (username is not an email — e.g. the seeded `mifos` organizer) have no matching client
-// and get nil, which grants them the unscoped all-groups view in resolveGroups.
+// via the client's externalId (== the account email OR phone, set at self-registration). Match on
+// externalId for BOTH email and phone usernames — a phone-registered member (e.g. +2547…) was
+// previously dropped by an email-only `@` gate and wrongly given the unscoped all-groups (staff)
+// view, which made /companion/groups/mine aggregate every group and time out. Admin/staff users
+// (username has no matching client — e.g. the seeded `mifos` organizer) still get nil → staff view.
 func (h *Handler) userClientIDs(fa *fineractAuthResponse) map[int64]bool {
-	if fa == nil || !strings.Contains(fa.Username, "@") {
+	if fa == nil || strings.TrimSpace(fa.Username) == "" {
 		return nil
 	}
 	raw, err := h.Fineract.DoRequest("GET", "clients", nil, map[string]string{"externalId": fa.Username})
