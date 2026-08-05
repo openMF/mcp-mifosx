@@ -242,29 +242,53 @@ func (h *Handler) HandleMyGroups(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "upstream_error", "decode groups list: "+err.Error())
 		return
 	}
-	page := GroupPageDto{PageItems: []GroupDto{}}
+	active := make([]fnGroup, 0, len(groups))
 	for _, g := range groups {
-		if !g.Active {
-			continue
+		if g.Active {
+			active = append(active, g)
 		}
-		detail, members, aerr := h.aggregateGroup(g.ID)
-		if aerr != nil {
-			continue
+	}
+	// Build the list cards CONCURRENTLY. The previous serial loop ran aggregateGroup +
+	// per-member aggregateLoans for EVERY active group — O(groups × members) sequential Fineract
+	// reads. With the seed's ~39 active groups this blew far past the app's request timeout, so
+	// /companion/groups/mine returned nothing and the app rendered the zero-groups screen even for a
+	// user who belongs to 39 groups. A list card needs only lightweight group detail (name, member
+	// count, cycle); per-member loan health is a group-DETAIL concern, defaulted to the no-loans
+	// indicator here. Bounded fan-out (8 workers) keeps Fineract load sane while staying fast.
+	cards := make([]*GroupDto, len(active))
+	sem := make(chan struct{}, 8)
+	var wg sync.WaitGroup
+	for i, g := range active {
+		wg.Add(1)
+		go func(i int, g fnGroup) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			detail, _, aerr := h.aggregateGroup(g.ID)
+			if aerr != nil {
+				return
+			}
+			cards[i] = &GroupDto{
+				ID:               strconv.FormatInt(g.ID, 10),
+				Name:             g.Name,
+				GroupType:        "VSLA", // computed default: this seed is a VSLA group
+				ViewerRole:       "ORGANIZER",
+				CycleNumber:      detail.CycleNumber,
+				MemberCount:      detail.MemberCount,
+				LastMeetingDate:  fmtFineractDate(g.ActivationDate),
+				HealthIndicator:  healthFor(0, 0), // no-loans indicator; real health on group-detail
+				OverdueRate:      overdueRate(0, 0),
+				Status:           statusValue(g.Status),
+				FineractCenterID: deref(g.CenterID),
+			}
+		}(i, g)
+	}
+	wg.Wait()
+	page := GroupPageDto{PageItems: []GroupDto{}}
+	for _, c := range cards {
+		if c != nil {
+			page.PageItems = append(page.PageItems, *c)
 		}
-		_, _, activeLoans, overdue := h.aggregateLoans(members)
-		page.PageItems = append(page.PageItems, GroupDto{
-			ID:               strconv.FormatInt(g.ID, 10),
-			Name:             g.Name,
-			GroupType:        "VSLA", // computed default: this seed is a VSLA group
-			ViewerRole:       "ORGANIZER",
-			CycleNumber:      detail.CycleNumber,
-			MemberCount:      detail.MemberCount,
-			LastMeetingDate:  fmtFineractDate(g.ActivationDate),
-			HealthIndicator:  healthFor(overdue, activeLoans),
-			OverdueRate:      overdueRate(overdue, activeLoans),
-			Status:           statusValue(g.Status),
-			FineractCenterID: deref(g.CenterID),
-		})
 	}
 	page.TotalFilteredRecords = len(page.PageItems)
 	_ = json.NewEncoder(w).Encode(page)
