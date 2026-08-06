@@ -83,29 +83,56 @@ type MemberDashboardResponseDto struct {
 func (h *Handler) HandleMemberDashboard(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
 
-	allGroups, err := h.activeGroups()
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
-		return
-	}
-	if len(allGroups) == 0 {
-		writeErr(w, http.StatusNotFound, "not_found", "no active groups")
-		return
-	}
-
 	// DATA ISOLATION: scope the dashboard to the AUTHENTICATED caller. A self-service member sees
 	// ONLY their own groups + their own identity/savings; an admin/staff caller (no linked client)
 	// keeps the unscoped all-groups back-office view. Without this, the dashboard leaked the first
 	// group's first member (e.g. "Alice") and ALL groups to EVERY logged-in user — the same
-	// isolation resolveGroups/HandleMe already enforce, previously missing here.
+	// isolation resolveGroups/HandleMe already enforce.
 	fa := h.callerFromRequest(r)
 	var callerClients map[int64]bool
 	if fa != nil {
 		callerClients = h.userClientIDs(fa)
 	}
 
-	// Probe each group's client members concurrently (light clientMembers read) to isolate the
-	// caller's groups. Serial probing made this the slowest post-login screen; fan out instead.
+	// PERF: the candidate group set is the CALLER's groups (resolveGroups reads clients/{id}?
+	// associations=groups directly — no all-instance scan), so the probe loop below runs over the
+	// caller's handful of groups instead of every group on the instance. Admin/staff (no linked
+	// client) keep the full active-groups back-office view.
+	var allGroups []fnGroup
+	if len(callerClients) > 0 {
+		memberships, mErr := h.resolveGroups(fa)
+		if mErr != nil {
+			writeErr(w, http.StatusBadGateway, "upstream_error", mErr.Error())
+			return
+		}
+		for _, m := range memberships {
+			if id, e := strconv.ParseInt(m.GroupID, 10, 64); e == nil {
+				allGroups = append(allGroups, fnGroup{ID: id, Name: m.GroupName, Active: true})
+			}
+		}
+	} else {
+		var err error
+		allGroups, err = h.activeGroups()
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
+			return
+		}
+	}
+	// A caller who belongs to no group → a valid EMPTY dashboard (never another member's data, never
+	// a 404 that the app would surface as an error screen).
+	if len(allGroups) == 0 {
+		_ = json.NewEncoder(w).Encode(MemberDashboardResponseDto{
+			MemberName:         h.resolveDisplayName(fa),
+			MyGroups:           []GroupSummaryDto{},
+			PoolModel:          defaultVSLAConfig().PoolModel,
+			RecentTransactions: []SavingsTransactionDto{},
+		})
+		return
+	}
+
+	// Probe each candidate group's client members concurrently (light clientMembers read) to resolve
+	// the caller's member row + build the group cards. For a member the set is already their own
+	// groups; the probe confirms membership and fetches the roster used downstream.
 	type probeResult struct {
 		g       fnGroup
 		clients []centerClient
