@@ -161,7 +161,13 @@ type GroupDto struct {
 	HealthIndicator  string  `json:"healthIndicator"`
 	OverdueRate      float64 `json:"overdueRate"`
 	Status           string  `json:"status"`
-	FineractCenterID int64   `json:"fineractCenterId"`
+	// The app's grouplist GroupDto REQUIRES fineractGroupId (non-nullable Long) — a missing field
+	// fails kotlinx deserialization ("Field 'fineractGroupId' is required ... but it was missing"),
+	// which surfaced as the group-list screen's "Could not load groups". Group-centric model: the
+	// group's own id IS the fineract group id. fineractCenterId is legacy (Center dropped) but kept
+	// for back-compat.
+	FineractGroupID  int64 `json:"fineractGroupId"`
+	FineractCenterID int64 `json:"fineractCenterId"`
 }
 
 // GroupPageDto == GET /companion/groups[/mine].
@@ -267,6 +273,7 @@ func (h *Handler) HandleMyGroups(w http.ResponseWriter, r *http.Request) {
 				Status:          "active",
 			}
 			if gid, perr := strconv.ParseInt(m.GroupID, 10, 64); perr == nil {
+				card.FineractGroupID = gid
 				if detail, _, aerr := h.aggregateGroup(gid); aerr == nil {
 					card.CycleNumber = detail.CycleNumber
 					card.MemberCount = detail.MemberCount
