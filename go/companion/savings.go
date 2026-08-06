@@ -38,6 +38,10 @@ func (h *Handler) registerSavingsRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /companion/groups/{groupId}/savings", h.HandleGroupSavings)
 	mux.HandleFunc("GET /companion/groups/{groupId}/savings/individual", h.HandleIndividualSavings)
 	mux.HandleFunc("GET /companion/groups/{groupId}/members/{memberId}/savings", h.HandleMemberSavingsDetail)
+	// COMP-SAVINGS-TXN: a single savings account's transaction ledger via SERVICE creds. Replaces the
+	// app's former raw `/self/savingsaccounts/{id}/transactions` call, which 403s for members who are
+	// Fineract CLIENTS but not self-service USERS (every demo-seeded + companion-self-registered user).
+	mux.HandleFunc("GET /companion/savings/{savingsId}/transactions", h.HandleSavingsTransactions)
 }
 
 // ---- App-facing wire contract (exact match to core/network/.../model/SavingsDto.kt) ----
@@ -376,4 +380,142 @@ func deref64(p *float64) float64 {
 		return 0
 	}
 	return *p
+}
+
+// ---- COMP-SAVINGS-TXN: single-account transaction ledger (service creds) ----
+
+// savingsLedgerEntryOut mirrors SavingsLedgerEntryDto in
+// core/network/.../model/SavingsDto.kt EXACTLY so the app's existing SavingsMappers parse it
+// unchanged — the app used to get this shape from Fineract's /self/savingsaccounts/{id}/transactions.
+type savingsLedgerEntryOut struct {
+	ID              int64                    `json:"id"`
+	TransactionType savingsLedgerTxnTypeOut  `json:"transactionType"`
+	Date            []int                    `json:"date"`
+	Amount          float64                  `json:"amount"`
+	RunningBalance  float64                  `json:"runningBalance"`
+	Currency        savingsLedgerCurrencyOut `json:"currency"`
+}
+
+type savingsLedgerTxnTypeOut struct {
+	Value       int    `json:"value"`
+	Code        string `json:"code"`
+	Description string `json:"description"`
+}
+
+type savingsLedgerCurrencyOut struct {
+	Code          string `json:"code"`
+	DisplaySymbol string `json:"displaySymbol"`
+}
+
+// HandleSavingsTransactions returns one savings account's transaction ledger read with the SERVICE
+// credential (so it works for every user, not only Fineract self-service users). An ownership guard
+// keeps the self-service privacy contract: the caller may read the ledger only when the account is
+// their own client account OR belongs to a group they are a member of.
+func (h *Handler) HandleSavingsTransactions(w http.ResponseWriter, r *http.Request) {
+	setJSON(w)
+	savingsID, err := strconv.ParseInt(r.PathValue("savingsId"), 10, 64)
+	if err != nil || savingsID <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid savingsId")
+		return
+	}
+	fa := h.callerFromRequest(r)
+	if fa == nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized", "missing or invalid session token")
+		return
+	}
+	limit := intParam(r, "limit", 50)
+	offset := intParam(r, "offset", 0)
+
+	raw, derr := h.Fineract.DoRequest("GET", fmt.Sprintf("savingsaccounts/%d", savingsID), nil, map[string]string{"associations": "transactions"})
+	if derr != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", string(nonEmpty(raw)))
+		return
+	}
+	var acct struct {
+		ClientID int64 `json:"clientId"`
+		GroupID  int64 `json:"groupId"`
+		Currency struct {
+			Code          string `json:"code"`
+			DisplaySymbol string `json:"displaySymbol"`
+		} `json:"currency"`
+		Transactions []struct {
+			ID              int64   `json:"id"`
+			Amount          float64 `json:"amount"`
+			Date            []int   `json:"date"`
+			RunningBalance  float64 `json:"runningBalance"`
+			TransactionType struct {
+				ID   int    `json:"id"`
+				Code string `json:"code"`
+				// Fineract serializes the human name as transactionType.value (a STRING); its numeric
+				// id is transactionType.id — the app DTO's numeric `value` maps from id, `description`
+				// from this string name.
+				Value string `json:"value"`
+			} `json:"transactionType"`
+			Currency struct {
+				Code          string `json:"code"`
+				DisplaySymbol string `json:"displaySymbol"`
+			} `json:"currency"`
+		} `json:"transactions"`
+	}
+	if uerr := json.Unmarshal(raw, &acct); uerr != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", "decode savings account: "+uerr.Error())
+		return
+	}
+
+	// Ownership guard — preserve the self-service privacy contract without needing a self-service user.
+	if !h.callerMaySeeSavings(fa, acct.ClientID, acct.GroupID) {
+		writeErr(w, http.StatusForbidden, "forbidden", "savings account not visible to caller")
+		return
+	}
+
+	entries := make([]savingsLedgerEntryOut, 0, len(acct.Transactions))
+	for _, t := range acct.Transactions {
+		curCode, curSym := t.Currency.Code, t.Currency.DisplaySymbol
+		if curCode == "" {
+			curCode, curSym = acct.Currency.Code, acct.Currency.DisplaySymbol
+		}
+		entries = append(entries, savingsLedgerEntryOut{
+			ID: t.ID,
+			TransactionType: savingsLedgerTxnTypeOut{
+				Value:       t.TransactionType.ID,
+				Code:        t.TransactionType.Code,
+				Description: t.TransactionType.Value,
+			},
+			Date:           t.Date,
+			Amount:         t.Amount,
+			RunningBalance: t.RunningBalance,
+			Currency:       savingsLedgerCurrencyOut{Code: curCode, DisplaySymbol: curSym},
+		})
+	}
+	// Newest-first, then page — mirrors the app's paged transaction expectation.
+	sort.SliceStable(entries, func(i, j int) bool { return dateKey(entries[i].Date) > dateKey(entries[j].Date) })
+	_ = json.NewEncoder(w).Encode(pageSlice(entries, offset, limit))
+}
+
+// callerMaySeeSavings enforces the ownership contract: the account must be the caller's own client
+// account, or belong to a group the caller is a member of.
+func (h *Handler) callerMaySeeSavings(fa *fineractAuthResponse, acctClientID, acctGroupID int64) bool {
+	if acctClientID > 0 {
+		if ids := h.userClientIDs(fa); ids[acctClientID] {
+			return true
+		}
+	}
+	if acctGroupID > 0 {
+		if memberships, err := h.resolveGroups(fa); err == nil {
+			for _, m := range memberships {
+				if m.GroupID == strconv.FormatInt(acctGroupID, 10) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// dateKey turns Fineract's [year, month, day] into a sortable YYYYMMDD int (0 when malformed).
+func dateKey(d []int) int {
+	if len(d) < 3 {
+		return 0
+	}
+	return d[0]*10000 + d[1]*100 + d[2]
 }
