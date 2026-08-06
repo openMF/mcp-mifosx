@@ -153,6 +153,7 @@ type meetingListItemDto struct {
 	Status          string `json:"status"`
 	AttendanceCount *int   `json:"attendanceCount"`
 	TotalCollected  *int64 `json:"totalCollectedKES"`
+	MeetingTime     string `json:"meetingTime"` // wall-clock "HH:mm" for COMPLETED meetings; empty otherwise
 }
 
 // meetingRecordItemDto == MeetingRecordItemDto (one row of MeetingRecordListDto).
@@ -193,6 +194,7 @@ type meetingSummaryRecordDto struct {
 	MeetingID                  string                    `json:"meetingId"`
 	MeetingNumber              int                       `json:"meetingNumber"`
 	ActualDate                 string                    `json:"actualDate"`
+	MeetingTime                string                    `json:"meetingTime"`
 	AttendanceCount            int                       `json:"attendanceCount"`
 	TotalMemberCount           int                       `json:"totalMemberCount"`
 	GroupSavingsCollected      int64                     `json:"groupSavingsCollected"`
@@ -303,6 +305,7 @@ type createMeetingRecordRequestIn struct {
 	TotalLoansDisbursed     int64  `json:"totalLoansDisbursed"`
 	TotalFinesCollected     int64  `json:"totalFinesCollected"`
 	AttendanceCount         int    `json:"attendanceCount"`
+	CompletedTime           string `json:"completedTime"` // wall-clock "HH:mm" the meeting was conducted
 }
 
 type createAttendanceRequestIn struct {
@@ -345,6 +348,7 @@ type fnMeetingRecordRow struct {
 	TotalLoansDisbursed     float64 `json:"total_loans_disbursed"`
 	TotalFinesCollected     float64 `json:"total_fines_collected"`
 	AttendanceCount         int     `json:"attendance_count"`
+	CompletedTime           string  `json:"completed_time"`
 }
 
 // fnAttendanceRow is one row of dt_meeting_attendance (apptable m_client).
@@ -478,6 +482,7 @@ func (h *Handler) buildMeetingSchedule(centerID int64) ([]meetingListItemDto, er
 			total := roundKES(rec.TotalSavingsCollected) + roundKES(rec.TotalRepaymentsReceived)
 			item.AttendanceCount = &ac
 			item.TotalCollected = &total
+			item.MeetingTime = rec.CompletedTime
 		} else if ymdBefore(d, today) {
 			item.Status = "MISSED"
 		} else {
@@ -602,6 +607,7 @@ func (h *Handler) handleMeetingSummary(w http.ResponseWriter, r *http.Request) {
 		MeetingID:                  meetingKey(centerID, meetingNumber),
 		MeetingNumber:              meetingNumber,
 		ActualDate:                 fmtFineractDate(rec.MeetingDate),
+		MeetingTime:                rec.CompletedTime,
 		AttendanceCount:            rec.AttendanceCount,
 		TotalMemberCount:           len(clients),
 		GroupSavingsCollected:      groupSavings,
@@ -902,6 +908,7 @@ func (h *Handler) HandlePostMeetingRecord(w http.ResponseWriter, r *http.Request
 		"total_inflows":             in.TotalSavingsCollected + in.TotalRepaymentsReceived,
 		"total_outflows":            in.TotalLoansDisbursed,
 		"attendance_count":          in.AttendanceCount,
+		"completed_time":            in.CompletedTime,
 		"dateFormat":                "yyyy-MM-dd",
 		"locale":                    "en",
 	}
