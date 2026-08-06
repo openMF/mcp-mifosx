@@ -21,7 +21,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/openMF/mcp-mifosx/go/adapter"
@@ -394,30 +393,31 @@ func (h *Handler) userClientIDs(fa *fineractAuthResponse) map[int64]bool {
 //   - a self-service user (has a linked client) sees ONLY groups their client belongs to;
 //   - an admin/staff user (no linked client, e.g. the seeded `mifos` organizer) sees all
 //     active groups (the organizer/back-office view).
+//
+// PERF: the member path reads each linked client's OWN group associations directly
+// (`GET clients/{id}?associations=groups`) instead of listing every group on the instance and
+// probing each group's client roster. The old scan was O(all-instance-groups) — ~40 Fineract reads
+// per call on the hottest path (auth/me, groups/mine, organizer/dashboard all call this), pushing
+// those endpoints to 13–22s and multiplying the transient-5xx surface (any one sub-call flaking →
+// the whole endpoint 502s → the app's "Could not load groups — Server error"). The direct read is a
+// couple of calls regardless of instance size.
 func (h *Handler) resolveGroups(fa *fineractAuthResponse) ([]GroupMembership, error) {
 	out := []GroupMembership{}
-	raw, err := h.Fineract.DoRequest("GET", "groups", nil, nil)
-	if err != nil {
-		// The primary group listing failed (a mifos-bank-2 502 flap outlasting DoRequest's retry).
-		// Do NOT fail-soft to an empty list — empty is INDISTINGUISHABLE from "genuinely no groups"
-		// and strands a real member on the zero-groups screen. Surface the error so the caller
-		// returns a retryable 502 instead of a false empty membership set.
-		return nil, fmt.Errorf("list groups: %s", strings.TrimSpace(string(nonEmpty(raw))))
-	}
-	var groups []fnGroup
-	if err := json.Unmarshal(raw, &groups); err != nil {
-		return nil, fmt.Errorf("decode groups: %w", err)
-	}
-	var clientIDs map[int64]bool
-	scopedRole := "ORGANIZER"
-	if ids := h.userClientIDs(fa); len(ids) > 0 {
-		clientIDs = ids
-		scopedRole = "MEMBER" // a client-member is a MEMBER unless a group role says otherwise
-	}
+	clientIDs := h.userClientIDs(fa)
 
-	// Admin/staff (no linked client) → all active groups as ORGANIZER, no per-group membership
-	// probe needed (the cheap path).
-	if clientIDs == nil {
+	// Admin/staff (no linked client) → all active groups as ORGANIZER (the back-office view). This is
+	// the ONLY branch that still lists every group — a staff caller genuinely sees them all.
+	if len(clientIDs) == 0 {
+		raw, err := h.Fineract.DoRequest("GET", "groups", nil, nil)
+		if err != nil {
+			// Do NOT fail-soft to empty — empty is indistinguishable from "genuinely no groups" and
+			// strands a real user on the zero-groups screen. Surface the error → retryable 502.
+			return nil, fmt.Errorf("list groups: %s", strings.TrimSpace(string(nonEmpty(raw))))
+		}
+		var groups []fnGroup
+		if err := json.Unmarshal(raw, &groups); err != nil {
+			return nil, fmt.Errorf("decode groups: %w", err)
+		}
 		for _, g := range groups {
 			if !g.Active {
 				continue
@@ -432,55 +432,59 @@ func (h *Handler) resolveGroups(fa *fineractAuthResponse) ([]GroupMembership, er
 		return out, nil
 	}
 
-	// Self-service member: probe each active group's client list to isolate the user's groups.
-	// These probes are independent Fineract reads (~0.6s each) — running them SERIALLY made login
-	// the slowest screen (~6s for ~10 groups). Fan them out concurrently (own result slot per
-	// group; assemble in group order afterward) so login costs ~one probe's latency.
-	active := make([]fnGroup, 0, len(groups))
-	for _, g := range groups {
-		if g.Active {
-			active = append(active, g)
-		}
-	}
-	// Resolve the caller's REAL per-group committee role from dt_member_role (one read per linked
-	// client). Without this every client-member came back as plain "MEMBER", so an organizer /
-	// treasurer / chair / secretary was mis-routed to the personal dashboard instead of the
-	// organizer dashboard (the app routes any leadership role → organizer-dashboard).
+	// Self-service member: read each linked client's OWN group associations directly. One read per
+	// client (usually exactly one), NOT one per instance group. The client's own activationDate is
+	// the "joined" proxy (a full instant via fmtFineractInstant; the association's per-group dates
+	// come back null). Resolve the REAL committee role per group from dt_member_role (one read per
+	// client) so an organizer/treasurer/secretary/chair routes to the organizer dashboard.
 	roleByGroup := h.memberRolesByGroup(clientIDs)
-	memberships := make([]*GroupMembership, len(active))
-	var wg sync.WaitGroup
-	for i, g := range active {
-		wg.Add(1)
-		go func(i int, g fnGroup) {
-			defer wg.Done()
-			members, mErr := h.groupClients(g.ID)
-			if mErr != nil {
-				return
+	seen := map[int64]bool{}
+	var firstErr error
+	for cid := range clientIDs {
+		raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("clients/%d", cid), nil, map[string]string{"associations": "groups"})
+		if err != nil {
+			// Remember the first failure but keep trying the other linked clients. Only surface it (as
+			// a retryable error) if NO client resolved any group — a partial success still lists groups.
+			if firstErr == nil {
+				firstErr = fmt.Errorf("client %d groups: %s", cid, strings.TrimSpace(string(nonEmpty(raw))))
 			}
-			for _, m := range members {
-				if clientIDs[m.ID] {
-					role := scopedRole
-					if r, ok := roleByGroup[strconv.FormatInt(g.ID, 10)]; ok {
-						role = r
-					}
-					memberships[i] = &GroupMembership{
-						GroupID:   strconv.FormatInt(g.ID, 10),
-						GroupName: g.Name,
-						Role:      role,
-						// The app parses joinedAt with kotlinx Instant.parse (LoginSignupMappers.kt:52),
-						// which requires a full ISO-8601 instant — a date-only string crashes it.
-						JoinedAt: fmtFineractInstant(g.ActivationDate),
-					}
-					return
-				}
-			}
-		}(i, g)
-	}
-	wg.Wait()
-	for _, m := range memberships {
-		if m != nil {
-			out = append(out, *m)
+			continue
 		}
+		var client struct {
+			ActivationDate []int `json:"activationDate"`
+			Groups         []struct {
+				ID   int64  `json:"id"`
+				Name string `json:"name"`
+			} `json:"groups"`
+		}
+		if err := json.Unmarshal(raw, &client); err != nil {
+			if firstErr == nil {
+				firstErr = fmt.Errorf("decode client %d: %w", cid, err)
+			}
+			continue
+		}
+		joined := fmtFineractInstant(client.ActivationDate)
+		for _, g := range client.Groups {
+			if g.ID <= 0 || seen[g.ID] {
+				continue
+			}
+			seen[g.ID] = true
+			role := "MEMBER" // a client-member is a MEMBER unless dt_member_role says otherwise
+			if r, ok := roleByGroup[strconv.FormatInt(g.ID, 10)]; ok {
+				role = r
+			}
+			out = append(out, GroupMembership{
+				GroupID:   strconv.FormatInt(g.ID, 10),
+				GroupName: g.Name,
+				Role:      role,
+				JoinedAt:  joined,
+			})
+		}
+	}
+	// Every linked client failed to resolve → surface the error (retryable 502) rather than a false
+	// empty membership set. If at least one group resolved, ignore the partial failure.
+	if len(out) == 0 && firstErr != nil {
+		return nil, firstErr
 	}
 	return out, nil
 }
