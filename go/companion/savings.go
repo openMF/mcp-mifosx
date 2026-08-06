@@ -428,6 +428,14 @@ func (h *Handler) HandleSavingsTransactions(w http.ResponseWriter, r *http.Reque
 
 	raw, derr := h.Fineract.DoRequest("GET", fmt.Sprintf("savingsaccounts/%d", savingsID), nil, map[string]string{"associations": "transactions"})
 	if derr != nil {
+		// Forward a genuine 404 as 404, NOT 502 — the app treats a not-found savings account (e.g. a
+		// member with no individual account) as a valid EMPTY state, but treats 5xx as a hard load
+		// failure that blocks the whole screen. Collapsing 404→502 stranded the savings screen on its
+		// loading shimmer. Any other upstream failure stays a 502.
+		if fineractErrStatus(derr) == http.StatusNotFound {
+			writeErr(w, http.StatusNotFound, "not_found", "savings account not found")
+			return
+		}
 		writeErr(w, http.StatusBadGateway, "upstream_error", string(nonEmpty(raw)))
 		return
 	}
@@ -518,4 +526,19 @@ func dateKey(d []int) int {
 		return 0
 	}
 	return d[0]*10000 + d[1]*100 + d[2]
+}
+
+// fineractErrStatus extracts the HTTP status from a DoRequest error. DoRequest wraps every non-2xx
+// upstream response as `fmt.Errorf("API Error %d", status)`, so a caller can distinguish a 404
+// (not-found → often a valid empty state) from a real 5xx. Returns 0 when the error is a transport
+// failure (no status) or an unrecognized shape.
+func fineractErrStatus(err error) int {
+	if err == nil {
+		return 0
+	}
+	var code int
+	if n, _ := fmt.Sscanf(err.Error(), "API Error %d", &code); n == 1 {
+		return code
+	}
+	return 0
 }
