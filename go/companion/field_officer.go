@@ -47,7 +47,14 @@ func (h *Handler) HandleFieldOfficerGroups(w http.ResponseWriter, r *http.Reques
 // as an opaque ByteArray, so the report bytes are streamed through verbatim; Content-Type is set from
 // the output-type param (json default) purely so a browser/devtools render is sensible.
 func (h *Handler) HandleFieldOfficerReport(w http.ResponseWriter, r *http.Request) {
-	q := passthroughQuery(r, "R_staffId", "output-type")
+	// The app passes the field officer's staff id as R_staffId. The FieldOfficerGroupReport declares
+	// the stock `loanOfficerIdSelectAll` parameter (SQL var ${loanOfficerId}, run-param R_loanOfficerId)
+	// — in Fineract a group's staff IS its loan officer — so translate R_staffId -> R_loanOfficerId
+	// before running the report. (Registered by server-layer/migrations/register-reports.)
+	q := passthroughQuery(r, "output-type")
+	if staff := strings.TrimSpace(r.URL.Query().Get("R_staffId")); staff != "" {
+		q["R_loanOfficerId"] = staff
+	}
 	raw, err := h.Fineract.DoRequest("GET", "runreports/FieldOfficerGroupReport", nil, q)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", "field-officer report: "+strings.TrimSpace(string(nonEmpty(raw))))
