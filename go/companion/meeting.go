@@ -767,16 +767,62 @@ func (h *Handler) HandleActiveLoans(w http.ResponseWriter, r *http.Request) {
 			if !l.Status.Active {
 				continue
 			}
-			items = append(items, meetingActiveLoanDto{
+			item := meetingActiveLoanDto{
 				LoanID:             strconv.FormatInt(l.ID, 10),
 				ClientID:           strconv.FormatInt(c.ID, 10),
 				ClientName:         c.Name,
 				OutstandingBalance: roundKES(l.LoanBalance),
 				IsOverdue:          l.InArrears,
-			})
+			}
+			// The clients/{id}/accounts summary row carries no principal, installment count, or
+			// schedule, so step 4 loan-review would render "KES 0 · Week 0 of 0" for every loan.
+			// Enrich from the loan's repayment schedule (one detail fetch per active loan — cheap
+			// at meeting scale); on any upstream failure we keep the safe zero-defaults.
+			if draw, derr := h.Fineract.DoRequest("GET", fmt.Sprintf("loans/%d", l.ID), nil, map[string]string{"associations": "repaymentSchedule"}); derr == nil {
+				var ld fnLoanDetailRaw
+				if json.Unmarshal(draw, &ld) == nil {
+					item.Principal = roundKES(ld.Principal)
+					item.NumberOfRepayments, item.WeekNumber, item.ExpectedWeeklyRepayment =
+						summarizeLoanSchedule(ld.RepaymentSchedule.Periods)
+				}
+			}
+			items = append(items, item)
 		}
 	}
 	_ = json.NewEncoder(w).Encode(loanListResponseDto{TotalFilteredRecords: len(items), PageItems: items})
+}
+
+// summarizeLoanSchedule derives the meeting-review projection from a loan's repayment schedule:
+//   - numberOfRepayments: real installment periods only (Fineract emits a period==0/null
+//     disbursement row that is NOT an installment).
+//   - weekNumber: the installment the group is collecting for this meeting — the first
+//     not-yet-complete period's number; if every installment is paid it pins to the last (a
+//     fully-paid loan would not be ACTIVE, so this only guards the edge).
+//   - expectedWeekly: the current week's total due (what the treasurer collects now), falling
+//     back to the first payable installment for the fully-paid guard. Flat weekly VSLA loans
+//     have a uniform installment, so the two coincide in the common case.
+func summarizeLoanSchedule(periods []fnLoanPeriod) (numberOfRepayments, weekNumber int, expectedWeekly int64) {
+	var currentDue, firstDue float64
+	for _, p := range periods {
+		if p.Period == nil || *p.Period <= 0 {
+			continue // skip the disbursement row
+		}
+		numberOfRepayments++
+		if firstDue == 0 && p.TotalDueForPeriod > 0 {
+			firstDue = p.TotalDueForPeriod
+		}
+		if !p.Complete && weekNumber == 0 {
+			weekNumber = *p.Period
+			currentDue = p.TotalDueForPeriod
+		}
+	}
+	if weekNumber == 0 {
+		weekNumber = numberOfRepayments // all installments complete → last week
+	}
+	if currentDue == 0 {
+		currentDue = firstDue
+	}
+	return numberOfRepayments, weekNumber, roundKES(currentDue)
 }
 
 // HandleLoanVotes (meetingconduct.getLoanVotes) returns the single dt_loan_vote tally for a
