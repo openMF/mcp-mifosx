@@ -288,7 +288,12 @@ type dataTableEntryResponseDto struct {
 // ---- App-facing write request bodies (camelCase, as the app POSTs them) ----
 
 type createMeetingRecordRequestIn struct {
+	// The app's CreateMeetingRecordRequestDto serializes the group scope as `groupId` (Group-centric
+	// model — m_group IS the center); older callers sent `centerId`. Accept BOTH so the submit's
+	// priority-1 record write is never rejected (a missing scope 400'd the whole submit → offline
+	// fallthrough → empty meeting-summary). i64() prefers whichever is set.
 	CenterID                int    `json:"centerId"`
+	GroupID                 int    `json:"groupId"`
 	MeetingNumber           int    `json:"meetingNumber"`
 	ActualDate              string `json:"actualDate"`
 	OpeningCorpus           int64  `json:"openingCorpus"`
@@ -585,6 +590,14 @@ func (h *Handler) handleMeetingSummary(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The app records per-member savings as separate savingsaccounts transactions, NOT into the
+	// attendance rows, so the per-member breakdown sum (groupSavings) is 0 for app-submitted
+	// meetings while the record row carries the real group total. Fall back to the record total so
+	// the "Group Savings" card is consistent with "Total Collected" (individual stays 0 — the app's
+	// VSLA meetings collect group savings only).
+	if groupSavings == 0 {
+		groupSavings = roundKES(rec.TotalSavingsCollected)
+	}
 	_ = json.NewEncoder(w).Encode(meetingSummaryRecordDto{
 		MeetingID:                  meetingKey(centerID, meetingNumber),
 		MeetingNumber:              meetingNumber,
@@ -870,8 +883,11 @@ func (h *Handler) HandlePostMeetingRecord(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
+	if in.CenterID <= 0 {
+		in.CenterID = in.GroupID // app sends the scope as groupId (Group-centric)
+	}
 	if in.CenterID <= 0 || in.MeetingNumber <= 0 {
-		writeErr(w, http.StatusBadRequest, "bad_request", "centerId and meetingNumber are required")
+		writeErr(w, http.StatusBadRequest, "bad_request", "groupId (or centerId) and meetingNumber are required")
 		return
 	}
 	row := map[string]interface{}{
