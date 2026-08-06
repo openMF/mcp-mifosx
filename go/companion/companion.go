@@ -103,6 +103,10 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	h.registerLoanDetailRoutes(mux)
 	h.registerGroupTypeCatalogRoutes(mux)
 	h.registerPassthroughRoutes(mux)
+	// COMP-CHANGEPW: change-password via SERVICE creds (replaces the /self/user/updatePassword call,
+	// which 403s for client-only users). Registered BEFORE the /self/ subtree so the specific
+	// PUT /companion/self/user/updatePassword wins — though it is a distinct /companion/ prefix anyway.
+	h.registerChangePasswordRoutes(mux)
 	// COMP-SELF: native self-service passthrough (/self/* forwarded with the caller's own creds).
 	h.registerSelfPassthroughRoutes(mux)
 	// COMP-FO: field-officer staff facade (groups-by-staff + FieldOfficerGroupReport).
