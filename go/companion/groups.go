@@ -267,11 +267,15 @@ func (h *Handler) HandleMyGroups(w http.ResponseWriter, r *http.Request) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			card := GroupDto{
-				ID:              m.GroupID,
-				Name:            m.GroupName,
-				GroupType:       "VSLA",
-				ViewerRole:      m.Role,
-				LastMeetingDate: m.JoinedAt,
+				ID:         m.GroupID,
+				Name:       m.GroupName,
+				GroupType:  "VSLA",
+				ViewerRole: m.Role,
+				// The app parses lastMeetingDate with LocalDate.parse (GroupMappers.kt:37 /
+				// GroupsPagingStore.kt:122) — a DATE-ONLY "yyyy-MM-dd". m.JoinedAt is a full ISO
+				// instant (…T00:00:00Z, required by the login joinedAt), which LocalDate.parse rejects
+				// ("unparsed text found at index 10"). Emit the date part only.
+				LastMeetingDate: dateOnly(m.JoinedAt),
 				HealthIndicator: healthFor(0, 0),
 				OverdueRate:     overdueRate(0, 0),
 				Status:          "active",
@@ -671,4 +675,13 @@ func fmtFineractInstant(parts []int) string {
 		return "2026-01-01T00:00:00Z"
 	}
 	return fmt.Sprintf("%04d-%02d-%02dT00:00:00Z", parts[0], parts[1], parts[2])
+}
+
+// dateOnly returns the yyyy-MM-dd prefix of a value that may be a full ISO instant (…T…Z). The app
+// parses date fields like lastMeetingDate with LocalDate.parse, which rejects a time component.
+func dateOnly(s string) string {
+	if i := strings.IndexByte(s, 'T'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
