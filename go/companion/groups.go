@@ -83,7 +83,11 @@ type GroupInstanceConfigDto struct {
 // the join-preview superset — omitting any REQUIRED one made the invitee's preview fail
 // deserialization (SerializationException → the app's misleading "No internet connection").
 type GroupDetailDto struct {
-	ID                string                 `json:"id"`
+	ID string `json:"id"`
+	// App GroupDetailDto REQUIRES fineractGroupId (non-nullable Long) — omitting it fails kotlinx
+	// deserialization on the group-detail/dashboard screen. Group-centric model: the group's own id
+	// IS the fineract group id; fineractCenterId is a legacy mirror (Center dropped).
+	FineractGroupID   int64                  `json:"fineractGroupId"`
 	FineractCenterID  int64                  `json:"fineractCenterId"`
 	Name              string                 `json:"name"`
 	CycleNumber       int                    `json:"cycleNumber"`
@@ -427,6 +431,7 @@ func (h *Handler) aggregateGroup(groupID int64) (GroupDetailDto, []memberRef, er
 
 	detail := GroupDetailDto{
 		ID:                strconv.FormatInt(g.ID, 10),
+		FineractGroupID:   g.ID,
 		FineractCenterID:  deref(g.CenterID),
 		Name:              g.Name,
 		CycleNumber:       1,  // computed default: fresh VSLA seed is on its first cycle
