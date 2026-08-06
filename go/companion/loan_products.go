@@ -140,6 +140,12 @@ func (h *Handler) HandleLoanTemplate(w http.ResponseWriter, r *http.Request) {
 			q[k] = v
 		}
 	}
+	// The app bootstraps the loan-apply combine with productId=0 (no product selected yet), but
+	// Fineract's /loans/template REJECTS productId=0 with a 500/502 — dropping it makes Fineract
+	// return the generic product-agnostic template (200) the form needs to initialise its defaults.
+	if q["productId"] == "0" {
+		delete(q, "productId")
+	}
 	if q["templateType"] == "" {
 		q["templateType"] = "individual"
 	}
