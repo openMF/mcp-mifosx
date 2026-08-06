@@ -204,9 +204,13 @@ func (h *Handler) HandleClientAccounts(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(doc)
 }
 
-// HandleGroupConfigDatatable proxies GET /datatables/dt_group_config/{groupId}. An unprovisioned
-// or empty config degrades to [] (the app defaults the loan multiplier) rather than failing the
-// loan-apply combine.
+// HandleGroupConfigDatatable serves GET /datatables/dt_group_config/{groupId} as the app's
+// GroupLoanConfigDto OBJECT ({loan_multiplier, max_loan_amount, meeting_frequency}). Fineract returns
+// the datatable as an ARRAY of rows and carries no max_loan_amount column, so this unwraps the first
+// row (like HandleGroupCorpusRead) and DERIVES max_loan_amount = contribution_amount × loan_multiplier
+// × cycle_length_weeks (a full cycle of contributions, leveraged by the multiplier — the standard VSLA
+// borrowing cap). An unprovisioned/empty config degrades to {} so the app defaults, not the array
+// `[` that broke GroupLoanConfigDto deserialization ("Expected '{' but had '['").
 func (h *Handler) HandleGroupConfigDatatable(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
 	groupID, ok := groupIDParam(w, r)
@@ -215,8 +219,28 @@ func (h *Handler) HandleGroupConfigDatatable(w http.ResponseWriter, r *http.Requ
 	}
 	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("datatables/dt_group_config/%d", groupID), nil, nil)
 	if err != nil {
-		_, _ = w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("{}"))
 		return
 	}
-	_, _ = w.Write(raw)
+	var rows []struct {
+		LoanMultiplier     float64 `json:"loan_multiplier"`
+		ContributionAmount float64 `json:"contribution_amount"`
+		CycleLengthWeeks   float64 `json:"cycle_length_weeks"`
+		MeetingFrequency   string  `json:"meeting_frequency"`
+	}
+	if json.Unmarshal(raw, &rows) != nil || len(rows) == 0 {
+		_, _ = w.Write([]byte("{}"))
+		return
+	}
+	row := rows[0]
+	weeks := row.CycleLengthWeeks
+	if weeks <= 0 {
+		weeks = 52
+	}
+	maxLoan := row.ContributionAmount * row.LoanMultiplier * weeks
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"loan_multiplier":   row.LoanMultiplier,
+		"max_loan_amount":   maxLoan,
+		"meeting_frequency": row.MeetingFrequency,
+	})
 }

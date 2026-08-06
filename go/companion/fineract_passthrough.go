@@ -25,7 +25,6 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"strings"
 )
 
 // registerFineractPassthroughRoutes wires the COMP-PROXY staff passthroughs. Called from RegisterRoutes.
@@ -50,19 +49,8 @@ func (h *Handler) handleFineractServiceProxy(w http.ResponseWriter, r *http.Requ
 // header (the /self/* native self-service surface). The tenant header is always injected.
 func (h *Handler) proxyToFineract(w http.ResponseWriter, r *http.Request, serviceAuth bool) {
 	target := h.Fineract.BaseURL + r.URL.Path
-	q := r.URL.RawQuery
-	// Fineract serializes dates as [year,month,day] ARRAYS by default, but the app's DTOs parse date
-	// fields (activationDate, timeline, ...) as yyyy-MM-dd STRINGS — so a raw read deserialization-
-	// fails ("Expected beginning of the string, but got [" — member-profile getClient /clients/{id}).
-	// Ask Fineract for string dates on every GET read so raw passthroughs match the app's convention.
-	if r.Method == http.MethodGet && !strings.Contains(q, "dateFormat=") {
-		if q != "" {
-			q += "&"
-		}
-		q += "dateFormat=yyyy-MM-dd&locale=en"
-	}
-	if q != "" {
-		target += "?" + q
+	if r.URL.RawQuery != "" {
+		target += "?" + r.URL.RawQuery
 	}
 
 	var body io.Reader
