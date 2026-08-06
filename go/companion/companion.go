@@ -442,6 +442,11 @@ func (h *Handler) resolveGroups(fa *fineractAuthResponse) ([]GroupMembership, er
 			active = append(active, g)
 		}
 	}
+	// Resolve the caller's REAL per-group committee role from dt_member_role (one read per linked
+	// client). Without this every client-member came back as plain "MEMBER", so an organizer /
+	// treasurer / chair / secretary was mis-routed to the personal dashboard instead of the
+	// organizer dashboard (the app routes any leadership role → organizer-dashboard).
+	roleByGroup := h.memberRolesByGroup(clientIDs)
 	memberships := make([]*GroupMembership, len(active))
 	var wg sync.WaitGroup
 	for i, g := range active {
@@ -454,10 +459,14 @@ func (h *Handler) resolveGroups(fa *fineractAuthResponse) ([]GroupMembership, er
 			}
 			for _, m := range members {
 				if clientIDs[m.ID] {
+					role := scopedRole
+					if r, ok := roleByGroup[strconv.FormatInt(g.ID, 10)]; ok {
+						role = r
+					}
 					memberships[i] = &GroupMembership{
 						GroupID:   strconv.FormatInt(g.ID, 10),
 						GroupName: g.Name,
-						Role:      scopedRole,
+						Role:      role,
 						// The app parses joinedAt with kotlinx Instant.parse (LoginSignupMappers.kt:52),
 						// which requires a full ISO-8601 instant — a date-only string crashes it.
 						JoinedAt: fmtFineractInstant(g.ActivationDate),
@@ -474,6 +483,55 @@ func (h *Handler) resolveGroups(fa *fineractAuthResponse) ([]GroupMembership, er
 		}
 	}
 	return out, nil
+}
+
+// memberRolesByGroup reads the caller's dt_member_role rows (one read per linked client — usually
+// exactly one) and returns a group_id(string) -> normalized-role map. A group with several rows for
+// the client keeps the strongest (a leadership row wins over a plain MEMBER row). Best-effort: a read
+// failure for one client just omits its rows (the caller falls back to the default scoped role).
+func (h *Handler) memberRolesByGroup(clientIDs map[int64]bool) map[string]string {
+	roles := map[string]string{}
+	for cid := range clientIDs {
+		raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("datatables/dt_member_role/%d", cid), nil, nil)
+		if err != nil {
+			continue
+		}
+		var rows []struct {
+			GroupID int64  `json:"group_id"`
+			Role    string `json:"role"`
+		}
+		if json.Unmarshal(raw, &rows) != nil {
+			continue
+		}
+		for _, row := range rows {
+			if row.GroupID <= 0 || strings.TrimSpace(row.Role) == "" {
+				continue
+			}
+			gid := strconv.FormatInt(row.GroupID, 10)
+			norm := normalizeGroupRole(row.Role)
+			if existing, ok := roles[gid]; !ok || (existing == "MEMBER" && norm != "MEMBER") {
+				roles[gid] = norm
+			}
+		}
+	}
+	return roles
+}
+
+// normalizeGroupRole maps a raw dt_member_role value onto the app's GroupRole enum
+// (ORGANIZER | MEMBER | TREASURER | SECRETARY). CHAIRPERSON has no app-enum member, so it folds onto
+// ORGANIZER (a chair is an organizer-level leader); any unrecognized value is treated as MEMBER so an
+// unknown role never accidentally grants the organizer view.
+func normalizeGroupRole(role string) string {
+	switch strings.ToUpper(strings.TrimSpace(role)) {
+	case "ORGANIZER", "CHAIRPERSON", "CHAIR":
+		return "ORGANIZER"
+	case "TREASURER":
+		return "TREASURER"
+	case "SECRETARY":
+		return "SECRETARY"
+	default:
+		return "MEMBER"
+	}
 }
 
 // callerFromRequest resolves the authenticated caller from the Authorization
