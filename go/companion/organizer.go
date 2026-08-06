@@ -56,14 +56,19 @@ func (h *Handler) registerOrganizerRoutes(mux *http.ServeMux) {
 // schedule fields default (mifos-bank-2 exposes no per-group meeting calendar yet).
 func (h *Handler) HandleOrganizerDashboard(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	raw, err := h.Fineract.DoRequest("GET", "groups", nil, nil)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", string(nonEmpty(raw)))
+	// Scope the dashboard to the CALLER's groups (resolveGroups), not every active group on the
+	// instance. The previous path aggregated ALL groups — so a member saw myGroupCount=39 (the whole
+	// instance) and it ran aggregateGroup+aggregateLoans ~39 times, making the first post-login screen
+	// slow AND wrong. resolveGroups isolates the caller's groups (member-scoped via the userClientIDs
+	// externalId match), so the KPIs reflect only groups the caller belongs to / organizes.
+	fa := h.callerFromRequest(r)
+	if fa == nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized", "missing or invalid session token")
 		return
 	}
-	var groups []fnGroup
-	if err := json.Unmarshal(raw, &groups); err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", "decode groups: "+err.Error())
+	memberships, err := h.resolveGroups(fa)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", "resolve groups: "+err.Error())
 		return
 	}
 
@@ -71,11 +76,9 @@ func (h *Handler) HandleOrganizerDashboard(w http.ResponseWriter, r *http.Reques
 	// "Welcome back, Rajan". Falls back to the generic "Organizer" only when the
 	// caller can't be resolved — personalization is best-effort, never blocking.
 	organizerName := "Organizer"
-	if fa := h.callerFromRequest(r); fa != nil {
-		if display := h.resolveDisplayName(fa); display != "" {
-			if first, _ := splitName(display); first != "" {
-				organizerName = first
-			}
+	if display := h.resolveDisplayName(fa); display != "" {
+		if first, _ := splitName(display); first != "" {
+			organizerName = first
 		}
 	}
 
@@ -84,29 +87,26 @@ func (h *Handler) HandleOrganizerDashboard(w http.ResponseWriter, r *http.Reques
 		TodaySchedule:  []OrganizerScheduledMeeting{},
 		RecentActivity: []OrganizerActivityItem{},
 	}
-	// Aggregate each group CONCURRENTLY — every group is an independent aggregateGroup +
-	// aggregateLoans fan-out, and doing them serially made the first post-login screen the
-	// slowest (~11s for 4 groups). Each goroutine writes only its own result slot; the merge
-	// into the summary is done sequentially afterwards, preserving group order.
-	activeGroups := make([]fnGroup, 0, len(groups))
-	for _, g := range groups {
-		if g.Active {
-			activeGroups = append(activeGroups, g)
-		}
-	}
+	// Aggregate each of the caller's groups CONCURRENTLY — every group is an independent
+	// aggregateGroup + aggregateLoans fan-out. Each goroutine writes only its own result slot; the
+	// merge into the summary is done sequentially afterwards, preserving group order.
 	type grpResult struct {
 		ok          bool
 		memberCount int
 		schedule    OrganizerScheduledMeeting
 		activity    []OrganizerActivityItem
 	}
-	results := make([]grpResult, len(activeGroups))
+	results := make([]grpResult, len(memberships))
 	var wg sync.WaitGroup
-	for i, g := range activeGroups {
+	for i, m := range memberships {
 		wg.Add(1)
-		go func(i int, g fnGroup) {
+		go func(i int, m GroupMembership) {
 			defer wg.Done()
-			detail, members, aerr := h.aggregateGroup(g.ID)
+			gid, perr := strconv.ParseInt(m.GroupID, 10, 64)
+			if perr != nil {
+				return
+			}
+			detail, members, aerr := h.aggregateGroup(gid)
 			if aerr != nil {
 				return
 			}
@@ -116,8 +116,8 @@ func (h *Handler) HandleOrganizerDashboard(w http.ResponseWriter, r *http.Reques
 				// Meeting schedule is a VSLA-cadence default (WEEKLY) — mifos-bank-2 exposes no
 				// per-group calendar yet; surface the real group + member count.
 				schedule: OrganizerScheduledMeeting{
-					GroupID:     strconv.FormatInt(g.ID, 10),
-					GroupName:   g.Name,
+					GroupID:     m.GroupID,
+					GroupName:   m.GroupName,
 					MeetingTime: "14:00",
 					MemberCount: detail.MemberCount,
 				},
@@ -130,11 +130,11 @@ func (h *Handler) HandleOrganizerDashboard(w http.ResponseWriter, r *http.Reques
 					Description: row.Description,
 					Amount:      row.Amount,
 					Date:        row.Date,
-					GroupName:   g.Name,
+					GroupName:   m.GroupName,
 				})
 			}
 			results[i] = res
-		}(i, g)
+		}(i, m)
 	}
 	wg.Wait()
 	for _, res := range results {
