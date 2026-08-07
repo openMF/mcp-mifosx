@@ -14,7 +14,35 @@ package companion
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 )
+
+// catalogBySlug returns the archetype catalogue entry for a slug (e.g. "VSLA") and
+// whether it was found. group-create uses it to fill the dt_group_type_config
+// mandatory display_name + archetype-default columns (lending/welfare/size) from the
+// chosen group type. Case- and whitespace-insensitive on the slug.
+func catalogBySlug(slug string) (GroupTypeConfigDto, bool) {
+	s := strings.ToUpper(strings.TrimSpace(slug))
+	for _, c := range groupTypeCatalog {
+		if strings.ToUpper(c.TypeSlug) == s {
+			return c, true
+		}
+	}
+	return GroupTypeConfigDto{}, false
+}
+
+// titleFromSlug is the display_name fallback when a slug is not in the catalogue:
+// "CBO_VILLAGE_BANK" -> "Cbo Village Bank". Only reached for a non-catalogue slug.
+func titleFromSlug(slug string) string {
+	parts := strings.FieldsFunc(slug, func(r rune) bool { return r == '_' || r == '-' })
+	for i, p := range parts {
+		if p == "" {
+			continue
+		}
+		parts[i] = strings.ToUpper(p[:1]) + strings.ToLower(p[1:])
+	}
+	return strings.Join(parts, " ")
+}
 
 // GroupTypeConfigDto mirrors the app DTO field-for-field (camelCase @SerialName).
 type GroupTypeConfigDto struct {

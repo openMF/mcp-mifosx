@@ -47,8 +47,9 @@ import (
 
 // groupTypeConfigTable is the Fineract datatable (apptable m_group) the VSLA
 // typeConfig row is written to. Provisioned out-of-band via POST /datatables
-// (idempotent — Fineract 400s "already registered", treated as OK). Its columns
-// mirror CreateGroupTypeConfigDto's snake_case @SerialName's 1:1.
+// (idempotent — Fineract 400s "already registered", treated as OK). Its columns are
+// the Group-centric archetype schema (datatables.manifest.json) — the app's
+// createGroupTypeConfigDto is mapped onto them in fineractWriteGroupTypeConfig.
 const groupTypeConfigTable = "dt_group_type_config"
 
 // registerGroupCreateRoutes wires the COMP-GRP-001 write endpoint. Called from
@@ -258,22 +259,52 @@ func (h *Handler) fineractActivateGroup(groupID int64) error {
 // CreateGroupTypeConfigDto @SerialName's. locale is included so Fineract parses
 // the decimal columns; there are no date columns, so no dateFormat is needed.
 func (h *Handler) fineractWriteGroupTypeConfig(groupID int64, tc createGroupTypeConfigDto) error {
+	// dt_group_type_config stores the group's ARCHETYPE identity + shareout model. Its schema
+	// (idea-layer/server/DATATABLE_REGISTRY.yaml → datatables.manifest.json) is the SoT: slug +
+	// display_name are the two MANDATORY columns, so we map the app's createGroupTypeConfigDto
+	// (group_type == the archetype slug) onto the manifest column names and fill display_name +
+	// archetype-default booleans/sizes from the group-type catalogue. Runtime parameters that used
+	// to be crammed here (interest_rate, fine_amount, loan multiplier) live in the sibling
+	// dt_group_config, not this table — writing them here 400'd Fineract as unknown columns.
+	slug := strings.ToUpper(strings.TrimSpace(tc.GroupType))
+	if slug == "" {
+		slug = "VSLA" // the default archetype the create-group wizard seeds
+	}
+	cat, ok := catalogBySlug(slug)
+	displayName := titleFromSlug(slug)
+	if ok {
+		displayName = cat.DisplayName
+	}
+	loanCap := tc.LoanMultiplier
+	if loanCap == 0 && ok {
+		loanCap = cat.DefaultLoanMultiplier
+	}
 	row := map[string]interface{}{
-		"group_type":          tc.GroupType,
-		"pool_model":          tc.PoolModel,
-		"contribution_model":  tc.ContributionModel,
-		"shareout_formula":    tc.ShareoutFormula,
-		"payout_order_method": tc.PayoutOrderMethod,
-		"share_value":         tc.ShareValue,
-		"contribution_amount": tc.ContributionAmount,
-		"social_fund_enabled": tc.SocialFundEnabled,
-		"social_fund_percent": tc.SocialFundPercent,
-		"cycle_length_months": tc.CycleLengthMonths,
-		"loan_multiplier":     tc.LoanMultiplier,
-		"interest_rate":       tc.InterestRate,
-		"fine_amount":         tc.FineAmount,
-		"max_members":         tc.MaxMembers,
-		"locale":              "en",
+		"slug":                     slug,        // mandatory
+		"display_name":             displayName, // mandatory
+		"pool_model":               tc.PoolModel,
+		"payout_order_method":      tc.PayoutOrderMethod,
+		"shareout_formula":         tc.ShareoutFormula,
+		"contribution_model":       tc.ContributionModel,
+		"share_value":              tc.ShareValue,
+		"contribution_amount":      tc.ContributionAmount,
+		"internal_lending_enabled": ok && cat.LendingEnabled,
+		"loan_multiplier_cap":      loanCap,
+		"social_fund_enabled":      tc.SocialFundEnabled,
+		"social_fund_contribution": tc.SocialFundPercent,
+		"welfare_only_mode":        ok && cat.WelfareOnlyMode,
+		"cycle_length_months":      tc.CycleLengthMonths,
+		"locale":                   "en",
+	}
+	maxMembers := tc.MaxMembers
+	if maxMembers == 0 && ok {
+		maxMembers = cat.MaxMembers
+	}
+	if maxMembers > 0 {
+		row["group_size_max"] = maxMembers
+	}
+	if ok && cat.MinMembers > 0 {
+		row["group_size_min"] = cat.MinMembers
 	}
 	raw, err := h.Fineract.DoRequest("POST", fmt.Sprintf("datatables/%s/%d", groupTypeConfigTable, groupID), row, nil)
 	if err != nil {
