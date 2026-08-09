@@ -1,0 +1,13 @@
+# Maven build output
+/target/
+
+# IDE
+.idea/
+.project
+.classpath
+.settings/
+*.iml
+
+# Runtime / local
+*.log
+keystore.jks
