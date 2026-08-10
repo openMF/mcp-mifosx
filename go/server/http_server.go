@@ -60,7 +60,7 @@ func (s *MifosHTTPServer) Serve() error {
 
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Mifos-Tenant-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Mifos-Tenant-Id, Fineract-Platform-TenantId")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)

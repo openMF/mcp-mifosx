@@ -1,0 +1,40 @@
+name: Keep companion warm
+
+# Render's free tier spins a web service down after ~15 min idle; the next request
+# then eats a ~20-30s cold start (the "server error" the MifosSave app + site hit on
+# the first login / member-profile / meeting load). This pings the unauthenticated
+# /companion/build health endpoint on a schedule so the service stays warm.
+#
+# NOTE: GitHub's scheduled runs are best-effort and frequently delayed/coalesced under
+# load, and schedules are disabled on repos with no activity for 60 days. For a hard
+# SLA prefer an external uptime monitor (UptimeRobot / cron-job.org, 5-min interval)
+# or a paid Render always-on instance. This workflow is the zero-cost baseline.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes (GitHub may delay)
+  workflow_dispatch: {}
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping /companion/build (wakes a spun-down Render service)
+        run: |
+          url="https://mifossave-companion.onrender.com/companion/build"
+          for i in 1 2 3; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 90 "$url" || echo 000)
+            echo "attempt $i -> $code"
+            [ "$code" = "200" ] && exit 0
+            sleep 15
+          done
+          echo "companion did not return 200 after 3 attempts"
+          exit 1
