@@ -17,7 +17,7 @@
 //	2. POST groups/{id}?command=activate               -> activate it
 //	3. POST datatables/dt_group_type_config/{id}        -> persist the VSLA typeConfig row
 //
-// then returns the { groupId, fineractCenterId, inviteCode } shape the app maps
+// then returns the { groupId, fineractGroupId, inviteCode } shape the app maps
 // to core.model.GroupCreationResult. The request payload has NO member list
 // (organizer creates an empty group; members join later via the invite code),
 // so there is no client-association step.
@@ -32,7 +32,7 @@
 // response fields are camelCase; the nested typeConfig is snake_case (its
 // @SerialName's are raw Fineract datatable column names). The response carries
 // NO date field, so the Instant.parse / date-only caveat that bit the auth
-// path's joinedAt does NOT apply here — groupId is a String, fineractCenterId a
+// path's joinedAt does NOT apply here — groupId is a String, fineractGroupId a
 // Long, inviteCode a String.
 package companion
 
@@ -92,10 +92,9 @@ type createGroupRequestDto struct {
 
 // createGroupResponseDto == CreateGroupResponseDto.
 type createGroupResponseDto struct {
-	GroupID          string `json:"groupId"`
-	FineractGroupID  int64  `json:"fineractGroupId"`  // canonical (Group-centric) — the app's CreateGroupResponseDto requires this
-	FineractCenterID int64  `json:"fineractCenterId"` // legacy mirror (retained for back-compat; app ignores unknown keys)
-	InviteCode       string `json:"inviteCode"`
+	GroupID         string `json:"groupId"`
+	FineractGroupID int64  `json:"fineractGroupId"` // canonical (Group-centric) — the app's CreateGroupResponseDto requires this
+	InviteCode      string `json:"inviteCode"`
 }
 
 // ---- Handler ----
@@ -145,14 +144,12 @@ func (h *Handler) HandleCreateGroup(w http.ResponseWriter, r *http.Request) {
 			map[string]interface{}{"role": "ORGANIZER", "client_type": "organizer", "group_id": groupID, "is_active": true, "locale": "en"}, nil)
 	}
 
-	// 4. Return the app's response shape. fineractCenterId mirrors the new group
-	// id (this flow creates a plain group, not a parent center) — a real, non-zero
-	// Fineract entity id; the app's success screen surfaces inviteCode.
+	// 4. Return the app's response shape — a real, non-zero Fineract group id; the
+	// app's success screen surfaces inviteCode.
 	_ = json.NewEncoder(w).Encode(createGroupResponseDto{
-		GroupID:          strconv.FormatInt(groupID, 10),
-		FineractGroupID:  groupID,
-		FineractCenterID: groupID,
-		InviteCode:       inviteCodeFor(req.Name, groupID),
+		GroupID:         strconv.FormatInt(groupID, 10),
+		FineractGroupID: groupID,
+		InviteCode:      inviteCodeFor(req.Name, groupID),
 	})
 }
 

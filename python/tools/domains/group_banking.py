@@ -42,33 +42,33 @@ def _update_entry(table: str, entity_id: int, data: dict, with_dates: bool = Fal
 
 
 # ════════════════════════════════════════════════════════════════════
-# T2-1  dt_group_config  (m_center, single-row)
+# T2-1  dt_group_config  (m_group, single-row)
 # ════════════════════════════════════════════════════════════════════
 
 @tool
-def get_group_config(center_id: int):
+def get_group_config(group_id: int):
     """Answers: 'Show the cycle rules for group #N' — savings min/max, loan multiplier, fines, status."""
-    print(f"[Tool] Fetching dt_group_config for center #{center_id}...")
-    return _entries("dt_group_config", center_id)
+    print(f"[Tool] Fetching dt_group_config for group #{group_id}...")
+    return _entries("dt_group_config", group_id)
 
 
 @tool
-def upsert_group_config(center_id: int, config: dict):
+def upsert_group_config(group_id: int, config: dict):
     """Answers: 'Save the group's cycle rules'. config keys match dt_group_config columns
     (cycle_number, cycle_length_months, contribution_min/max, loan_multiplier, ...)."""
-    print(f"[Tool] Upserting dt_group_config for center #{center_id}...")
-    existing = _entries("dt_group_config", center_id)
+    print(f"[Tool] Upserting dt_group_config for group #{group_id}...")
+    existing = _entries("dt_group_config", group_id)
     if isinstance(existing, list) and len(existing) > 0:
-        return _update_entry("dt_group_config", center_id, config, with_dates=True)
-    return _create_entry("dt_group_config", center_id, config, with_dates=True)
+        return _update_entry("dt_group_config", group_id, config, with_dates=True)
+    return _create_entry("dt_group_config", group_id, config, with_dates=True)
 
 
 @tool
-def advance_cycle(center_id: int, new_cycle_number: int, new_start_date: str, new_end_date: str):
+def advance_cycle(group_id: int, new_cycle_number: int, new_start_date: str, new_end_date: str):
     """Answers: 'Start a new cycle for group #N after share-out'. Increments cycle_number,
     sets new dates, resets cycle_status to 'active'."""
-    print(f"[Tool] Advancing center #{center_id} to cycle #{new_cycle_number}...")
-    return _update_entry("dt_group_config", center_id, {
+    print(f"[Tool] Advancing group #{group_id} to cycle #{new_cycle_number}...")
+    return _update_entry("dt_group_config", group_id, {
         "cycle_number": new_cycle_number,
         "cycle_start_date": new_start_date,
         "cycle_end_date": new_end_date,
@@ -77,23 +77,23 @@ def advance_cycle(center_id: int, new_cycle_number: int, new_start_date: str, ne
 
 
 # ════════════════════════════════════════════════════════════════════
-# T2-2  dt_meeting_record  (m_center, multi-row)
+# T2-2  dt_meeting_record  (m_group, multi-row)
 # ════════════════════════════════════════════════════════════════════
 
 @tool
-def list_meetings(center_id: int):
+def list_meetings(group_id: int):
     """Answers: 'Show all meeting records for group #N'."""
-    print(f"[Tool] Fetching meeting records for center #{center_id}...")
-    return _entries("dt_meeting_record", center_id)
+    print(f"[Tool] Fetching meeting records for group #{group_id}...")
+    return _entries("dt_meeting_record", group_id)
 
 
 @tool
-def record_meeting(center_id: int, meeting: dict):
+def record_meeting(group_id: int, meeting: dict):
     """Answers: 'Save a meeting summary'. meeting keys: meeting_number, meeting_date, status,
     members_present, members_absent, total_savings_collected, total_fines_collected,
     loans_approved_count, loans_approved_amount, notes."""
-    print(f"[Tool] Recording meeting for center #{center_id}...")
-    return _create_entry("dt_meeting_record", center_id, meeting, with_dates=True)
+    print(f"[Tool] Recording meeting for group #{group_id}...")
+    return _create_entry("dt_meeting_record", group_id, meeting, with_dates=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -153,44 +153,44 @@ def assign_member_role(client_id: int, role: str, assigned_date: str, assigned_b
 
 
 # ════════════════════════════════════════════════════════════════════
-# T2-5  dt_share_out  (m_center, multi-row)
+# T2-5  dt_share_out  (m_group, multi-row)
 # ════════════════════════════════════════════════════════════════════
 
 @tool
-def list_share_outs(center_id: int):
+def list_share_outs(group_id: int):
     """Answers: 'Show all share-out records for group #N'."""
-    print(f"[Tool] Fetching share-outs for center #{center_id}...")
-    return _entries("dt_share_out", center_id)
+    print(f"[Tool] Fetching share-outs for group #{group_id}...")
+    return _entries("dt_share_out", group_id)
 
 
 @tool
-def record_share_out(center_id: int, share_out: dict):
+def record_share_out(group_id: int, share_out: dict):
     """Answers: 'Record this cycle's share-out distribution'. share_out keys: cycle_number,
     share_out_date, total_pool, total_interest_earned, total_fines_collected, members_count,
     distribution_json, status."""
-    print(f"[Tool] Recording share-out for center #{center_id}...")
-    return _create_entry("dt_share_out", center_id, share_out, with_dates=True)
+    print(f"[Tool] Recording share-out for group #{group_id}...")
+    return _create_entry("dt_share_out", group_id, share_out, with_dates=True)
 
 
 # ════════════════════════════════════════════════════════════════════
-# T2-6  dt_social_fund  (m_center, single-row)
+# T2-6  dt_social_fund  (m_group, single-row)
 # ════════════════════════════════════════════════════════════════════
 
 @tool
-def get_social_fund(center_id: int):
+def get_social_fund(group_id: int):
     """Answers: 'How much is in the social fund for group #N?'"""
-    print(f"[Tool] Fetching social fund for center #{center_id}...")
-    return _entries("dt_social_fund", center_id)
+    print(f"[Tool] Fetching social fund for group #{group_id}...")
+    return _entries("dt_social_fund", group_id)
 
 
 @tool
-def update_social_fund(center_id: int, payload: dict):
+def update_social_fund(group_id: int, payload: dict):
     """Answers: 'Update the group's social-fund balance / disbursement state'."""
-    print(f"[Tool] Updating social fund for center #{center_id}...")
-    existing = _entries("dt_social_fund", center_id)
+    print(f"[Tool] Updating social fund for group #{group_id}...")
+    existing = _entries("dt_social_fund", group_id)
     if isinstance(existing, list) and len(existing) > 0:
-        return _update_entry("dt_social_fund", center_id, payload, with_dates=True)
-    return _create_entry("dt_social_fund", center_id, payload, with_dates=True)
+        return _update_entry("dt_social_fund", group_id, payload, with_dates=True)
+    return _create_entry("dt_social_fund", group_id, payload, with_dates=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -216,24 +216,24 @@ def record_loan_vote(loan_id: int, payload: dict):
 
 
 # ════════════════════════════════════════════════════════════════════
-# T2-8  dt_sync_metadata  (m_center, single-row)
+# T2-8  dt_sync_metadata  (m_group, single-row)
 # ════════════════════════════════════════════════════════════════════
 
 @tool
-def get_sync_state(center_id: int):
+def get_sync_state(group_id: int):
     """Answers: 'When did group #N last sync, and how many ops are pending?'"""
-    print(f"[Tool] Fetching sync state for center #{center_id}...")
-    return _entries("dt_sync_metadata", center_id)
+    print(f"[Tool] Fetching sync state for group #{group_id}...")
+    return _entries("dt_sync_metadata", group_id)
 
 
 @tool
-def update_sync_state(center_id: int, payload: dict):
+def update_sync_state(group_id: int, payload: dict):
     """Answers: 'Update the device's sync metadata for group #N'."""
-    print(f"[Tool] Updating sync state for center #{center_id}...")
-    existing = _entries("dt_sync_metadata", center_id)
+    print(f"[Tool] Updating sync state for group #{group_id}...")
+    existing = _entries("dt_sync_metadata", group_id)
     if isinstance(existing, list) and len(existing) > 0:
-        return _update_entry("dt_sync_metadata", center_id, payload, with_dates=True)
-    return _create_entry("dt_sync_metadata", center_id, payload, with_dates=True)
+        return _update_entry("dt_sync_metadata", group_id, payload, with_dates=True)
+    return _create_entry("dt_sync_metadata", group_id, payload, with_dates=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -269,46 +269,46 @@ def submit_loan_request(
 
 
 # ════════════════════════════════════════════════════════════════════
-# T2-10  dt_group_corpus  (m_center, single-row)
+# T2-10  dt_group_corpus  (m_group, single-row)
 # ════════════════════════════════════════════════════════════════════
 
 @tool
-def get_group_corpus(center_id: int):
+def get_group_corpus(group_id: int):
     """Answers: 'What's the running corpus balance for group #N?'"""
-    print(f"[Tool] Fetching corpus for center #{center_id}...")
-    return _entries("dt_group_corpus", center_id)
+    print(f"[Tool] Fetching corpus for group #{group_id}...")
+    return _entries("dt_group_corpus", group_id)
 
 
 @tool
-def update_group_corpus(center_id: int, payload: dict):
+def update_group_corpus(group_id: int, payload: dict):
     """Answers: 'Update the running corpus after a meeting inflow/outflow'."""
-    print(f"[Tool] Updating corpus for center #{center_id}...")
-    existing = _entries("dt_group_corpus", center_id)
+    print(f"[Tool] Updating corpus for group #{group_id}...")
+    existing = _entries("dt_group_corpus", group_id)
     if isinstance(existing, list) and len(existing) > 0:
-        return _update_entry("dt_group_corpus", center_id, payload, with_dates=True)
-    return _create_entry("dt_group_corpus", center_id, payload, with_dates=True)
+        return _update_entry("dt_group_corpus", group_id, payload, with_dates=True)
+    return _create_entry("dt_group_corpus", group_id, payload, with_dates=True)
 
 
 # ════════════════════════════════════════════════════════════════════
-# T2-11  dt_group_loan_policy  (m_center, single-row)
+# T2-11  dt_group_loan_policy  (m_group, single-row)
 # ════════════════════════════════════════════════════════════════════
 
 @tool
-def get_loan_policy(center_id: int):
+def get_loan_policy(group_id: int):
     """Answers: 'What's the loan-ceiling policy for group #N?' — flat | savings_multiplier | hybrid."""
-    print(f"[Tool] Fetching loan policy for center #{center_id}...")
-    return _entries("dt_group_loan_policy", center_id)
+    print(f"[Tool] Fetching loan policy for group #{group_id}...")
+    return _entries("dt_group_loan_policy", group_id)
 
 
 @tool
-def set_loan_policy(center_id: int, payload: dict):
+def set_loan_policy(group_id: int, payload: dict):
     """Answers: 'Configure the group's loan ceiling rule'. payload: ceiling_rule, flat_cap,
     savings_multiplier, hybrid_minimum."""
-    print(f"[Tool] Setting loan policy for center #{center_id}...")
-    existing = _entries("dt_group_loan_policy", center_id)
+    print(f"[Tool] Setting loan policy for group #{group_id}...")
+    existing = _entries("dt_group_loan_policy", group_id)
     if isinstance(existing, list) and len(existing) > 0:
-        return _update_entry("dt_group_loan_policy", center_id, payload, with_dates=True)
-    return _create_entry("dt_group_loan_policy", center_id, payload, with_dates=True)
+        return _update_entry("dt_group_loan_policy", group_id, payload, with_dates=True)
+    return _create_entry("dt_group_loan_policy", group_id, payload, with_dates=True)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -414,7 +414,7 @@ def create_invitation(
     stewardship_code: str,
     invited_at: str,
     expires_at: str,
-    target_center_id: int,
+    target_group_id: int,
     channel: str = "sms",
 ):
     """Answers: 'Issue an invitation code from member #N'. stewardship_code is a 6-char one-time code;
@@ -426,6 +426,6 @@ def create_invitation(
         "expires_at": expires_at,
         "used": False,
         "used_at": None,
-        "target_center_id": target_center_id,
+        "target_group_id": target_group_id,
         "channel": channel,
     }, with_dates=True)

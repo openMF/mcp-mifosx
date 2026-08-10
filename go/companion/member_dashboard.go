@@ -135,7 +135,7 @@ func (h *Handler) HandleMemberDashboard(w http.ResponseWriter, r *http.Request) 
 	// groups; the probe confirms membership and fetches the roster used downstream.
 	type probeResult struct {
 		g       fnGroup
-		clients []centerClient
+		clients []groupClient
 		mine    bool
 	}
 	probes := make([]probeResult, len(allGroups))
@@ -161,7 +161,7 @@ func (h *Handler) HandleMemberDashboard(w http.ResponseWriter, r *http.Request) 
 	wg.Wait()
 
 	myGroupsFn := make([]fnGroup, 0, len(allGroups))
-	clientsByGroup := make(map[int64][]centerClient, len(allGroups))
+	clientsByGroup := make(map[int64][]groupClient, len(allGroups))
 	for _, p := range probes {
 		if !p.mine || p.g.ID == 0 {
 			continue

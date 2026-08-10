@@ -53,7 +53,7 @@ def _map_column_type(col_type: str) -> str:
 @tool
 def create_datatable(datatable_name: str, apptable_name: str, columns: list):
     """Create a new datatable (custom data extension) attached to a Fineract entity.
-    apptable_name: m_client, m_group, m_loan, m_savings_account, m_office, m_center
+    apptable_name: m_client, m_group, m_loan, m_savings_account, m_office
     columns: list of dicts with keys: name, type, length (optional), mandatory (optional)
     type values: string, int, decimal, boolean, date, datetime, text, dropdown
     Example: [{"name": "meeting_date", "type": "date", "mandatory": true}]"""

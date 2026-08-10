@@ -26,7 +26,7 @@ from tools.domains.clients import (
     update_client_mobile,
 )
 from tools.domains.codetables import get_code_values, list_codes, list_datatables
-from tools.domains.groups import activate_group, add_group_member, create_center, get_center, list_centers, list_groups
+from tools.domains.groups import activate_group, add_group_member, list_groups
 from tools.domains.loans import (
     apply_late_fee,
     approve_and_disburse_loan,
@@ -115,7 +115,7 @@ class DomainRegistry:
 
     Full domain map:
         router.domain_map["clients"]    - 16 client & KYC tools
-        router.domain_map["groups"]     - 6 group & center tools
+        router.domain_map["groups"]     - 3 group tools
         router.domain_map["loans"]      - 14 loan tools
         router.domain_map["savings"]    - 9 savings tools
         router.domain_map["staff"]      - 4 staff & office tools
@@ -136,8 +136,7 @@ class DomainRegistry:
                 apply_client_charge, get_client_transactions, get_client_addresses
             ],
             "groups": [
-                list_groups, activate_group, add_group_member,
-                list_centers, get_center, create_center
+                list_groups, activate_group, add_group_member
             ],
             "loans": [
                 get_loan_details, get_repayment_schedule, create_loan,
@@ -246,8 +245,8 @@ class DomainRegistry:
         if matches_keyword(["client", "person", "search", "activate", "mobile", "kyc", "identifier", "address", "charge", "fee", "document"]):
             active_domains.add("clients")
 
-        # Groups & Centers
-        if matches_keyword(["group", "center", "centre", "member", "lending group"]):
+        # Groups
+        if matches_keyword(["group", "member", "lending group"]):
             active_domains.add("groups")
 
         # Savings

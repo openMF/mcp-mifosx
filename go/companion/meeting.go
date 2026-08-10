@@ -9,11 +9,10 @@
 // serves only explicitly-registered routes (there is no catch-all Fineract proxy),
 // so each is built here against real mifos-bank-2 data.
 //
-// A meeting lives on the CENTER model (m_center) — plain groups have no meeting
-// schedule. A Fineract center owns a COLLECTION calendar whose recurrence generates
-// the scheduled meeting dates; the group(s) under the center own the client members
-// whose attendance is recorded. Two custom multiRow datatables persist a conducted
-// meeting: dt_meeting_record (apptable m_center — one row per meeting) and
+// A meeting lives on the GROUP model (m_group). A group owns a COLLECTION calendar
+// whose recurrence generates the scheduled meeting dates; the group owns the client
+// members whose attendance is recorded. Two custom multiRow datatables persist a
+// conducted meeting: dt_meeting_record (apptable m_group — one row per meeting) and
 // dt_meeting_attendance (apptable m_client — one row per member per meeting).
 //
 // Path prefixing mirrors the app's OWN services (each reuses the shared client, so
@@ -28,18 +27,16 @@
 // dt_meeting_record read (they carry different response shapes — see below).
 //
 // ENDPOINTS (app path -> handler -> app DTO, source in APP core/network/.../service):
-//   GET /fineract-provider/api/v1/centers/{centerId}/meetings
-//       -> HandleCenterMeetings           -> []MeetingListItemDto     (meetingcalendar/MeetingApi.getCenterMeetings)
-//   GET /fineract-provider/api/v1/datatables/dt_meeting_record/{centerId}[?meetingNumber=N]
+//   GET /fineract-provider/api/v1/groups/{groupId}/meetings
+//       -> HandleGroupMeetings            -> []MeetingListItemDto     (meetingcalendar/MeetingApi.getGroupMeetings)
+//   GET /fineract-provider/api/v1/datatables/dt_meeting_record/{groupId}[?meetingNumber=N]
 //       -> HandleMeetingRecordDatatable   -> MeetingRecordListDto (no q) | MeetingSummaryRecordDto (q)
 //          (meetingcalendar/MeetingApi.getMeetingRecords | meetingsummary/MeetingRecordApi.getMeetingRecord)
 //   GET /fineract-provider/api/v1/datatables/dt_meeting_attendance/{meetingId}
 //       -> HandleMeetingAttendanceList    -> []MeetingAttendanceRowDto (previousmeetingreview/MeetingAttendanceApi)
-//   GET /datatables/dt_meeting_record/{centerId}
+//   GET /datatables/dt_meeting_record/{groupId}
 //       -> HandlePreviousMeetingRecord    -> MeetingRecordDetailDto    (meetingconduct.getPreviousMeetingRecord)
-//   GET /centers/{centerId}
-//       -> HandleCenterDetail             -> CenterDetailDto           (meetingconduct.getGroupMembers)
-//   GET /datatables/dt_group_corpus/{centerId}
+//   GET /datatables/dt_group_corpus/{groupId}
 //       -> HandleGroupCorpusRead          -> CorpusRecordDto           (meetingconduct.getGroupCorpus)
 //   GET /loans?groupId=&loanStatus=active
 //       -> HandleActiveLoans              -> LoanListResponseDto        (meetingconduct.getActiveLoans)
@@ -48,8 +45,8 @@
 //   POST /datatables/dt_meeting_record            -> HandlePostMeetingRecord      -> DataTableEntryResponseDto
 //   POST /datatables/dt_meeting_attendance        -> HandlePostMeetingAttendance  -> DataTableEntryResponseDto
 //   POST /savingsaccounts/{savingsId}/transactions?command=deposit -> HandlePostSavingsTransaction
-//   PUT  /datatables/dt_group_corpus/{centerId}   -> HandleUpdateCorpus           -> DataTableEntryResponseDto
-//   PUT  /centers/{centerId}/calendars/{calendarId}?command=updateCalendar -> HandleRescheduleCalendar
+//   PUT  /datatables/dt_group_corpus/{groupId}    -> HandleUpdateCorpus           -> DataTableEntryResponseDto
+//   PUT  /groups/{groupId}/calendars/{calendarId}?command=updateCalendar -> HandleRescheduleCalendar
 //
 // NOT registered here (deliberate):
 //   POST /loans/{loanId}/transactions?command=repayment — already served by loan_write.go's
@@ -80,7 +77,7 @@
 //   - the reschedule updateCalendar startDate is a Fineract DATE — dateFormat/locale injected
 //     if the caller omitted them.
 //
-// meetingId semantics: this facade DEFINES meetingId = "{centerId}-{meetingNumber}" in the
+// meetingId semantics: this facade DEFINES meetingId = "{groupId}-{meetingNumber}" in the
 // calendar list it emits AND PARSES it back in the attendance read — the app carries it
 // opaquely through navigation (MeetingCalendarRoute -> conduct/review nav args), never parsing
 // it, so the two ends are the sole owners of the format.
@@ -105,7 +102,6 @@ const (
 	meetingAttendanceTable = "dt_meeting_attendance"
 	groupCorpusTable       = "dt_group_corpus"
 	loanVoteTable          = "dt_loan_vote"
-	centerApptable         = "m_center"
 	clientApptable         = "m_client"
 	fineractV1Prefix       = "/fineract-provider/api/v1"
 
@@ -120,25 +116,26 @@ const (
 // deliberately-unregistered loan-transaction paths.
 func (h *Handler) registerMeetingRoutes(mux *http.ServeMux) {
 	// meeting-calendar / meeting-summary / previous-meeting-review — prefixed base.
-	mux.HandleFunc("GET "+fineractV1Prefix+"/centers/{centerId}/meetings", h.HandleCenterMeetings)
+	mux.HandleFunc("GET "+fineractV1Prefix+"/groups/{groupId}/meetings", h.HandleGroupMeetings)
 	// meeting-calendar schedule read (AL-RULE dt_meeting_schedule on m_group, keyed by groupId).
 	mux.HandleFunc("GET "+fineractV1Prefix+"/datatables/dt_meeting_schedule/{groupId}", h.HandleMeetingSchedule)
-	mux.HandleFunc("GET "+fineractV1Prefix+"/datatables/dt_meeting_record/{centerId}", h.HandleMeetingRecordDatatable)
+	mux.HandleFunc("GET "+fineractV1Prefix+"/datatables/dt_meeting_record/{groupId}", h.HandleMeetingRecordDatatable)
 	mux.HandleFunc("GET "+fineractV1Prefix+"/datatables/dt_meeting_attendance/{meetingId}", h.HandleMeetingAttendanceList)
 
-	// meeting-conduct — bare base.
-	mux.HandleFunc("GET /datatables/dt_meeting_record/{centerId}", h.HandlePreviousMeetingRecord)
-	mux.HandleFunc("GET /centers/{centerId}", h.HandleCenterDetail)
-	mux.HandleFunc("GET /datatables/dt_group_corpus/{centerId}", h.HandleGroupCorpusRead)
+	// meeting-conduct — bare base. (getGroupMembers GET /groups/{groupId} is served verbatim by the
+	// COMP-PROXY passthrough in fineract_passthrough.go — Fineract's native clientMembers shape already
+	// satisfies the app's GroupMembersDetailDto, so it is not re-registered here.)
+	mux.HandleFunc("GET /datatables/dt_meeting_record/{groupId}", h.HandlePreviousMeetingRecord)
+	mux.HandleFunc("GET /datatables/dt_group_corpus/{groupId}", h.HandleGroupCorpusRead)
 	mux.HandleFunc("GET /loans", h.HandleActiveLoans)
 	mux.HandleFunc("GET /datatables/dt_loan_vote/{loanId}", h.HandleLoanVotes)
 	mux.HandleFunc("POST /datatables/dt_meeting_record", h.HandlePostMeetingRecord)
 	mux.HandleFunc("POST /datatables/dt_meeting_attendance", h.HandlePostMeetingAttendance)
 	mux.HandleFunc("POST /savingsaccounts/{savingsId}/transactions", h.HandlePostSavingsTransaction)
-	mux.HandleFunc("PUT /datatables/dt_group_corpus/{centerId}", h.HandleUpdateCorpus)
+	mux.HandleFunc("PUT /datatables/dt_group_corpus/{groupId}", h.HandleUpdateCorpus)
 
 	// reschedule (G3/F6) — server-gated in the app (offline-queued), built here for when it lands.
-	mux.HandleFunc("PUT /centers/{centerId}/calendars/{calendarId}", h.HandleRescheduleCalendar)
+	mux.HandleFunc("PUT /groups/{groupId}/calendars/{calendarId}", h.HandleRescheduleCalendar)
 }
 
 // ---- App-facing wire contract (exact @SerialName match to the KMP DTOs) ----
@@ -168,8 +165,8 @@ type meetingRecordItemDto struct {
 
 // meetingRecordListDto == MeetingRecordListDto (meetingcalendar.getMeetingRecords).
 type meetingRecordListDto struct {
-	CenterID int                    `json:"centerId"`
-	Records  []meetingRecordItemDto `json:"records"`
+	GroupID int                    `json:"groupId"`
+	Records []meetingRecordItemDto `json:"records"`
 }
 
 // savingsBreakdownItemDto == SavingsBreakdownItemDto (nested in MeetingSummaryRecordDto).
@@ -230,24 +227,9 @@ type meetingRecordDetailDto struct {
 	AttendanceCount     int    `json:"attendanceCount"`
 }
 
-// clientMemberDto == ClientMemberDto (nested in CenterDetailDto).
-type clientMemberDto struct {
-	ID               int64   `json:"id"`
-	DisplayName      string  `json:"displayName"`
-	Role             string  `json:"role"`
-	SavingsAccountID *string `json:"savingsAccountId"`
-}
-
-// centerDetailDto == CenterDetailDto (meetingconduct.getGroupMembers).
-type centerDetailDto struct {
-	ID                  int               `json:"id"`
-	Name                string            `json:"name"`
-	ActiveClientMembers []clientMemberDto `json:"activeClientMembers"`
-}
-
 // corpusRecordDto == CorpusRecordDto (meetingconduct.getGroupCorpus).
 type corpusRecordDto struct {
-	CenterID           int    `json:"centerId"`
+	GroupID            int    `json:"groupId"`
 	CorpusBalance      int64  `json:"corpusBalance"`
 	CashOnHand         int64  `json:"cashOnHand"`
 	LastUpdatedMeeting int    `json:"lastUpdatedMeeting"`
@@ -291,10 +273,8 @@ type dataTableEntryResponseDto struct {
 
 type createMeetingRecordRequestIn struct {
 	// The app's CreateMeetingRecordRequestDto serializes the group scope as `groupId` (Group-centric
-	// model — m_group IS the center); older callers sent `centerId`. Accept BOTH so the submit's
-	// priority-1 record write is never rejected (a missing scope 400'd the whole submit → offline
-	// fallthrough → empty meeting-summary). i64() prefers whichever is set.
-	CenterID                int    `json:"centerId"`
+	// model — m_group IS the group). A missing scope 400's the whole submit → offline fallthrough →
+	// empty meeting-summary, so groupId is required.
 	GroupID                 int    `json:"groupId"`
 	MeetingNumber           int    `json:"meetingNumber"`
 	ActualDate              string `json:"actualDate"`
@@ -336,7 +316,7 @@ type updateCorpusRequestIn struct {
 // ---- Fineract wire types (only the fields consumed) ----
 
 // fnMeetingRecordRow is one row of dt_meeting_record as read back (snake_case columns +
-// Fineract-added id/center_id/created_at/updated_at). meeting_date is a [y,m,d] DATE array.
+// Fineract-added id/group_id/created_at/updated_at). meeting_date is a [y,m,d] DATE array.
 type fnMeetingRecordRow struct {
 	ID                      int64   `json:"id"`
 	MeetingNumber           int     `json:"meeting_number"`
@@ -376,7 +356,7 @@ type fnLoanVoteRow struct {
 	VotesAbstain int `json:"votes_abstain"`
 }
 
-// fnCalendar is one element of GET /centers/{id}/calendars.
+// fnCalendar is one element of GET /groups/{id}/calendars.
 type fnCalendar struct {
 	ID            int64  `json:"id"`
 	Title         string `json:"title"`
@@ -389,40 +369,17 @@ type fnCalendar struct {
 
 // ---- Handlers: meeting-calendar ----
 
-// HandleCenterMeetings builds the scheduled-meetings list from the center's COLLECTION
-// calendar recurrence (the real source — Fineract's native /centers/{id}/meetings only
+// HandleGroupMeetings builds the scheduled-meetings list from the group's COLLECTION
+// calendar recurrence (the real source — Fineract's native /groups/{id}/meetings only
 // lists m_meeting rows created by a saved collection sheet, so it is empty until a sheet
 // is generated) enriched with the dt_meeting_record financial rows for COMPLETED meetings.
-// resolveMeetingCenter maps an id the app passes as a "centerId" to the real
-// Fineract center id. The app derives it as groupId.toInt (documented drift), so
-// if GET groups/{id} exposes a centerId we use that; otherwise the id is already a
-// center and is returned unchanged.
-func (h *Handler) resolveMeetingCenter(id int64) int64 {
-	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("groups/%d", id), nil, nil)
-	if err != nil {
-		return id
-	}
-	var g struct {
-		CenterID int64 `json:"centerId"`
-	}
-	if json.Unmarshal(raw, &g) == nil && g.CenterID > 0 {
-		return g.CenterID
-	}
-	return id
-}
-
-func (h *Handler) HandleCenterMeetings(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) HandleGroupMeetings(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	centerID, ok := pathInt64Param(w, r, "centerId")
+	groupID, ok := pathInt64Param(w, r, "groupId")
 	if !ok {
 		return
 	}
-	// The MifosSave app navigates meeting-calendar with centerId = groupId.toInt
-	// (a documented app-side drift — GroupBankingNavHost flags "group-dashboard has
-	// no centerId; bridge by parsing groupId"). Resolve that groupId to its real
-	// Fineract centerId so the schedule of the group's meeting center is served.
-	centerID = h.resolveMeetingCenter(centerID)
-	out, err := h.buildMeetingSchedule(centerID)
+	out, err := h.buildMeetingSchedule(groupID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
@@ -442,8 +399,7 @@ func (h *Handler) HandleMeetingSchedule(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	centerID := h.resolveMeetingCenter(groupID)
-	out, err := h.buildMeetingSchedule(centerID)
+	out, err := h.buildMeetingSchedule(groupID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
@@ -451,16 +407,16 @@ func (h *Handler) HandleMeetingSchedule(w http.ResponseWriter, r *http.Request) 
 	_ = json.NewEncoder(w).Encode(out)
 }
 
-// buildMeetingSchedule assembles the []MeetingListItemDto schedule for a center: the calendar
+// buildMeetingSchedule assembles the []MeetingListItemDto schedule for a group: the calendar
 // recurrence dates (synthesized weekly when none) each classified COMPLETED (a dt_meeting_record row
 // exists) / MISSED (past, no record) / UPCOMING (future), capped at upcomingMeetingCap future slots.
-// Shared by HandleCenterMeetings (meetings list) and HandleMeetingSchedule (schedule read).
-func (h *Handler) buildMeetingSchedule(centerID int64) ([]meetingListItemDto, error) {
-	dates, err := h.centerMeetingDates(centerID)
+// Shared by HandleGroupMeetings (meetings list) and HandleMeetingSchedule (schedule read).
+func (h *Handler) buildMeetingSchedule(groupID int64) ([]meetingListItemDto, error) {
+	dates, err := h.groupMeetingDates(groupID)
 	if err != nil {
 		return nil, err
 	}
-	records, _ := h.readMeetingRecords(centerID) // tolerant: no records yet -> all UPCOMING/MISSED
+	records, _ := h.readMeetingRecords(groupID) // tolerant: no records yet -> all UPCOMING/MISSED
 	recByNumber := make(map[int]fnMeetingRecordRow, len(records))
 	for _, rec := range records {
 		recByNumber[rec.MeetingNumber] = rec
@@ -472,7 +428,7 @@ func (h *Handler) buildMeetingSchedule(centerID int64) ([]meetingListItemDto, er
 	for i, d := range dates {
 		meetingNumber := i + 1
 		item := meetingListItemDto{
-			MeetingID:     meetingKey(centerID, meetingNumber),
+			MeetingID:     meetingKey(groupID, meetingNumber),
 			MeetingNumber: meetingNumber,
 			MeetingDate:   fmtFineractDate(d),
 		}
@@ -512,16 +468,16 @@ func (h *Handler) HandleMeetingRecordDatatable(w http.ResponseWriter, r *http.Re
 // row to a MeetingRecordItemDto, wrapped in MeetingRecordListDto.
 func (h *Handler) handleMeetingRecordsList(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	centerID, ok := pathInt64Param(w, r, "centerId")
+	groupID, ok := pathInt64Param(w, r, "groupId")
 	if !ok {
 		return
 	}
-	records, err := h.readMeetingRecords(centerID)
+	records, err := h.readMeetingRecords(groupID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
 	}
-	out := meetingRecordListDto{CenterID: int(centerID), Records: make([]meetingRecordItemDto, 0, len(records))}
+	out := meetingRecordListDto{GroupID: int(groupID), Records: make([]meetingRecordItemDto, 0, len(records))}
 	for _, rec := range records {
 		out.Records = append(out.Records, meetingRecordItemDto{
 			MeetingNumber:   rec.MeetingNumber,
@@ -543,7 +499,7 @@ func (h *Handler) handleMeetingRecordsList(w http.ResponseWriter, r *http.Reques
 // dt_meeting_attendance row for that meeting.
 func (h *Handler) handleMeetingSummary(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	centerID, ok := pathInt64Param(w, r, "centerId")
+	groupID, ok := pathInt64Param(w, r, "groupId")
 	if !ok {
 		return
 	}
@@ -552,7 +508,7 @@ func (h *Handler) handleMeetingSummary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid meetingNumber")
 		return
 	}
-	records, err := h.readMeetingRecords(centerID)
+	records, err := h.readMeetingRecords(groupID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
@@ -569,7 +525,7 @@ func (h *Handler) handleMeetingSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	clients, _ := h.resolveCenterClients(centerID)
+	clients, _ := h.resolveGroupClients(groupID)
 	savingsBreakdown := make([]savingsBreakdownItemDto, 0, len(clients))
 	loanItems := make([]loanSummaryItemDto, 0)
 	var groupSavings int64
@@ -604,7 +560,7 @@ func (h *Handler) handleMeetingSummary(w http.ResponseWriter, r *http.Request) {
 		groupSavings = roundKES(rec.TotalSavingsCollected)
 	}
 	_ = json.NewEncoder(w).Encode(meetingSummaryRecordDto{
-		MeetingID:                  meetingKey(centerID, meetingNumber),
+		MeetingID:                  meetingKey(groupID, meetingNumber),
 		MeetingNumber:              meetingNumber,
 		ActualDate:                 fmtFineractDate(rec.MeetingDate),
 		MeetingTime:                rec.CompletedTime,
@@ -626,16 +582,16 @@ func (h *Handler) handleMeetingSummary(w http.ResponseWriter, r *http.Request) {
 // ---- Handlers: previous-meeting-review ----
 
 // HandleMeetingAttendanceList (previousmeetingreview.getMeetingAttendance) returns every
-// per-member attendance row for the meeting encoded in meetingId ("{centerId}-{meetingNumber}").
+// per-member attendance row for the meeting encoded in meetingId ("{groupId}-{meetingNumber}").
 // An empty roster is a valid Content (the app's isEmpty = { false }) -> [], never 404.
 func (h *Handler) HandleMeetingAttendanceList(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	centerID, meetingNumber, ok := parseMeetingKey(r.PathValue("meetingId"))
+	groupID, meetingNumber, ok := parseMeetingKey(r.PathValue("meetingId"))
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid meetingId (expected {centerId}-{meetingNumber})")
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid meetingId (expected {groupId}-{meetingNumber})")
 		return
 	}
-	clients, err := h.resolveCenterClients(centerID)
+	clients, err := h.resolveGroupClients(groupID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
@@ -663,14 +619,11 @@ func (h *Handler) HandleMeetingAttendanceList(w http.ResponseWriter, r *http.Req
 // (the app's "first meeting" branch).
 func (h *Handler) HandlePreviousMeetingRecord(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	centerID, ok := pathInt64Param(w, r, "centerId")
+	groupID, ok := pathInt64Param(w, r, "groupId")
 	if !ok {
 		return
 	}
-	// App forwards groupId as centerId (documented nav-param drift) — map it to the real
-	// center id so the previous-meeting record is read from the correct dt_meeting_record rows.
-	centerID = h.resolveMeetingCenter(centerID)
-	records, err := h.readMeetingRecords(centerID)
+	records, err := h.readMeetingRecords(groupID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
@@ -686,7 +639,7 @@ func (h *Handler) HandlePreviousMeetingRecord(w http.ResponseWriter, r *http.Req
 		}
 	}
 	_ = json.NewEncoder(w).Encode(meetingRecordDetailDto{
-		MeetingID:           meetingKey(centerID, latest.MeetingNumber),
+		MeetingID:           meetingKey(groupID, latest.MeetingNumber),
 		MeetingNumber:       latest.MeetingNumber,
 		ActualDate:          fmtFineractDate(latest.MeetingDate),
 		TotalSavings:        roundKES(latest.TotalSavingsCollected),
@@ -698,47 +651,15 @@ func (h *Handler) HandlePreviousMeetingRecord(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// HandleCenterDetail (meetingconduct.getGroupMembers) reshapes the center + its groups'
-// clients into CenterDetailDto.activeClientMembers.
-func (h *Handler) HandleCenterDetail(w http.ResponseWriter, r *http.Request) {
-	setJSON(w)
-	centerID, ok := pathInt64Param(w, r, "centerId")
-	if !ok {
-		return
-	}
-	name, err := h.centerName(centerID)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
-		return
-	}
-	clients, err := h.resolveCenterClients(centerID)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
-		return
-	}
-	members := make([]clientMemberDto, 0, len(clients))
-	for _, c := range clients {
-		members = append(members, clientMemberDto{
-			ID:               c.ID,
-			DisplayName:      c.Name,
-			Role:             "Member", // no per-member role linkage on mifos-bank-2; mapper defaults to Member.
-			SavingsAccountID: nil,      // savings deposits are not exercised via this facade.
-		})
-	}
-	_ = json.NewEncoder(w).Encode(centerDetailDto{ID: int(centerID), Name: name, ActiveClientMembers: members})
-}
-
 // HandleGroupCorpusRead (meetingconduct.getGroupCorpus) returns the single dt_group_corpus
 // row. 404 when unset (the app defaults opening corpus / cash-on-hand to 0).
 func (h *Handler) HandleGroupCorpusRead(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	centerID, ok := pathInt64Param(w, r, "centerId")
+	groupID, ok := pathInt64Param(w, r, "groupId")
 	if !ok {
 		return
 	}
-	// App forwards groupId as centerId (documented nav-param drift) — map it to the real center id.
-	centerID = h.resolveMeetingCenter(centerID)
-	rows, err := h.readCorpusRows(centerID)
+	rows, err := h.readCorpusRows(groupID)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
 		return
@@ -749,7 +670,7 @@ func (h *Handler) HandleGroupCorpusRead(w http.ResponseWriter, r *http.Request) 
 	}
 	c := rows[0]
 	_ = json.NewEncoder(w).Encode(corpusRecordDto{
-		CenterID:           int(centerID),
+		GroupID:            int(groupID),
 		CorpusBalance:      roundKES(c.CorpusBalance),
 		CashOnHand:         roundKES(c.CashOnHand),
 		LastUpdatedMeeting: c.LastUpdatedMeeting,
@@ -758,8 +679,8 @@ func (h *Handler) HandleGroupCorpusRead(w http.ResponseWriter, r *http.Request) 
 }
 
 // HandleActiveLoans (meetingconduct.getActiveLoans) resolves the group's clients' ACTIVE loans
-// into LoanListResponseDto. The app filters by groupId (the group under the center); we walk
-// that group's clients' real loan accounts. No loans -> empty (the app's tolerant step 4).
+// into LoanListResponseDto. The app filters by groupId; we walk that group's clients' real loan
+// accounts. No loans -> empty (the app's tolerant step 4).
 func (h *Handler) HandleActiveLoans(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
 	groupID, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("groupId")), 10, 64)
@@ -881,7 +802,7 @@ func (h *Handler) HandleLoanVotes(w http.ResponseWriter, r *http.Request) {
 // ---- Handlers: meeting-conduct writes ----
 
 // HandlePostMeetingRecord (meetingconduct.postMeetingRecord, submit priority 1) writes the
-// conducted-meeting summary row to dt_meeting_record/{centerId} and returns its row id.
+// conducted-meeting summary row to dt_meeting_record/{groupId} and returns its row id.
 func (h *Handler) HandlePostMeetingRecord(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
 	var in createMeetingRecordRequestIn
@@ -889,11 +810,8 @@ func (h *Handler) HandlePostMeetingRecord(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
-	if in.CenterID <= 0 {
-		in.CenterID = in.GroupID // app sends the scope as groupId (Group-centric)
-	}
-	if in.CenterID <= 0 || in.MeetingNumber <= 0 {
-		writeErr(w, http.StatusBadRequest, "bad_request", "groupId (or centerId) and meetingNumber are required")
+	if in.GroupID <= 0 || in.MeetingNumber <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "groupId and meetingNumber are required")
 		return
 	}
 	row := map[string]interface{}{
@@ -937,7 +855,7 @@ func (h *Handler) HandlePostMeetingAttendance(w http.ResponseWriter, r *http.Req
 	}
 	_, meetingNumber, ok := parseMeetingKey(in.MeetingID)
 	if !ok {
-		writeErr(w, http.StatusBadRequest, "bad_request", "invalid meetingId (expected {centerId}-{meetingNumber})")
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid meetingId (expected {groupId}-{meetingNumber})")
 		return
 	}
 	status := strings.TrimSpace(in.Status)
@@ -1005,10 +923,10 @@ func (h *Handler) HandlePostSavingsTransaction(w http.ResponseWriter, r *http.Re
 }
 
 // HandleUpdateCorpus (meetingconduct.updateCorpus, submit priority 6) upserts the single
-// dt_group_corpus row for the center (POST to create, PUT to update) with the closing corpus.
+// dt_group_corpus row for the group (POST to create, PUT to update) with the closing corpus.
 func (h *Handler) HandleUpdateCorpus(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	centerID, ok := pathInt64Param(w, r, "centerId")
+	groupID, ok := pathInt64Param(w, r, "groupId")
 	if !ok {
 		return
 	}
@@ -1026,12 +944,12 @@ func (h *Handler) HandleUpdateCorpus(w http.ResponseWriter, r *http.Request) {
 		"dateFormat":           "yyyy-MM-dd",
 		"locale":               "en",
 	}
-	existing, _ := h.readCorpusRows(centerID)
+	existing, _ := h.readCorpusRows(groupID)
 	method := "POST"
 	if len(existing) > 0 {
 		method = "PUT" // single-row datatable: PUT updates the existing row.
 	}
-	raw, err := h.Fineract.DoRequest(method, fmt.Sprintf("datatables/%s/%d", groupCorpusTable, centerID), row, nil)
+	raw, err := h.Fineract.DoRequest(method, fmt.Sprintf("datatables/%s/%d", groupCorpusTable, groupID), row, nil)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", "update corpus: "+strings.TrimSpace(string(nonEmpty(raw))))
 		return
@@ -1041,20 +959,20 @@ func (h *Handler) HandleUpdateCorpus(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.Unmarshal(raw, &resp)
 	if resp.ResourceID == 0 {
-		resp.ResourceID = centerID // PUT echoes the apptable id.
+		resp.ResourceID = groupID // PUT echoes the apptable id.
 	}
 	_ = json.NewEncoder(w).Encode(dataTableEntryResponseDto{ResourceID: resp.ResourceID})
 }
 
 // HandleRescheduleCalendar (meeting-calendar G3/F6 RescheduleMeeting) forwards a calendar update
-// to Fineract's real PUT /centers/{id}/calendars/{cid}?command=updateCalendar. The app currently
+// to Fineract's real PUT /groups/{id}/calendars/{cid}?command=updateCalendar. The app currently
 // offline-queues this (server-gated — see RescheduleMeetingRequest KDoc), so the precise
 // RescheduleMeetingRequest->Fineract field mapping is resolved server-side when the live write
 // lands; this passthrough forwards the received body verbatim, injecting dateFormat/locale so a
 // startDate change parses.
 func (h *Handler) HandleRescheduleCalendar(w http.ResponseWriter, r *http.Request) {
 	setJSON(w)
-	centerID, ok := pathInt64Param(w, r, "centerId")
+	groupID, ok := pathInt64Param(w, r, "groupId")
 	if !ok {
 		return
 	}
@@ -1077,7 +995,7 @@ func (h *Handler) HandleRescheduleCalendar(w http.ResponseWriter, r *http.Reques
 	if command == "" {
 		command = "updateCalendar"
 	}
-	raw, err := h.Fineract.DoRequest("PUT", fmt.Sprintf("centers/%d/calendars/%s", centerID, calendarID), body, map[string]string{"command": command})
+	raw, err := h.Fineract.DoRequest("PUT", fmt.Sprintf("groups/%d/calendars/%s", groupID, calendarID), body, map[string]string{"command": command})
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "upstream_error", strings.TrimSpace(string(nonEmpty(raw))))
 		return
@@ -1087,12 +1005,12 @@ func (h *Handler) HandleRescheduleCalendar(w http.ResponseWriter, r *http.Reques
 
 // ---- Fineract reads (service credential via DoRequest) ----
 
-// centerMeetingDates returns the scheduled meeting dates ([y,m,d] each) from the center's
+// groupMeetingDates returns the scheduled meeting dates ([y,m,d] each) from the group's
 // COLLECTION calendar recurrence (falls back to the first calendar if none is typed COLLECTION).
-func (h *Handler) centerMeetingDates(centerID int64) ([][]int, error) {
-	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("centers/%d/calendars", centerID), nil, nil)
+func (h *Handler) groupMeetingDates(groupID int64) ([][]int, error) {
+	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("groups/%d/calendars", groupID), nil, nil)
 	if err != nil {
-		// No center / no calendar endpoint (a companion-created VSLA group has no parent center) —
+		// No calendar endpoint (a companion-created VSLA group has no attached calendar) —
 		// synthesize a default weekly schedule so the group still has conductable meetings.
 		return synthesizeWeeklyMeetingDates(), nil
 	}
@@ -1134,10 +1052,10 @@ func synthesizeWeeklyMeetingDates() [][]int {
 	return out
 }
 
-// readMeetingRecords reads every dt_meeting_record row for the center. An empty/unprovisioned
+// readMeetingRecords reads every dt_meeting_record row for the group. An empty/unprovisioned
 // datatable yields an empty slice (never an error) so callers degrade gracefully.
-func (h *Handler) readMeetingRecords(centerID int64) ([]fnMeetingRecordRow, error) {
-	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("datatables/%s/%d", meetingRecordTable, centerID), nil, nil)
+func (h *Handler) readMeetingRecords(groupID int64) ([]fnMeetingRecordRow, error) {
+	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("datatables/%s/%d", meetingRecordTable, groupID), nil, nil)
 	if err != nil {
 		return []fnMeetingRecordRow{}, nil
 	}
@@ -1148,9 +1066,9 @@ func (h *Handler) readMeetingRecords(centerID int64) ([]fnMeetingRecordRow, erro
 	return rows, nil
 }
 
-// readCorpusRows reads the (0- or 1-element) dt_group_corpus array for the center.
-func (h *Handler) readCorpusRows(centerID int64) ([]fnCorpusRow, error) {
-	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("datatables/%s/%d", groupCorpusTable, centerID), nil, nil)
+// readCorpusRows reads the (0- or 1-element) dt_group_corpus array for the group.
+func (h *Handler) readCorpusRows(groupID int64) ([]fnCorpusRow, error) {
+	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("datatables/%s/%d", groupCorpusTable, groupID), nil, nil)
 	if err != nil {
 		return []fnCorpusRow{}, nil
 	}
@@ -1179,60 +1097,19 @@ func (h *Handler) attendanceRowForMeeting(clientID int64, meetingNumber int) *fn
 	return nil
 }
 
-// centerName reads the center's display name.
-func (h *Handler) centerName(centerID int64) (string, error) {
-	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("centers/%d", centerID), nil, nil)
+// resolveGroupClients returns the group's active client members (deduped, sorted). This is the
+// real Fineract member linkage — a group directly contains its clients (clientMembers).
+func (h *Handler) resolveGroupClients(groupID int64) ([]groupClient, error) {
+	clients, err := h.groupClients(groupID)
 	if err != nil {
-		return "", fmt.Errorf("read center: %s", strings.TrimSpace(string(nonEmpty(raw))))
+		return nil, err
 	}
-	var c struct {
-		Name string `json:"name"`
-	}
-	_ = json.Unmarshal(raw, &c)
-	return c.Name, nil
-}
-
-// resolveCenterClients flattens the center -> associated groups -> client members into a
-// deduped list. This is the real Fineract member linkage (a Fineract center contains groups,
-// groups contain clients — there is no direct center<->client membership).
-func (h *Handler) resolveCenterClients(centerID int64) ([]centerClient, error) {
-	seen := make(map[int64]bool)
-	out := make([]centerClient, 0)
-	// Primary path: walk the center's group members → each group's clients.
-	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("centers/%d", centerID), nil, map[string]string{"associations": "groupMembers"})
-	if err == nil {
-		var c struct {
-			GroupMembers []struct {
-				ID int64 `json:"id"`
-			} `json:"groupMembers"`
-		}
-		if jerr := json.Unmarshal(raw, &c); jerr == nil {
-			for _, g := range c.GroupMembers {
-				clients, gerr := h.groupClients(g.ID)
-				if gerr != nil {
-					continue
-				}
-				for _, m := range clients {
-					if !seen[m.ID] {
-						seen[m.ID] = true
-						out = append(out, m)
-					}
-				}
-			}
-		}
-	}
-	// Fallback: the app forwards a groupId where a centerId is expected (documented nav-param
-	// drift — group-dashboard has no centerId, so it keys meeting-calendar/-conduct by groupId,
-	// and the meeting endpoints already tolerate that). When the center walk yields nothing,
-	// resolve the id AS a group directly so the attendance roster is never empty for a real group.
-	if len(out) == 0 {
-		if clients, gerr := h.groupClients(centerID); gerr == nil {
-			for _, m := range clients {
-				if !seen[m.ID] {
-					seen[m.ID] = true
-					out = append(out, m)
-				}
-			}
+	seen := make(map[int64]bool, len(clients))
+	out := make([]groupClient, 0, len(clients))
+	for _, m := range clients {
+		if !seen[m.ID] {
+			seen[m.ID] = true
+			out = append(out, m)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -1240,7 +1117,7 @@ func (h *Handler) resolveCenterClients(centerID int64) ([]centerClient, error) {
 }
 
 // groupClients returns a group's active client members.
-func (h *Handler) groupClients(groupID int64) ([]centerClient, error) {
+func (h *Handler) groupClients(groupID int64) ([]groupClient, error) {
 	raw, err := h.Fineract.DoRequest("GET", fmt.Sprintf("groups/%d", groupID), nil, map[string]string{"associations": "clientMembers"})
 	if err != nil {
 		return nil, fmt.Errorf("read group %d: %s", groupID, strings.TrimSpace(string(nonEmpty(raw))))
@@ -1254,24 +1131,24 @@ func (h *Handler) groupClients(groupID int64) ([]centerClient, error) {
 	if err := json.Unmarshal(raw, &g); err != nil {
 		return nil, fmt.Errorf("decode group %d: %w", groupID, err)
 	}
-	out := make([]centerClient, 0, len(g.ClientMembers))
+	out := make([]groupClient, 0, len(g.ClientMembers))
 	for _, m := range g.ClientMembers {
-		out = append(out, centerClient{ID: m.ID, Name: m.DisplayName})
+		out = append(out, groupClient{ID: m.ID, Name: m.DisplayName})
 	}
 	return out, nil
 }
 
-// centerClient is a flattened center member (client id + display name).
-type centerClient struct {
+// groupClient is a flattened group member (client id + display name).
+type groupClient struct {
 	ID   int64
 	Name string
 }
 
 // ---- helpers ----
 
-// i64 exposes createMeetingRecordRequestIn.CenterID (int) as int64 at the datatable-write call
+// i64 exposes createMeetingRecordRequestIn.GroupID (int) as int64 at the datatable-write call
 // site without a scattered cast.
-func (in createMeetingRecordRequestIn) i64() int64 { return int64(in.CenterID) }
+func (in createMeetingRecordRequestIn) i64() int64 { return int64(in.GroupID) }
 
 // pathInt64Param reads a positive int64 path variable, writing a 400 on failure.
 func pathInt64Param(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
@@ -1284,22 +1161,22 @@ func pathInt64Param(w http.ResponseWriter, r *http.Request, name string) (int64,
 }
 
 // meetingKey encodes the opaque meetingId this facade owns end-to-end.
-func meetingKey(centerID int64, meetingNumber int) string {
-	return fmt.Sprintf("%d-%d", centerID, meetingNumber)
+func meetingKey(groupID int64, meetingNumber int) string {
+	return fmt.Sprintf("%d-%d", groupID, meetingNumber)
 }
 
-// parseMeetingKey decodes "{centerId}-{meetingNumber}" back into its parts.
-func parseMeetingKey(s string) (centerID int64, meetingNumber int, ok bool) {
+// parseMeetingKey decodes "{groupId}-{meetingNumber}" back into its parts.
+func parseMeetingKey(s string) (groupID int64, meetingNumber int, ok bool) {
 	parts := strings.SplitN(strings.TrimSpace(s), "-", 2)
 	if len(parts) != 2 {
 		return 0, 0, false
 	}
-	c, err1 := strconv.ParseInt(parts[0], 10, 64)
+	g, err1 := strconv.ParseInt(parts[0], 10, 64)
 	m, err2 := strconv.Atoi(parts[1])
-	if err1 != nil || err2 != nil || c <= 0 || m <= 0 {
+	if err1 != nil || err2 != nil || g <= 0 || m <= 0 {
 		return 0, 0, false
 	}
-	return c, m, true
+	return g, m, true
 }
 
 // roundKES converts a Fineract decimal (e.g. 2500.000000) to the whole-KES Long the app DTOs use.

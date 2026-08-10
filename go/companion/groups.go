@@ -87,9 +87,8 @@ type GroupDetailDto struct {
 	ID string `json:"id"`
 	// App GroupDetailDto REQUIRES fineractGroupId (non-nullable Long) — omitting it fails kotlinx
 	// deserialization on the group-detail/dashboard screen. Group-centric model: the group's own id
-	// IS the fineract group id; fineractCenterId is a legacy mirror (Center dropped).
+	// IS the fineract group id.
 	FineractGroupID   int64                  `json:"fineractGroupId"`
-	FineractCenterID  int64                  `json:"fineractCenterId"`
 	Name              string                 `json:"name"`
 	CycleNumber       int                    `json:"cycleNumber"`
 	CycleLengthMonths int                    `json:"cycleLengthMonths"`
@@ -169,10 +168,8 @@ type GroupDto struct {
 	// The app's grouplist GroupDto REQUIRES fineractGroupId (non-nullable Long) — a missing field
 	// fails kotlinx deserialization ("Field 'fineractGroupId' is required ... but it was missing"),
 	// which surfaced as the group-list screen's "Could not load groups". Group-centric model: the
-	// group's own id IS the fineract group id. fineractCenterId is legacy (Center dropped) but kept
-	// for back-compat.
-	FineractGroupID  int64 `json:"fineractGroupId"`
-	FineractCenterID int64 `json:"fineractCenterId"`
+	// group's own id IS the fineract group id.
+	FineractGroupID int64 `json:"fineractGroupId"`
 }
 
 // GroupPageDto == GET /companion/groups[/mine].
@@ -201,7 +198,6 @@ type fnGroup struct {
 	Active         bool       `json:"active"`
 	ActivationDate []int      `json:"activationDate"`
 	OfficeID       int64      `json:"officeId"`
-	CenterID       *int64     `json:"centerId"`
 	ClientMembers  []fnMember `json:"clientMembers"`
 }
 
@@ -437,7 +433,6 @@ func (h *Handler) aggregateGroup(groupID int64) (GroupDetailDto, []memberRef, er
 	detail := GroupDetailDto{
 		ID:                strconv.FormatInt(g.ID, 10),
 		FineractGroupID:   g.ID,
-		FineractCenterID:  deref(g.CenterID),
 		Name:              g.Name,
 		CycleNumber:       1,  // computed default: fresh VSLA seed is on its first cycle
 		CycleLengthMonths: 12, // computed default: standard 12-month VSLA cycle
@@ -634,13 +629,6 @@ func statusValue(s fnStatus) string {
 		return "Active"
 	}
 	return s.Value
-}
-
-func deref(p *int64) int64 {
-	if p == nil {
-		return 0
-	}
-	return *p
 }
 
 func healthFor(overdue, activeLoans int) string {
