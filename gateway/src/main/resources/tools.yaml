@@ -1,0 +1,143 @@
+# Copyright since 2026 Mifos Initiative
+# This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+#
+# Reviewed, version-controlled tool manifest — the ENFORCEMENT AUTHORITY for what the LLM
+# may touch (ADR-001 §04). Default-deny: a tool not listed here does not exist for the model.
+# `write: true` tools ALWAYS pause for human confirmation before executing.
+# `redactFields` are masked before tool results can reach a cloud LLM (data-residency=cloud).
+
+tools:
+  - name: fineract_client_search
+    description: Search for clients by (partial) name, account number, or external id.
+    write: false
+    params:
+      - { name: query, type: string, required: true, description: Name fragment or id to search for }
+    rest:
+      method: GET
+      path: /fineract-provider/api/v1/search?query={query}&resource=clients
+
+  - name: fineract_client_details
+    description: Fetch one client's profile (status, office, activation date, contact info).
+    write: false
+    params:
+      - { name: clientId, type: integer, required: true, description: The client id }
+    rest:
+      method: GET
+      path: /fineract-provider/api/v1/clients/{clientId}
+    redactFields: [mobileNo, dateOfBirth]
+
+  - name: fineract_client_accounts
+    description: List all loan and savings accounts belonging to a client, with balances and statuses.
+    write: false
+    params:
+      - { name: clientId, type: integer, required: true, description: The client id }
+    rest:
+      method: GET
+      path: /fineract-provider/api/v1/clients/{clientId}/accounts
+
+  - name: fineract_loan_details
+    description: Fetch one loan's details (product, principal, outstanding balance, status, timeline).
+    write: false
+    params:
+      - { name: loanId, type: integer, required: true, description: The loan id }
+    rest:
+      method: GET
+      path: /fineract-provider/api/v1/loans/{loanId}
+
+  - name: fineract_loan_schedule
+    description: Fetch a loan's repayment schedule with due dates, paid and outstanding installments.
+    write: false
+    params:
+      - { name: loanId, type: integer, required: true, description: The loan id }
+    rest:
+      method: GET
+      path: /fineract-provider/api/v1/loans/{loanId}?associations=repaymentSchedule
+
+  - name: fineract_savings_details
+    description: Fetch one savings account's details (balance, status, product).
+    write: false
+    params:
+      - { name: accountId, type: integer, required: true, description: The savings account id }
+    rest:
+      method: GET
+      path: /fineract-provider/api/v1/savingsaccounts/{accountId}
+
+  - name: fineract_loanproducts_list
+    description: List the loan products this office offers (id, name, default terms). Use before creating a loan.
+    write: false
+    params: []
+    rest:
+      method: GET
+      path: /fineract-provider/api/v1/loanproducts
+
+  - name: fineract_loan_create
+    description: Submit a new loan application for a client (status becomes 'pending approval'). Requires officer confirmation.
+    summary: "New loan application of {principal} for client #{clientId}"
+    write: true
+    params:
+      - { name: clientId, type: integer, required: true, description: The client id }
+      - { name: productId, type: integer, required: true, description: Loan product id (use fineract_loanproducts_list to find it) }
+      - { name: principal, type: number, required: true, description: Requested principal amount }
+      - { name: numberOfRepayments, type: integer, required: true, description: Number of monthly installments }
+      - { name: submittedOnDate, type: string, required: true, description: Submission date as yyyy-MM-dd, or 'today' }
+      - { name: expectedDisbursementDate, type: string, required: true, description: Expected disbursement date as yyyy-MM-dd, or 'today' }
+    rest:
+      method: POST
+      path: /fineract-provider/api/v1/loans
+      body: '{"clientId":"${clientId}","productId":"${productId}","principal":"${principal}","loanTermFrequency":"${numberOfRepayments}","loanTermFrequencyType":2,"numberOfRepayments":"${numberOfRepayments}","repaymentEvery":1,"repaymentFrequencyType":2,"interestRatePerPeriod":12,"amortizationType":1,"interestType":1,"interestCalculationPeriodType":1,"transactionProcessingStrategyCode":"mifos-standard-strategy","expectedDisbursementDate":"${expectedDisbursementDate}","submittedOnDate":"${submittedOnDate}","loanType":"individual","locale":"en","dateFormat":"dd MMMM yyyy"}'
+
+  - name: fineract_loan_disburse
+    description: Disburse an approved loan (pays the money out). Requires officer confirmation.
+    summary: "Disburse loan #{loanId}"
+    write: true
+    params:
+      - { name: loanId, type: integer, required: true, description: The approved loan id }
+      - { name: actualDisbursementDate, type: string, required: true, description: Disbursement date as yyyy-MM-dd, or 'today' }
+      - { name: transactionAmount, type: number, required: false, description: Amount to disburse if different from approved }
+    rest:
+      method: POST
+      path: /fineract-provider/api/v1/loans/{loanId}?command=disburse
+      body: '{"actualDisbursementDate":"${actualDisbursementDate}","transactionAmount":"${transactionAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
+
+  - name: fineract_client_create
+    description: Create and activate a new individual client. Requires officer confirmation.
+    summary: "Create new client {firstname} {lastname}"
+    write: true
+    params:
+      - { name: firstname, type: string, required: true, description: Client's first name }
+      - { name: lastname, type: string, required: true, description: Client's last name }
+      - { name: activationDate, type: string, required: true, description: Activation date as yyyy-MM-dd, or the word 'today' }
+      - { name: mobileNo, type: string, required: false, description: Mobile number (optional) }
+    rest:
+      method: POST
+      path: /fineract-provider/api/v1/clients
+      body: '{"officeId":1,"firstname":"${firstname}","lastname":"${lastname}","mobileNo":"${mobileNo}","legalFormId":1,"active":true,"activationDate":"${activationDate}","dateFormat":"dd MMMM yyyy","locale":"en"}'
+
+  - name: fineract_loan_approve
+    description: Approve a loan application that is pending approval. Requires officer confirmation.
+    summary: "Approve loan #{loanId}"
+    write: true
+    params:
+      - { name: loanId, type: integer, required: true, description: The loan id to approve }
+      - { name: approvedOnDate, type: string, required: true, description: Approval date as yyyy-MM-dd, or the word 'today' }
+      - { name: approvedLoanAmount, type: number, required: false, description: Approved principal if different from applied }
+    rest:
+      method: POST
+      path: /fineract-provider/api/v1/loans/{loanId}?command=approve
+      # Every arg the officer sees on the approval card MUST reach Fineract — a card/execution
+      # mismatch on a money field is the exact failure this gateway exists to prevent.
+      # Omitted optional tokens are stripped from the body (never sent as empty strings).
+      body: '{"approvedOnDate":"${approvedOnDate}","approvedLoanAmount":"${approvedLoanAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
+
+  - name: fineract_loan_repayment
+    description: Record a repayment on an active loan. Requires officer confirmation.
+    summary: "Record repayment of {transactionAmount} on loan #{loanId}"
+    write: true
+    params:
+      - { name: loanId, type: integer, required: true, description: The loan id }
+      - { name: transactionAmount, type: number, required: true, description: Repayment amount }
+      - { name: transactionDate, type: string, required: true, description: Transaction date as yyyy-MM-dd, or the word 'today' }
+    rest:
+      method: POST
+      path: /fineract-provider/api/v1/loans/{loanId}/transactions?command=repayment
+      body: '{"transactionDate":"${transactionDate}","transactionAmount":"${transactionAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'

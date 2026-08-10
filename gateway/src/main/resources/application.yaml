@@ -1,0 +1,25 @@
+# Copyright since 2026 Mifos Initiative
+# This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+
+server:
+  port: ${COPILOT_PORT:8090}
+
+copilot:
+  llm:
+    # mock = no key needed; tools still run for real. groq / ollama / any OpenAI-compatible engine.
+    provider: ${COPILOT_LLM_PROVIDER:mock}
+    base-url: ${COPILOT_LLM_BASE_URL:https://api.groq.com/openai/v1}
+    api-key: ${COPILOT_LLM_API_KEY:}
+    model: ${COPILOT_LLM_MODEL:qwen/qwen3.6-27b}
+    # cloud | on-prem — the operator's explicit acknowledgement of where tool results flow (ADR-001).
+    data-residency: ${COPILOT_DATA_RESIDENCY:cloud}
+  fineract:
+    base-url: ${FINERACT_BASE_URL:https://sandbox.mifos.community}
+  cors:
+    allowed-origins: ${COPILOT_ALLOWED_ORIGINS:http://localhost:4200}
+  approval:
+    ttl-seconds: ${COPILOT_APPROVAL_TTL_SECONDS:300}
+
+logging:
+  level:
+    org.mifos.community.copilot: INFO
