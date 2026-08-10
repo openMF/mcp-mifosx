@@ -11,7 +11,7 @@ RUN mvn -q -B dependency:go-offline
 COPY src ./src
 RUN mvn -q -B package -DskipTests
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 LABEL org.opencontainers.image.title="Mifos Copilot Gateway" \
       org.opencontainers.image.description="LLM agent gateway for the Mifos X Copilot (wire contract v1, ADR-001)" \
       org.opencontainers.image.licenses="MPL-2.0" \
