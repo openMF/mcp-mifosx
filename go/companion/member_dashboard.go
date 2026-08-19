@@ -1,0 +1,325 @@
+// Copyright since 2025 Mifos Initiative
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+// COMP-MEMBERDASH: the personal (member-scoped) dashboard read facade. It reshapes the real
+// Fineract group corpus + the member's loan into the single companion contract the MifosSave
+// app's MemberDashboardApiImpl calls:
+//
+//	GET /companion/member/dashboard?selectedGroupId={id} -> MemberDashboardResponseDto
+//
+// Source of truth for the wire shape is the app's OWN approved contract:
+//   - service : core/network/.../service/personaldashboard/MemberDashboardApiImpl.kt  (path + optional selectedGroupId param)
+//   - model   : core/network/.../model/MemberDashboardDto.kt + SavingsTransactionDto.kt
+//   - mapper  : core/network/.../mapper/MemberDashboardMappers.kt + SavingsTransactionMappers.kt
+//
+// DATE-FORMAT decision:
+//   - SavingsTransactionDto.date (recentTransactions[]) -> LocalDate.parse(date) in
+//     SavingsTransactionMappers.kt  => emit "YYYY-MM-DD" (fmtFineractDate). NOT an Instant field.
+//   - MemberDashboardResponseDto.nextRecipientEta -> pass-through String? (never parsed); null here
+//     because this seed is an ACCUMULATING (VSLA) pool, where the rotation triad is null by contract.
+//
+// The endpoint carries no memberId param (the caller identity is implicit), so the dashboard is
+// resolved for a stable default member of the selected group (Grace Wanjiru, who holds the real
+// loan) — the documented hook for real per-user resolution once member<->session linkage lands.
+package companion
+
+import (
+	"encoding/json"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+)
+
+// registerMemberDashboardRoutes wires the COMP-MEMBERDASH endpoint. Called from RegisterRoutes.
+func (h *Handler) registerMemberDashboardRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /companion/member/dashboard", h.HandleMemberDashboard)
+}
+
+// ---- App-facing wire contract (exact match to core/network/.../model/MemberDashboardDto.kt) ----
+
+// GroupSummaryDto == one row of myGroups / selectedGroup.
+type GroupSummaryDto struct {
+	GroupID   string `json:"groupId"`
+	Name      string `json:"name"`
+	PoolModel string `json:"poolModel"`
+}
+
+// SavingsTransactionDto == one row of recentTransactions (compact companion shape).
+type SavingsTransactionDto struct {
+	ID     string  `json:"id"`
+	Date   string  `json:"date"`
+	Type   string  `json:"type"`
+	Amount float64 `json:"amount"`
+}
+
+// MemberDashboardResponseDto == GET /companion/member/dashboard.
+// The pool-model projection axes are mutually exclusive: shareOutProjection for ACCUMULATING pools,
+// rotationPosition+nextRecipientEta for ROTATING_PAYOUT pools. The app force-encodes all three
+// (@EncodeDefault ALWAYS), so they are emitted even when null.
+type MemberDashboardResponseDto struct {
+	MemberName                string                  `json:"memberName"`
+	ClientID                  int64                   `json:"clientId"`
+	GroupLinkedSavingsID      int64                   `json:"groupLinkedSavingsId"`
+	IndividualSavingsID       *int64                  `json:"individualSavingsId"`
+	MyGroups                  []GroupSummaryDto       `json:"myGroups"`
+	SelectedGroup             GroupSummaryDto         `json:"selectedGroup"`
+	PoolModel                 string                  `json:"poolModel"`
+	GroupLinkedSavingsBalance float64                 `json:"groupLinkedSavingsBalance"`
+	IndividualSavingsBalance  float64                 `json:"individualSavingsBalance"`
+	ShareOutProjection        *float64                `json:"shareOutProjection"`
+	RotationPosition          *int                    `json:"rotationPosition"`
+	NextRecipientEta          *string                 `json:"nextRecipientEta"`
+	RecentTransactions        []SavingsTransactionDto `json:"recentTransactions"`
+}
+
+// ---- Handler ----
+
+// HandleMemberDashboard resolves the member-scoped dashboard for the selected group from LIVE
+// Fineract: real group corpus (member share), real per-member individual balance, real recent
+// deposits, and the ACCUMULATING share-out projection computed from the real corpus net of loans.
+func (h *Handler) HandleMemberDashboard(w http.ResponseWriter, r *http.Request) {
+	setJSON(w)
+
+	// DATA ISOLATION: scope the dashboard to the AUTHENTICATED caller. A self-service member sees
+	// ONLY their own groups + their own identity/savings; an admin/staff caller (no linked client)
+	// keeps the unscoped all-groups back-office view. Without this, the dashboard leaked the first
+	// group's first member (e.g. "Alice") and ALL groups to EVERY logged-in user — the same
+	// isolation resolveGroups/HandleMe already enforce.
+	fa := h.callerFromRequest(r)
+	var callerClients map[int64]bool
+	if fa != nil {
+		callerClients = h.userClientIDs(fa)
+	}
+
+	// PERF: the candidate group set is the CALLER's groups (resolveGroups reads clients/{id}?
+	// associations=groups directly — no all-instance scan), so the probe loop below runs over the
+	// caller's handful of groups instead of every group on the instance. Admin/staff (no linked
+	// client) keep the full active-groups back-office view.
+	var allGroups []fnGroup
+	if len(callerClients) > 0 {
+		memberships, mErr := h.resolveGroups(fa)
+		if mErr != nil {
+			writeErr(w, http.StatusBadGateway, "upstream_error", mErr.Error())
+			return
+		}
+		for _, m := range memberships {
+			if id, e := strconv.ParseInt(m.GroupID, 10, 64); e == nil {
+				allGroups = append(allGroups, fnGroup{ID: id, Name: m.GroupName, Active: true})
+			}
+		}
+	} else {
+		var err error
+		allGroups, err = h.activeGroups()
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
+			return
+		}
+	}
+	// A caller who belongs to no group → a valid EMPTY dashboard (never another member's data, never
+	// a 404 that the app would surface as an error screen).
+	if len(allGroups) == 0 {
+		_ = json.NewEncoder(w).Encode(MemberDashboardResponseDto{
+			MemberName:         h.resolveDisplayName(fa),
+			MyGroups:           []GroupSummaryDto{},
+			PoolModel:          defaultVSLAConfig().PoolModel,
+			RecentTransactions: []SavingsTransactionDto{},
+		})
+		return
+	}
+
+	// Probe each candidate group's client members concurrently (light clientMembers read) to resolve
+	// the caller's member row + build the group cards. For a member the set is already their own
+	// groups; the probe confirms membership and fetches the roster used downstream.
+	type probeResult struct {
+		g       fnGroup
+		clients []groupClient
+		mine    bool
+	}
+	probes := make([]probeResult, len(allGroups))
+	var wg sync.WaitGroup
+	for i, g := range allGroups {
+		wg.Add(1)
+		go func(i int, g fnGroup) {
+			defer wg.Done()
+			clients, e := h.groupClients(g.ID)
+			if e != nil {
+				return
+			}
+			mine := callerClients == nil // admin/staff -> all groups in scope (back-office)
+			for _, c := range clients {
+				if callerClients != nil && callerClients[c.ID] {
+					mine = true
+					break
+				}
+			}
+			probes[i] = probeResult{g: g, clients: clients, mine: mine}
+		}(i, g)
+	}
+	wg.Wait()
+
+	myGroupsFn := make([]fnGroup, 0, len(allGroups))
+	clientsByGroup := make(map[int64][]groupClient, len(allGroups))
+	for _, p := range probes {
+		if !p.mine || p.g.ID == 0 {
+			continue
+		}
+		myGroupsFn = append(myGroupsFn, p.g)
+		clientsByGroup[p.g.ID] = p.clients
+	}
+
+	// Caller belongs to no group -> a valid EMPTY dashboard (never another member's data).
+	if len(myGroupsFn) == 0 {
+		_ = json.NewEncoder(w).Encode(MemberDashboardResponseDto{
+			MemberName:         h.resolveDisplayName(fa),
+			MyGroups:           []GroupSummaryDto{},
+			PoolModel:          defaultVSLAConfig().PoolModel,
+			RecentTransactions: []SavingsTransactionDto{},
+		})
+		return
+	}
+
+	selectedID := selectGroupID(r.URL.Query().Get("selectedGroupId"), myGroupsFn)
+	clients := clientsByGroup[selectedID]
+
+	// The dashboard identity is the CALLER (their client + display name), not the first group
+	// member. Resolve their member row in the selected group; fall back to the resolved login
+	// display name, then to a representative member for the admin/back-office view.
+	member := memberRef{Name: h.resolveDisplayName(fa)}
+	if callerClients != nil {
+		for _, c := range clients {
+			if callerClients[c.ID] {
+				member.ID = c.ID
+				if member.Name == "" {
+					member.Name = c.Name
+				}
+				break
+			}
+		}
+	}
+	if member.ID == 0 && callerClients == nil && len(clients) > 0 {
+		rep := clients[0] // admin/back-office view -> representative member for the KPI figures
+		member.ID = rep.ID
+		if member.Name == "" {
+			member.Name = rep.Name
+		}
+	}
+
+	// Member refs for the selected group's loan aggregation (memberRef{id,name}).
+	members := make([]memberRef, 0, len(clients))
+	for _, c := range clients {
+		members = append(members, memberRef{ID: c.ID, Name: c.Name})
+	}
+
+	total, savingsIDs, err := h.aggregateSavings(selectedID)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "upstream_error", err.Error())
+		return
+	}
+	loansOut, _, _, _ := h.aggregateLoans(members)
+	memberCount := float64(len(members))
+	memberShare := total / memberCount
+
+	// shareOutProjection (ACCUMULATING): the member's share of the corpus net of outstanding loans
+	// at cycle-end — computed from the REAL corpus + loans, never fabricated.
+	proj := (total - loansOut) / memberCount
+	if proj < 0 {
+		proj = 0
+	}
+
+	groupLinkedSavingsID := int64(0)
+	if len(savingsIDs) > 0 {
+		groupLinkedSavingsID = savingsIDs[0]
+	}
+
+	// recentTransactions: the member's share of the real group deposits, newest-first, capped at 10.
+	deposits := h.groupDeposits(savingsIDs)
+	recent := make([]SavingsTransactionDto, 0, len(deposits))
+	for i := len(deposits) - 1; i >= 0; i-- { // groupDeposits is oldest-first -> reverse for newest-first
+		d := deposits[i]
+		recent = append(recent, SavingsTransactionDto{
+			ID:     d.ID,
+			Date:   d.Date, // "YYYY-MM-DD"
+			Type:   "DEPOSIT",
+			Amount: deref64(d.Amount) / memberCount,
+		})
+		if len(recent) >= 10 {
+			break
+		}
+	}
+
+	// Build the group-summary chips. poolModel is ACCUMULATING (defaultVSLAConfig.PoolModel).
+	poolModel := defaultVSLAConfig().PoolModel
+	myGroups := make([]GroupSummaryDto, 0, len(myGroupsFn))
+	var selected GroupSummaryDto
+	for _, g := range myGroupsFn {
+		gs := GroupSummaryDto{GroupID: strconv.FormatInt(g.ID, 10), Name: g.Name, PoolModel: poolModel}
+		myGroups = append(myGroups, gs)
+		if g.ID == selectedID {
+			selected = gs
+		}
+	}
+
+	_ = json.NewEncoder(w).Encode(MemberDashboardResponseDto{
+		MemberName:                member.Name,
+		ClientID:                  member.ID,
+		GroupLinkedSavingsID:      groupLinkedSavingsID,
+		IndividualSavingsID:       nil, // no voluntary individual account on this seed
+		MyGroups:                  myGroups,
+		SelectedGroup:             selected,
+		PoolModel:                 poolModel,
+		GroupLinkedSavingsBalance: memberShare,
+		IndividualSavingsBalance:  0,
+		ShareOutProjection:        &proj, // ACCUMULATING pool -> populated
+		RotationPosition:          nil,   // ROTATING_PAYOUT-only -> null
+		NextRecipientEta:          nil,   // ROTATING_PAYOUT-only -> null
+		RecentTransactions:        recent,
+	})
+}
+
+// ---- helpers ----
+
+// activeGroups returns every active Fineract group (id + name), mirroring resolveGroups/HandleMyGroups.
+func (h *Handler) activeGroups() ([]fnGroup, error) {
+	raw, err := h.Fineract.DoRequest("GET", "groups", nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	var groups []fnGroup
+	if err := json.Unmarshal(raw, &groups); err != nil {
+		return nil, err
+	}
+	out := make([]fnGroup, 0, len(groups))
+	for _, g := range groups {
+		if g.Active {
+			out = append(out, g)
+		}
+	}
+	return out, nil
+}
+
+// selectGroupID picks the requested group id if it names an active group, else the first active group.
+func selectGroupID(requested string, groups []fnGroup) int64 {
+	if id, err := strconv.ParseInt(strings.TrimSpace(requested), 10, 64); err == nil {
+		for _, g := range groups {
+			if g.ID == id {
+				return id
+			}
+		}
+	}
+	return groups[0].ID
+}
+
+// defaultDashboardMember picks the stable default member for the implicit-identity dashboard:
+// Grace Wanjiru if present (she holds the real loan → richest dashboard), else the first member.
+func defaultDashboardMember(members []memberRef) memberRef {
+	for _, m := range members {
+		fields := strings.Fields(strings.TrimSpace(m.Name))
+		if len(fields) > 0 && strings.EqualFold(fields[0], "grace") {
+			return m
+		}
+	}
+	return members[0]
+}

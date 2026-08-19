@@ -13,6 +13,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/openMF/mcp-mifosx/go/companion"
 	"github.com/openMF/mcp-mifosx/go/tools"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -50,12 +51,16 @@ func (s *MifosHTTPServer) Serve() error {
 		})
 	}
 
+	// COMP-AUTH companion facade (MifosSave app login). Inherits CORS from the
+	// outer handler below since it registers on the same mux.
+	companion.New(s.McpServer.Registry.Fineract).RegisterRoutes(mux)
+
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("[HTTP] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Mifos-Tenant-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Mifos-Tenant-Id, Fineract-Platform-TenantId")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
