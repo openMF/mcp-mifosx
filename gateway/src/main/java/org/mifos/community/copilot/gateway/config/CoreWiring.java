@@ -49,14 +49,16 @@ public class CoreWiring {
         GatewayProperties.Llm llm = properties.llm();
         if ("mock".equalsIgnoreCase(llm.provider()) || llm.provider() == null || llm.provider().isBlank()) {
             log.warn("LLM provider = mock (no API key configured). Tools still execute for real; "
-                    + "set COPILOT_LLM_PROVIDER=groq|ollama for a real model.");
+                    + "set COPILOT_LLM_PROVIDER=groq|openai|ollama for a real model.");
             return new ScriptedLlmClient();
         }
+        // Known providers get their endpoint for free; anything else OpenAI-compatible
+        // (Azure OpenAI, vLLM, OpenRouter, a private gateway) works via COPILOT_LLM_BASE_URL.
+        boolean explicitBaseUrl = llm.baseUrl() != null && !llm.baseUrl().isBlank();
         String baseUrl = switch (llm.provider().toLowerCase()) {
-            case "groq" -> llm.baseUrl() != null && !llm.baseUrl().isBlank() ? llm.baseUrl()
-                    : "https://api.groq.com/openai/v1";
-            case "ollama" -> llm.baseUrl() != null && !llm.baseUrl().isBlank() ? llm.baseUrl()
-                    : "http://localhost:11434/v1";
+            case "groq" -> explicitBaseUrl ? llm.baseUrl() : "https://api.groq.com/openai/v1";
+            case "openai" -> explicitBaseUrl ? llm.baseUrl() : "https://api.openai.com/v1";
+            case "ollama" -> explicitBaseUrl ? llm.baseUrl() : "http://localhost:11434/v1";
             default -> llm.baseUrl();
         };
         log.info("LLM provider = {} ({}), model = {}, data-residency = {}", llm.provider(), baseUrl, llm.model(),

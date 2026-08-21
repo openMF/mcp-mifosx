@@ -40,6 +40,11 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     private static final DateTimeFormatter FINERACT_DATE = DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.ENGLISH);
     /** Tool output fed back to the model is capped so huge Fineract payloads cannot blow the context. */
     private static final int MAX_RESULT_CHARS = 8_000;
+    /** The business date rarely moves; re-reading it once every few minutes is plenty. */
+    private static final long BUSINESS_DATE_TTL_MS = 5 * 60_000L;
+
+    private volatile String cachedBusinessDate;
+    private volatile long cachedBusinessDateExpiry;
 
     private final HttpClient http;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -63,7 +68,8 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             throw new ToolExecutionException("Tool has no REST mapping: " + tool.name(), 0, null);
         }
 
-        String path = substitutePath(rest.path(), args);
+        String today = businessDate(context);
+        String path = substitutePath(rest.path(), args, today);
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
                 .timeout(Duration.ofSeconds(30))
                 .header("Accept", "application/json")
@@ -78,7 +84,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         if ("GET".equalsIgnoreCase(rest.method())) {
             builder.GET();
         } else {
-            String body = buildBody(rest.bodyTemplate(), args);
+            String body = buildBody(rest.bodyTemplate(), args, today);
             builder.method(rest.method().toUpperCase(Locale.ROOT),
                     HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
             builder.header("Content-Type", "application/json");
@@ -109,12 +115,12 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     }
 
     /** Replace {param} tokens in the path, URL-encoding values; unresolved required tokens fail fast. */
-    private String substitutePath(String template, Map<String, Object> args) throws ToolExecutionException {
+    private String substitutePath(String template, Map<String, Object> args, String today) throws ToolExecutionException {
         String out = template;
         if (args != null) {
             for (Map.Entry<String, Object> entry : args.entrySet()) {
-                out = out.replace("{" + entry.getKey() + "}",
-                        URLEncoder.encode(normalizeValue(entry.getKey(), entry.getValue()), StandardCharsets.UTF_8));
+                out = out.replace("{" + entry.getKey() + "}", URLEncoder
+                        .encode(normalizeValue(entry.getKey(), entry.getValue(), today), StandardCharsets.UTF_8));
             }
         }
         if (out.contains("{")) {
@@ -129,7 +135,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      * Fields whose optional argument was not supplied are REMOVED from the body — Fineract
      * must never receive an empty-string stand-in for a field the officer did not set.
      */
-    String buildBody(String template, Map<String, Object> args) { // package-private for tests
+    String buildBody(String template, Map<String, Object> args, String today) { // package-private for tests
         if (template == null) {
             return "{}";
         }
@@ -144,7 +150,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                 if (value instanceof Number || value instanceof Boolean) {
                     out = out.replace(quotedToken, String.valueOf(value));
                 } else {
-                    out = out.replace(quotedToken, quoteJson(normalizeValue(entry.getKey(), value)));
+                    out = out.replace(quotedToken, quoteJson(normalizeValue(entry.getKey(), value, today)));
                 }
                 // Deliberately NO unquoted "${key}" replacement: values must never be able to
                 // rewrite JSON structure or trigger recursive token substitution.
@@ -157,17 +163,100 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         return out;
     }
 
-    /** Models often say "today" for dates; resolve it to Fineract's expected format. */
-    private String normalizeValue(String name, Object value) {
+    /**
+     * Models often say "today" for dates; resolve it to Fineract's expected format, using the
+     * CORE BANKING business date rather than the gateway host clock. A date after the business
+     * date is clamped to it: Fineract rejects future-dated commands, and the officer meant "now".
+     */
+    private String normalizeValue(String name, Object value, String today) {
         String raw = String.valueOf(value);
         boolean isDateParam = name.toLowerCase(Locale.ROOT).contains("date");
-        if (isDateParam && ("today".equalsIgnoreCase(raw) || raw.isBlank())) {
-            return LocalDate.now().format(FINERACT_DATE);
+        if (!isDateParam) {
+            return raw;
         }
-        if (isDateParam && raw.matches("\\d{4}-\\d{2}-\\d{2}")) {
-            return LocalDate.parse(raw).format(FINERACT_DATE);
+        LocalDate businessDate = parseIsoOrNull(today) != null ? LocalDate.parse(today) : LocalDate.now();
+        if ("today".equalsIgnoreCase(raw) || raw.isBlank() || "null".equalsIgnoreCase(raw)) {
+            return businessDate.format(FINERACT_DATE);
         }
-        return raw;
+        LocalDate parsed = parseIsoOrNull(raw);
+        if (parsed == null) {
+            return raw; // Already a Fineract-formatted or unrecognized value; pass it through.
+        }
+        return (parsed.isAfter(businessDate) ? businessDate : parsed).format(FINERACT_DATE);
+    }
+
+    /** RFC 1123 HTTP date ("Fri, 21 Aug 2026 19:27:50 GMT") to a yyyy-MM-dd calendar day. */
+    private String parseHttpDateOrNull(String header) {
+        try {
+            return java.time.ZonedDateTime
+                    .parse(header, java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME)
+                    .toLocalDate()
+                    .toString();
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private LocalDate parseIsoOrNull(String value) {
+        if (value == null || !value.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            return null;
+        }
+        try {
+            return LocalDate.parse(value);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    /**
+     * Fineract's configurable business date, cached briefly. Falls back to the host clock when
+     * the endpoint is unavailable (older deployments or the module being disabled).
+     */
+    @Override
+    public String businessDate(CallContext context) {
+        long now = System.currentTimeMillis();
+        String cached = cachedBusinessDate;
+        if (cached != null && now < cachedBusinessDateExpiry) {
+            return cached;
+        }
+        String resolved = LocalDate.now().toString();
+        try {
+            HttpRequest request = HttpRequest
+                    .newBuilder(URI.create(fineractBaseUrl + "/fineract-provider/api/v1/businessdate/BUSINESS_DATE"))
+                    .timeout(Duration.ofSeconds(10))
+                    .header("Accept", "application/json")
+                    .header("Authorization", context.authorizationHeader())
+                    .header("Fineract-Platform-TenantId", context.tenantId())
+                    .GET()
+                    .build();
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            String fromBody = null;
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                JsonNode date = mapper.readTree(response.body()).path("date");
+                if (date.isArray() && date.size() == 3) { // Fineract returns [yyyy, M, d].
+                    fromBody = LocalDate.of(date.get(0).asInt(), date.get(1).asInt(), date.get(2).asInt()).toString();
+                } else if (date.isTextual() && parseIsoOrNull(date.asText()) != null) {
+                    fromBody = date.asText();
+                }
+            }
+            // Many deployments run without the business-date module, and the endpoint 404s.
+            // The response's own Date header still carries the core banking server's calendar
+            // day, which beats this host's clock: a gateway in UTC+5:30 has already rolled to
+            // tomorrow while Fineract is on today, and Fineract rejects future-dated commands.
+            resolved = fromBody != null ? fromBody
+                    : response.headers()
+                            .firstValue("date")
+                            .map(this::parseHttpDateOrNull)
+                            .orElse(resolved);
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            // Fall back to the host clock; a wrong-by-a-day date is better than a failed turn.
+        }
+        cachedBusinessDate = resolved;
+        cachedBusinessDateExpiry = now + BUSINESS_DATE_TTL_MS;
+        return resolved;
     }
 
     /**

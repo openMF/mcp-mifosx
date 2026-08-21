@@ -141,7 +141,7 @@ public final class AgentLoop {
             LlmResult result;
             try {
                 result = llm.complete(
-                        withSystemPrompt(screenContext, conversations.messages(fingerprint, conversationId)),
+                        withSystemPrompt(screenContext, conversations.messages(fingerprint, conversationId), context),
                         manifest.openAiSchemas(),
                         (delta) -> sink.emit(StreamEvent.token(delta)),
                         sink::isCancelled);
@@ -327,9 +327,12 @@ public final class AgentLoop {
     }
 
     private List<Map<String, Object>> withSystemPrompt(Map<String, Object> screenContext,
-            List<Map<String, Object>> history) {
+            List<Map<String, Object>> history, CallContext context) {
         List<Map<String, Object>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "system", "content", SystemPrompt.build(screenContext)));
+        // The model must date commands from the CORE BANKING business date, which can differ
+        // from this host's clock; Fineract rejects anything dated in its future.
+        messages.add(Map.of("role", "system",
+                "content", SystemPrompt.build(screenContext, executor.businessDate(context))));
         synchronized (history) {
             messages.addAll(history);
         }

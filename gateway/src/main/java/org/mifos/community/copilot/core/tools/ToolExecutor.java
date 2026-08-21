@@ -26,4 +26,15 @@ public interface ToolExecutor {
      */
     String execute(ToolDefinition tool, Map<String, Object> args, CallContext context, String idempotencyKey)
             throws ToolExecutionException;
+
+    /**
+     * The date the core banking system considers "today" (yyyy-MM-dd).
+     *
+     * <p>Fineract runs on a configurable business date that can differ from the gateway host's
+     * clock. Commands dated in Fineract's future are rejected, so both the system prompt and
+     * date-parameter resolution must use THIS date, not {@code LocalDate.now()}.
+     */
+    default String businessDate(CallContext context) {
+        return java.time.LocalDate.now().toString();
+    }
 }

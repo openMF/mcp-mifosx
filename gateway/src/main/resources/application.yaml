@@ -6,9 +6,11 @@ server:
 
 copilot:
   llm:
-    # mock = no key needed; tools still run for real. groq / ollama / any OpenAI-compatible engine.
+    # mock = no key needed; tools still run for real.
+    # groq / openai / ollama resolve their own endpoint; set base-url only for another
+    # OpenAI-compatible engine (Azure OpenAI, vLLM, OpenRouter, a private gateway).
     provider: ${COPILOT_LLM_PROVIDER:mock}
-    base-url: ${COPILOT_LLM_BASE_URL:https://api.groq.com/openai/v1}
+    base-url: ${COPILOT_LLM_BASE_URL:}
     api-key: ${COPILOT_LLM_API_KEY:}
     model: ${COPILOT_LLM_MODEL:qwen/qwen3.6-27b}
     # cloud | on-prem — the operator's explicit acknowledgement of where tool results flow (ADR-001).
