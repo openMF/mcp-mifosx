@@ -43,8 +43,13 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     /** The business date rarely moves; re-reading it once every few minutes is plenty. */
     private static final long BUSINESS_DATE_TTL_MS = 5 * 60_000L;
 
-    private volatile String cachedBusinessDate;
-    private volatile long cachedBusinessDateExpiry;
+    /**
+     * Fineract is multi-tenant and each tenant carries its own business date, so a single
+     * shared entry would serve one tenant's calendar to another.
+     */
+    private final java.util.Map<String, CachedDate> businessDateByTenant = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private record CachedDate(String value, long expiresAt) {}
 
     private final HttpClient http;
     private final ObjectMapper mapper = new ObjectMapper();
@@ -215,9 +220,10 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     @Override
     public String businessDate(CallContext context) {
         long now = System.currentTimeMillis();
-        String cached = cachedBusinessDate;
-        if (cached != null && now < cachedBusinessDateExpiry) {
-            return cached;
+        String tenant = context.tenantId() == null ? "default" : context.tenantId();
+        CachedDate cached = businessDateByTenant.get(tenant);
+        if (cached != null && now < cached.expiresAt()) {
+            return cached.value();
         }
         String resolved = LocalDate.now().toString();
         try {
@@ -254,8 +260,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             }
             // Fall back to the host clock; a wrong-by-a-day date is better than a failed turn.
         }
-        cachedBusinessDate = resolved;
-        cachedBusinessDateExpiry = now + BUSINESS_DATE_TTL_MS;
+        businessDateByTenant.put(tenant, new CachedDate(resolved, now + BUSINESS_DATE_TTL_MS));
         return resolved;
     }
 

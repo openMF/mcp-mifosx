@@ -7,8 +7,9 @@ server:
 copilot:
   llm:
     # mock = no key needed; tools still run for real.
-    # groq / openai / ollama resolve their own endpoint; set base-url only for another
-    # OpenAI-compatible engine (Azure OpenAI, vLLM, OpenRouter, a private gateway).
+    # groq, openai and ollama resolve their own endpoint, so leave base-url unset for them.
+    # base-url overrides that default and is required only for another OpenAI-compatible
+    # engine such as Azure OpenAI, vLLM, OpenRouter or a private gateway.
     provider: ${COPILOT_LLM_PROVIDER:mock}
     base-url: ${COPILOT_LLM_BASE_URL:}
     api-key: ${COPILOT_LLM_API_KEY:}

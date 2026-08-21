@@ -28,7 +28,7 @@ Request flow:
   Browser (web-app panel)
         |  POST /copilot/api/v1/chat   (SSE, carries the officer's Fineract login)
         v
-  Copilot Gateway  ----> LLM (Groq cloud, or Ollama on-premise)
+  Copilot Gateway  ----> LLM (Groq or OpenAI in the cloud, or Ollama on-premise)
         |
         +-------------> Fineract REST at sandbox.mifos.community
                         (as the officer, so RBAC + audit trail apply)
@@ -54,7 +54,8 @@ you prefer and I will wire it.
     MUST also be HTTPS, otherwise browsers block the request as mixed content.
   - An LLM API key. For the showcase, a free Groq key works:
     https://console.groq.com -> API Keys -> Create.
-    For a fully on-premise demo, run Ollama instead and use no key at all.
+    OpenAI is also supported (COPILOT_LLM_PROVIDER=openai).
+    For an on-premise demo, run Ollama instead and use no key at all.
 
 
 --------------------------------------------------------------------------------
@@ -76,10 +77,13 @@ you prefer and I will wire it.
 Environment variables:
 
   COPILOT_PORT               Listen port.                    Default 8090
-  COPILOT_LLM_PROVIDER       mock | groq | ollama            Default mock
+  COPILOT_LLM_PROVIDER       mock | groq | openai | ollama   Default mock
   COPILOT_LLM_API_KEY        Provider key. SERVER SIDE ONLY. Never in a browser.
   COPILOT_LLM_MODEL          Model id.                       Default qwen/qwen3.6-27b
-  COPILOT_LLM_BASE_URL       Only for a custom OpenAI-compatible endpoint.
+  COPILOT_LLM_BASE_URL       Overrides the endpoint. Leave unset for groq,
+                             openai and ollama, which resolve their own; set it
+                             only for another OpenAI-compatible engine such as
+                             Azure OpenAI, vLLM or OpenRouter.
   FINERACT_BASE_URL          The Fineract the tools act on.  Default sandbox
   COPILOT_ALLOWED_ORIGINS    CORS allow-list, comma separated. Must contain the
                              exact web-app origin (scheme + host + port).
