@@ -91,8 +91,11 @@ Environment variables:
   COPILOT_DATA_RESIDENCY     cloud | on-prem. Operator's acknowledgement of
                              where tool results are sent.    Default cloud
 
-Fully on-premise variant, no data leaves the building and no key needed:
+Fully on-premise variant. No key is needed and no data leaves the network, but
+FINERACT_BASE_URL must ALSO point at an on-premise Fineract. Changing only the
+LLM settings leaves tool requests and client data going to the remote sandbox:
 
+  -e FINERACT_BASE_URL=https://<your-fineract-host> \
   -e COPILOT_LLM_PROVIDER=ollama \
   -e COPILOT_LLM_BASE_URL=http://<ollama-host>:11434/v1 \
   -e COPILOT_LLM_MODEL=qwen3:8b \
