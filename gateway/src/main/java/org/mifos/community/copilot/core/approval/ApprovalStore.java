@@ -33,7 +33,8 @@ public final class ApprovalStore {
     }
 
     /** Create and register a card for this tool call, bound to the asking identity. */
-    public PendingApproval create(String conversationId, LlmToolCall call, String humanSummary, CallContext context) {
+    public PendingApproval create(String conversationId, LlmToolCall call, String humanSummary, CallContext context,
+            java.util.Map<String, String> rows) {
         sweep();
         PendingApproval approval = new PendingApproval(
                 "card-" + UUID.randomUUID(),
@@ -42,7 +43,8 @@ public final class ApprovalStore {
                 humanSummary,
                 "cop-" + UUID.randomUUID(), // Server-minted idempotency key, the only authority.
                 context.fingerprint(),
-                Instant.now().plus(ttl));
+                Instant.now().plus(ttl),
+                rows == null ? java.util.Map.of() : java.util.Map.copyOf(rows));
         pending.put(approval.cardId(), approval);
         return approval;
     }

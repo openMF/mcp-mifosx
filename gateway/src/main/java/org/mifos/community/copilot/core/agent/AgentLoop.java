@@ -103,7 +103,7 @@ public final class AgentLoop {
         // The server-minted key from card creation goes to Fineract as Idempotency-Key:
         // a retry of this approval can never execute twice.
         ExecStatus status = executeAndRecord(tool, call, context, approval.idempotencyKey(), conversationId,
-                fingerprint, sink);
+                fingerprint, sink, approval.rows());
         if (status == ExecStatus.AUTH_FAILED) {
             // Auth expired mid-decision: put the card back (same id, same idempotency key) so
             // the officer's retry after re-login succeeds instead of dead-ending.
@@ -192,8 +192,9 @@ public final class AgentLoop {
                     // Read the account, product and client first, so the officer confirms
                     // against names rather than identifiers.
                     Map<String, String> enriched = executor.enrich(tool, call.arguments(), context);
+                    Map<String, String> rows = cardRows(tool, call, enriched, context);
                     PendingApproval approval = approvals.create(conversationId, call,
-                            summaryFor(tool, call, enriched), context);
+                            summaryFor(tool, call, enriched), context, rows);
                     // OpenAI-style history requires a tool result for EVERY id in the assistant's
                     // tool_calls message. The paused call gets its result on resume; any siblings
                     // after it are marked not-executed NOW so the next LLM turn stays valid.
@@ -204,11 +205,10 @@ public final class AgentLoop {
                     }
                     sink.emit(StreamEvent.actionCard(
                             approval.cardId(), tool.name(), call.arguments(), approval.humanSummary(),
-                            approval.idempotencyKey(), approval.expiresAt().toString(),
-                            cardRows(tool, call, enriched, context)));
+                            approval.idempotencyKey(), approval.expiresAt().toString(), rows));
                     return; // Paused: no done event; the decision endpoint continues this turn.
                 }
-                if (executeAndRecord(tool, call, context, null, conversationId, fingerprint, sink)
+                if (executeAndRecord(tool, call, context, null, conversationId, fingerprint, sink, Map.of())
                         == ExecStatus.AUTH_FAILED) {
                     return; // Auth expired, so the turn already ended with AUTH_EXPIRED + done.
                 }
@@ -223,7 +223,8 @@ public final class AgentLoop {
     }
 
     private ExecStatus executeAndRecord(ToolDefinition tool, LlmToolCall call, CallContext context,
-            String idempotencyKey, String conversationId, String fingerprint, EventSink sink) {
+            String idempotencyKey, String conversationId, String fingerprint, EventSink sink,
+            Map<String, String> rows) {
         sink.emit(StreamEvent.toolCall(tool.name(), "started", !tool.write(), -1));
         long startedAt = System.currentTimeMillis();
         String outcome;
@@ -243,7 +244,7 @@ public final class AgentLoop {
         }
         sink.emit(StreamEvent.toolCall(tool.name(), "finished", !tool.write(), System.currentTimeMillis() - startedAt));
         conversations.append(fingerprint, conversationId, toolResultMessage(call, outcome));
-        emitNavigationCard(tool, call, outcome, sink);
+        emitNavigationCard(tool, call, outcome, sink, rows);
         return isErrorOutcome(outcome) ? ExecStatus.APP_ERROR : ExecStatus.OK;
     }
 
@@ -259,7 +260,8 @@ public final class AgentLoop {
      * After a successful create, give the officer a one-click path to the new record:
      * a display card with a route button into the web-app (never an approval card).
      */
-    private void emitNavigationCard(ToolDefinition tool, LlmToolCall call, String outcome, EventSink sink) {
+    private void emitNavigationCard(ToolDefinition tool, LlmToolCall call, String outcome, EventSink sink,
+            Map<String, String> rows) {
         try {
             com.fasterxml.jackson.databind.JsonNode result = new com.fasterxml.jackson.databind.ObjectMapper()
                     .readTree(outcome);
@@ -272,8 +274,10 @@ public final class AgentLoop {
                 case "mifos_client_create" -> {
                     long id = result.path("clientId").asLong(result.path("resourceId").asLong(0));
                     if (!failed && id > 0) {
+                        String named = nameFrom(call, "firstname", "lastname");
                         sink.emit(StreamEvent.displayCard("client", "Client created",
-                                Map.of("Client ID", String.valueOf(id)),
+                                receipt(rows, named.isBlank() ? "Client account" : "Client",
+                                        named.isBlank() ? String.valueOf(id) : named),
                                 List.of(Map.of("label", "Open client profile", "style", "primary",
                                         "route", "/clients/" + id + "/general"))));
                     }
@@ -281,12 +285,12 @@ public final class AgentLoop {
                 case "mifos_loan_create" -> {
                     if (!failed && loanId > 0 && clientId > 0) {
                         sink.emit(StreamEvent.displayCard("loan", "Loan application submitted",
-                                Map.of("Loan ID", String.valueOf(loanId), "Client ID", String.valueOf(clientId)),
+                                receipt(rows, "Loan account", String.valueOf(loanId)),
                                 List.of(Map.of("label", "Open loan", "style", "primary",
                                         "route", "/clients/" + clientId + "/loans-accounts/" + loanId + "/general"))));
                     } else if (failed && clientId > 0) {
                         sink.emit(StreamEvent.displayCard("insight", "Loan application was not created",
-                                Map.of("Client ID", String.valueOf(clientId)),
+                                receipt(rows, "Client account", String.valueOf(clientId)),
                                 List.of(Map.of("label", "Open client to verify", "style", "accent",
                                         "route", "/clients/" + clientId + "/general"))));
                     }
@@ -295,7 +299,7 @@ public final class AgentLoop {
                     // Fineract loan-command responses include clientId + loanId on success.
                     if (!failed && loanId > 0 && clientId > 0) {
                         sink.emit(StreamEvent.displayCard("loan", "Loan updated",
-                                Map.of("Loan ID", String.valueOf(loanId)),
+                                receipt(rows, "Loan account", String.valueOf(loanId)),
                                 List.of(Map.of("label", "Open loan", "style", "primary",
                                         "route", "/clients/" + clientId + "/loans-accounts/" + loanId + "/general"))));
                     }
@@ -423,6 +427,46 @@ public final class AgentLoop {
         return key.toString();
     }
 
+
+    /**
+     * What the receipt says about the record that just changed.
+     *
+     * <p>Reuses the rows the officer read on the confirmation card, so the receipt names the
+     * same client and account they approved. Enrichment is best-effort, so when it found
+     * nothing the receipt falls back to the identifier under a label. An id is a poor thing
+     * to show an officer, but a receipt with no row at all is worse: there would be no way to
+     * tell which record had just changed.
+     */
+    private Map<String, String> receipt(Map<String, String> rows, String preferred, String fallback) {
+        Map<String, String> named = new LinkedHashMap<>();
+        if (rows != null) {
+            for (Map.Entry<String, String> row : rows.entrySet()) {
+                if (NAMING_ROWS.contains(row.getKey())) {
+                    named.put(row.getKey(), row.getValue());
+                }
+            }
+        }
+        if (named.isEmpty() && fallback != null && !fallback.isBlank()) {
+            named.put(preferred, fallback);
+        }
+        return named;
+    }
+
+    /** Rows worth repeating on a receipt: who and which account, not the figures again. */
+    private static final java.util.Set<String> NAMING_ROWS =
+            java.util.Set.of("Client", "Client account", "Loan account", "Savings account", "Product");
+
+    /** "Aisha Bello" from the arguments of a create, which has no record to read back yet. */
+    private String nameFrom(LlmToolCall call, String... parts) {
+        StringBuilder name = new StringBuilder();
+        for (String part : parts) {
+            Object value = call.arguments() == null ? null : call.arguments().get(part);
+            if (value != null && !String.valueOf(value).isBlank()) {
+                name.append(name.isEmpty() ? "" : " ").append(value);
+            }
+        }
+        return name.toString();
+    }
 
     /** Argument names the model supplied that the manifest does not declare for this tool. */
     private List<String> undeclaredArguments(ToolDefinition tool, LlmToolCall call) {
