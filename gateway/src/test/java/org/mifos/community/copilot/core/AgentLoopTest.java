@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mifos.community.copilot.core.agent.AgentLoop;
 import org.mifos.community.copilot.core.agent.EventSink;
 import org.mifos.community.copilot.core.approval.ApprovalStore;
+import org.mifos.community.copilot.core.approval.PendingApproval;
 import org.mifos.community.copilot.core.auth.CallContext;
 import org.mifos.community.copilot.core.contract.StreamEvent;
 import org.mifos.community.copilot.core.convo.ConversationStore;
@@ -59,6 +60,17 @@ class AgentLoopTest {
                     currency: currency.code
                     fields: { Client: clientName, Product: loanProductName }
                 rest: { method: POST, path: "/api/{loanId}", body: '{}' }
+              - name: mifos_loan_approve
+                description: Approve a loan application. Requires the officer's confirmation.
+                summary: "Approve {productName} for {clientName}"
+                write: true
+                params:
+                  - { name: loanId, type: integer, required: true, label: Loan account, show: false }
+                enrich:
+                  - path: /api/loans/{loanId}
+                    currency: currency.code
+                    fields: { Client: clientName, Product: loanProductName }
+                rest: { method: POST, path: "/api/{loanId}?command=approve", body: '{}' }
             """;
 
     private final CallContext officer = new CallContext("Basic abc", "default", "corr-1");
@@ -387,5 +399,56 @@ class AgentLoopTest {
 
         Map<String, String> rows = (Map<String, String>) sink.only("action_card").data().get("rows");
         assertThat(rows).containsEntry("Approval date", "21 August 2026");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theReceiptAfterAWriteNamesWhatTheOfficerApproved() {
+        // The rows read on the card are reused, so the receipt cannot drift from it.
+        llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "mifos_loan_approve", Map.of("loanId", 12)))));
+        loop().runTurn(null, "Approve it", Map.of(), officer, sink);
+        String cardId = String.valueOf(sink.only("action_card").data().get("card_id"));
+
+        executor.nextResult = "{\"loanId\":12,\"clientId\":7}";
+        llm.enqueue(new LlmResult("Done.", List.of()));
+        RecordingSink resumeSink = new RecordingSink();
+        loop().resume(cardId, true, Map.of(), officer, resumeSink);
+
+        Map<String, Object> card = (Map<String, Object>) resumeSink.only("action_card").data().get("card");
+        Map<String, String> data = (Map<String, String>) card.get("data");
+        assertThat(data).containsEntry("Client", "Aisha Bello").containsEntry("Product", "Weekly Loan");
+        assertThat(data).doesNotContainKey("Loan ID");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aReceiptWithNoNamesStillSaysWhichRecordChanged() {
+        // Enrichment is best-effort. A receipt showing nothing at all would leave the officer
+        // unable to tell which record had just moved, so the identifier appears, labelled.
+        executor.enrichment = Map.of();
+        llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "mifos_loan_approve", Map.of("loanId", 12)))));
+        loop().runTurn(null, "Approve it", Map.of(), officer, sink);
+        String cardId = String.valueOf(sink.only("action_card").data().get("card_id"));
+
+        executor.nextResult = "{\"loanId\":12,\"clientId\":7}";
+        llm.enqueue(new LlmResult("Done.", List.of()));
+        RecordingSink resumeSink = new RecordingSink();
+        loop().resume(cardId, true, Map.of(), officer, resumeSink);
+
+        Map<String, Object> card = (Map<String, Object>) resumeSink.only("action_card").data().get("card");
+        assertThat((Map<String, String>) card.get("data")).containsEntry("Loan account", "12");
+    }
+
+    @Test
+    void theRowsOnAPendingApprovalCannotBeChangedAfterTheOfficerHasReadThem() {
+        java.util.Map<String, String> mutable = new java.util.LinkedHashMap<>();
+        mutable.put("Client", "Aisha Bello");
+
+        PendingApproval approval = new PendingApproval("card-1", "conv-1",
+                new LlmToolCall("c1", "write_tool", Map.of()), "Approve", "cop-1",
+                officer.fingerprint(), java.time.Instant.now().plusSeconds(60), mutable);
+        mutable.put("Client", "Someone Else");
+
+        assertThat(approval.rows()).containsExactly(entry("Client", "Aisha Bello"));
     }
 }
