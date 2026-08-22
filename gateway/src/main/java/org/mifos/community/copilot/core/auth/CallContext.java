@@ -27,7 +27,7 @@ public record CallContext(String authorizationHeader, String tenantId, String co
 
     /**
      * Stable digest binding pending approvals to the same user + tenant: the officer who approves
-     * must be the officer who asked (ADR-001 §04). Raw credentials are never stored — only this hash.
+     * must be the officer who asked (ADR-001 §04). Raw credentials are never stored, only this hash.
      */
     public String fingerprint() {
         try {

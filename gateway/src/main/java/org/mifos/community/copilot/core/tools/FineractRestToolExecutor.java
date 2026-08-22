@@ -25,14 +25,15 @@ import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Direct-REST tool executor: maps manifest tools onto the Fineract REST API using the
- * OFFICER'S OWN forwarded credential — the gateway holds no Fineract account (ADR-001 §2.1).
+ * OFFICER'S OWN forwarded credential, since the gateway holds no Fineract account (ADR-001 §2.1).
  *
  * <p>This is the transport hedge that works against any Fineract today; the MCP executor
  * targeting the Fineract plugin's {@code /mcp} endpoint slots in behind the same interface.
- * Pure JDK + Jackson — no framework imports.
+ * Pure JDK and Jackson, with no framework imports.
  */
 public final class FineractRestToolExecutor implements ToolExecutor {
 
@@ -82,7 +83,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                 .header("Fineract-Platform-TenantId", context.tenantId())
                 .header("X-Correlation-Id", context.correlationId());
         if (idempotencyKey != null && !idempotencyKey.isBlank()) {
-            // Fineract's CommandSource dedups on this natively — approved writes are exactly-once.
+            // Fineract's CommandSource dedups on this natively, so approved writes are exactly-once.
             builder.header("Idempotency-Key", idempotencyKey);
         }
 
@@ -137,7 +138,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     /**
      * Fill the JSON body template. Tokens are always written as quoted "${param}"; string
      * values are JSON-escaped in place, numbers/booleans replace the quoted token unquoted.
-     * Fields whose optional argument was not supplied are REMOVED from the body — Fineract
+     * Fields whose optional argument was not supplied are REMOVED from the body, because Fineract
      * must never receive an empty-string stand-in for a field the officer did not set.
      */
     String buildBody(String template, Map<String, Object> args, String today) { // package-private for tests
@@ -188,6 +189,95 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             return raw; // Already a Fineract-formatted or unrecognized value; pass it through.
         }
         return (parsed.isAfter(businessDate) ? businessDate : parsed).format(FINERACT_DATE);
+    }
+
+
+    /**
+     * Fetch the human context for a pending write: the account number, the product and the
+     * client, so the officer confirms against names rather than identifiers. Read-only, and
+     * performed with the officer's own credential like every other call.
+     */
+    @Override
+    public java.util.Map<String, String> enrich(ToolDefinition tool, Map<String, Object> args, CallContext context) {
+        if (tool.enrich() == null || tool.enrich().isEmpty()) {
+            return java.util.Map.of();
+        }
+        java.util.Map<String, String> rows = new java.util.LinkedHashMap<>();
+        for (ToolDefinition.Enrich spec : tool.enrich()) {
+            readInto(rows, spec, args, context);
+        }
+        return rows;
+    }
+
+    /**
+     * One enrichment read, merged into {@code rows}. Presentation only: a lookup that fails
+     * leaves the card thinner but must never fail the officer's turn.
+     */
+    private void readInto(java.util.Map<String, String> rows, ToolDefinition.Enrich spec, Map<String, Object> args,
+            CallContext context) {
+        if (spec.path() == null || spec.fields().isEmpty()) {
+            return;
+        }
+        try {
+            String path = substitutePath(spec.path(), args, businessDate(context));
+            HttpRequest request = HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
+                    .timeout(Duration.ofSeconds(15))
+                    .header("Accept", "application/json")
+                    .header("Authorization", context.authorizationHeader())
+                    .header("Fineract-Platform-TenantId", context.tenantId())
+                    .GET()
+                    .build();
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return;
+            }
+            JsonNode body = mapper.readTree(response.body());
+            String currency = spec.currencyPath() != null ? text(at(body, spec.currencyPath())) : currencySymbol(body);
+            if (!currency.isBlank()) {
+                rows.putIfAbsent(Display.CURRENCY, currency);
+            }
+            for (Map.Entry<String, String> field : spec.fields().entrySet()) {
+                String pointer = field.getValue();
+                boolean money = pointer.startsWith("#money:");
+                JsonNode node = at(body, money ? pointer.substring("#money:".length()) : pointer);
+                if (node == null || node.isMissingNode() || node.isNull()) {
+                    continue;
+                }
+                rows.put(field.getKey(), money ? Display.money(node.asDouble(), currency) : node.asText());
+            }
+        } catch (ToolExecutionException | IOException | InterruptedException | RuntimeException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private String text(JsonNode node) {
+        return node == null || node.isMissingNode() || node.isNull() ? "" : node.asText();
+    }
+
+    /** Walk a dotted path such as {@code summary.principalOutstanding}. */
+    private JsonNode at(JsonNode root, String dotted) {
+        JsonNode node = root;
+        for (String part : dotted.split(Pattern.quote("."))) {
+            if (node == null) {
+                return null;
+            }
+            node = node.path(part);
+        }
+        return node;
+    }
+
+    /** The account's own currency, so an amount is shown in the money it is actually in. */
+    private String currencySymbol(JsonNode body) {
+        JsonNode currency = body.path("currency");
+        for (String key : new String[] { "displaySymbol", "code" }) {
+            JsonNode value = currency.path(key);
+            if (value.isTextual() && !value.asText().isBlank()) {
+                return value.asText();
+            }
+        }
+        return "";
     }
 
     /** RFC 1123 HTTP date ("Fri, 21 Aug 2026 19:27:50 GMT") to a yyyy-MM-dd calendar day. */
@@ -294,7 +384,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
 
     /**
      * {"error":{"tool":...,"httpStatus":404,"detail":<parsed body or raw text>}}
-     * Error bodies get the SAME redaction + truncation as success bodies — Fineract error
+     * Error bodies get the SAME redaction + truncation as success bodies, because Fineract error
      * payloads can echo request PII, and they flow to the LLM like any tool result.
      */
     private String applicationError(String toolName, int status, String body, java.util.List<String> redactFields) {
@@ -330,7 +420,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             redactNode(root, redactFields);
             return mapper.writeValueAsString(root);
         } catch (IOException e) {
-            return json; // Not JSON — nothing to redact structurally.
+            return json; // Not JSON, so nothing to redact structurally.
         }
     }
 

@@ -14,7 +14,7 @@ import java.time.Instant;
 /**
  * A write action paused for human confirmation (ADR-001 §04).
  *
- * <p>{@code securityFingerprint} binds the card to the asking officer + tenant — only the same
+ * <p>{@code securityFingerprint} binds the card to the asking officer and tenant, so only the same
  * identity may decide it. {@code idempotencyKey} is minted HERE, server-side, at card creation;
  * client-supplied keys are ignored by design. No raw credential is ever stored.
  */

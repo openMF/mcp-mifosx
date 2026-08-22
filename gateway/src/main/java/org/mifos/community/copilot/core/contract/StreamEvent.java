@@ -34,13 +34,21 @@ public record StreamEvent(String name, Map<String, Object> data) {
         return new StreamEvent("tool_call", data);
     }
 
-    /** Approval card — server-constructed from the parsed function call, never from model prose. */
+    /**
+     * Approval card, built by the server from the parsed function call and never from model
+     * prose.
+     *
+     * <p>{@code rows} is what the officer actually reads: labelled, formatted, and naming the
+     * account, product and client. {@code args} stays alongside it as the machine record of
+     * exactly what will execute.
+     */
     public static StreamEvent actionCard(String cardId, String tool, Map<String, Object> args, String humanSummary,
-            String idempotencyKey, String expiresAt) {
+            String idempotencyKey, String expiresAt, Map<String, String> rows) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("card_id", cardId);
         data.put("tool", tool);
         data.put("args", args);
+        data.put("rows", rows == null ? Map.of() : rows);
         data.put("human_summary", humanSummary);
         data.put("idempotency_key", idempotencyKey);
         data.put("expires_at", expiresAt);

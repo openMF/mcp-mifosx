@@ -17,6 +17,7 @@ import org.mifos.community.copilot.core.llm.LlmClient;
 import org.mifos.community.copilot.core.llm.LlmException;
 import org.mifos.community.copilot.core.llm.LlmResult;
 import org.mifos.community.copilot.core.llm.LlmToolCall;
+import org.mifos.community.copilot.core.tools.Display;
 import org.mifos.community.copilot.core.tools.ToolDefinition;
 import org.mifos.community.copilot.core.tools.ToolExecutionException;
 import org.mifos.community.copilot.core.tools.ToolExecutor;
@@ -34,11 +35,11 @@ import java.util.Optional;
  *
  * <p>Banking invariants enforced HERE, not in the model (ADR-001 §04):
  * <ul>
- *   <li>default-deny — a tool absent from the manifest is refused, whatever the model says;</li>
+ *   <li>default-deny, so a tool absent from the manifest is refused, whatever the model says;</li>
  *   <li>every WRITE pauses: the loop stores a single-use approval and streams an action_card,
  *       ending the turn WITHOUT a done event; execution happens only via {@link #resume};</li>
  *   <li>the approval card is built from the PARSED function call, never from model prose;</li>
- *   <li>at most {@link #MAX_TOOL_ROUNDS} tool rounds per turn — no runaway loops;</li>
+ *   <li>at most {@link #MAX_TOOL_ROUNDS} tool rounds per turn, so no runaway loops;</li>
  *   <li>tool results feed the model, but rule custody stays in the system prompt.</li>
  * </ul>
  */
@@ -75,7 +76,7 @@ public final class AgentLoop {
             EventSink sink) {
         Optional<PendingApproval> taken = approvals.take(cardId, context);
         if (taken.isEmpty()) {
-            // Unknown, expired, already decided, or a different identity — all read the same.
+            // Unknown, expired, already decided, or a different identity: all read the same.
             sink.emit(StreamEvent.error(ErrorCode.PERMISSION_DENIED,
                     "This confirmation is no longer valid. Please ask again.", false));
             sink.emit(StreamEvent.done(""));
@@ -111,12 +112,12 @@ public final class AgentLoop {
         }
         // Status line BEFORE the summary turn: if the LLM is unavailable or rate-limited for
         // the summary, the officer must still see what happened. It must never say "Executed"
-        // for an action Fineract rejected — that misleads on a money path.
+        // for an action the core banking system rejected, which misleads on a money path.
         if (status == ExecStatus.OK) {
             sink.emit(StreamEvent.token("✔ Executed: " + approval.humanSummary() + "\n\n"));
         } else {
             sink.emit(StreamEvent.token("✖ Not completed: " + approval.humanSummary()
-                    + " — the banking system rejected it. Details follow.\n\n"));
+                    + ". The banking system rejected it. Details follow.\n\n"));
         }
         if (sink.isCancelled()) {
             return;
@@ -128,9 +129,9 @@ public final class AgentLoop {
     private enum ExecStatus {
         /** Fineract accepted the operation. */
         OK,
-        /** Fineract rejected it (validation/business error) — recorded for the model to explain. */
+        /** Fineract rejected it (validation/business error), recorded for the model to explain. */
         APP_ERROR,
-        /** The officer's session expired — the turn already ended with AUTH_EXPIRED. */
+        /** The officer's session expired, so the turn already ended with AUTH_EXPIRED. */
         AUTH_FAILED
     }
 
@@ -153,7 +154,7 @@ public final class AgentLoop {
                 return;
             }
             if (sink.isCancelled()) {
-                return; // Stop is silent — nothing else may run after a cancel.
+                return; // Stop is silent: nothing else may run after a cancel.
             }
 
             if (!result.text().isBlank()) {
@@ -179,7 +180,7 @@ public final class AgentLoop {
                 if (tool.write()) {
                     // Card/execution fidelity: an arg the model invented beyond the declared
                     // params would show on the card yet never reach the request body. Refuse
-                    // the call so the model retries with only declared arguments — what the
+                    // the call so the model retries with only declared arguments, because what the
                     // officer approves must be exactly what executes.
                     List<String> undeclared = undeclaredArguments(tool, call);
                     if (!undeclared.isEmpty()) {
@@ -188,8 +189,11 @@ public final class AgentLoop {
                                         + " for this tool. Retry using only the declared parameters.\"}"));
                         continue;
                     }
+                    // Read the account, product and client first, so the officer confirms
+                    // against names rather than identifiers.
+                    Map<String, String> enriched = executor.enrich(tool, call.arguments(), context);
                     PendingApproval approval = approvals.create(conversationId, call,
-                            tool.humanSummary(call.arguments()), context);
+                            summaryFor(tool, call, enriched), context);
                     // OpenAI-style history requires a tool result for EVERY id in the assistant's
                     // tool_calls message. The paused call gets its result on resume; any siblings
                     // after it are marked not-executed NOW so the next LLM turn stays valid.
@@ -200,12 +204,13 @@ public final class AgentLoop {
                     }
                     sink.emit(StreamEvent.actionCard(
                             approval.cardId(), tool.name(), call.arguments(), approval.humanSummary(),
-                            approval.idempotencyKey(), approval.expiresAt().toString()));
+                            approval.idempotencyKey(), approval.expiresAt().toString(),
+                            cardRows(tool, call, enriched, context)));
                     return; // Paused: no done event; the decision endpoint continues this turn.
                 }
                 if (executeAndRecord(tool, call, context, null, conversationId, fingerprint, sink)
                         == ExecStatus.AUTH_FAILED) {
-                    return; // Auth expired — the turn already ended with AUTH_EXPIRED + done.
+                    return; // Auth expired, so the turn already ended with AUTH_EXPIRED + done.
                 }
                 if (sink.isCancelled()) {
                     return;
@@ -231,7 +236,7 @@ public final class AgentLoop {
                 sink.emit(StreamEvent.done(conversationId));
                 return ExecStatus.AUTH_FAILED;
             } else if (e.isPermissionFailure()) {
-                outcome = "{\"error\":\"Fineract denied this operation for the current user (missing permission).\"}";
+                outcome = "{\"error\":\"Your Mifos X role does not permit this operation.\"}";
             } else {
                 outcome = "{\"error\":" + jsonQuote(e.getMessage()) + "}";
             }
@@ -251,7 +256,7 @@ public final class AgentLoop {
     }
 
     /**
-     * After a successful create, give the officer a one-click path to the new record —
+     * After a successful create, give the officer a one-click path to the new record:
      * a display card with a route button into the web-app (never an approval card).
      */
     private void emitNavigationCard(ToolDefinition tool, LlmToolCall call, String outcome, EventSink sink) {
@@ -260,11 +265,11 @@ public final class AgentLoop {
                     .readTree(outcome);
             boolean failed = result.has("error");
             // Ids come from the Fineract response when it succeeded, from the call's own
-            // arguments otherwise — so even a FAILED action offers a "go check directly" link.
+            // arguments otherwise, so even a FAILED action offers a "go check directly" link.
             long clientId = result.path("clientId").asLong(argAsLong(call, "clientId"));
             long loanId = result.path("loanId").asLong(argAsLong(call, "loanId"));
             switch (tool.name()) {
-                case "fineract_client_create" -> {
+                case "mifos_client_create" -> {
                     long id = result.path("clientId").asLong(result.path("resourceId").asLong(0));
                     if (!failed && id > 0) {
                         sink.emit(StreamEvent.displayCard("client", "Client created",
@@ -273,7 +278,7 @@ public final class AgentLoop {
                                         "route", "/clients/" + id + "/general"))));
                     }
                 }
-                case "fineract_loan_create" -> {
+                case "mifos_loan_create" -> {
                     if (!failed && loanId > 0 && clientId > 0) {
                         sink.emit(StreamEvent.displayCard("loan", "Loan application submitted",
                                 Map.of("Loan ID", String.valueOf(loanId), "Client ID", String.valueOf(clientId)),
@@ -286,7 +291,7 @@ public final class AgentLoop {
                                         "route", "/clients/" + clientId + "/general"))));
                     }
                 }
-                case "fineract_loan_approve", "fineract_loan_disburse", "fineract_loan_repayment" -> {
+                case "mifos_loan_approve", "mifos_loan_disburse", "mifos_loan_repayment" -> {
                     // Fineract loan-command responses include clientId + loanId on success.
                     if (!failed && loanId > 0 && clientId > 0) {
                         sink.emit(StreamEvent.displayCard("loan", "Loan updated",
@@ -300,7 +305,7 @@ public final class AgentLoop {
                 }
             }
         } catch (Exception e) {
-            // Navigation is a convenience — never let it break the turn.
+            // Navigation is a convenience, so never let it break the turn.
         }
     }
 
@@ -315,6 +320,109 @@ public final class AgentLoop {
             return 0;
         }
     }
+
+
+    /**
+     * The rows the officer reads: what the account actually is, then what is about to change.
+     * Identifiers are left out, since the enrichment already names the account and product.
+     */
+    private Map<String, String> cardRows(ToolDefinition tool, LlmToolCall call, Map<String, String> enriched,
+            CallContext context) {
+        Map<String, String> rows = new LinkedHashMap<>(enriched);
+        // The enrichment reports the currency of the record being changed, so the amount the
+        // officer approves is denominated the same way as the account it lands on.
+        String currency = rows.getOrDefault(Display.CURRENCY, "");
+        rows.keySet().removeIf(Display::isReserved);
+        for (ToolDefinition.Param param : tool.params() == null ? List.<ToolDefinition.Param>of() : tool.params()) {
+            if (!param.show()) {
+                continue;
+            }
+            Object raw = call.arguments() == null ? null : call.arguments().get(param.name());
+            if (raw == null || String.valueOf(raw).isBlank()) {
+                continue;
+            }
+            String value = String.valueOf(raw);
+            if (param.isMoney()) {
+                try {
+                    value = Display.money(Double.parseDouble(value), currency);
+                } catch (NumberFormatException e) {
+                    // Leave it as the model supplied it rather than hiding the value.
+                }
+            } else if (param.isDate()) {
+                value = Display.date(value, executor.businessDate(context));
+            }
+            rows.put(param.displayLabel(), value);
+        }
+        return rows;
+    }
+
+    /** Fill the manifest's summary template from the enriched names, then the raw arguments. */
+    private String summaryFor(ToolDefinition tool, LlmToolCall call, Map<String, String> enriched) {
+        Map<String, Object> values = new LinkedHashMap<>();
+        if (call.arguments() != null) {
+            values.putAll(call.arguments());
+        }
+        enriched.forEach((label, value) -> {
+            if (!Display.isReserved(label)) {
+                values.put(templateKey(label), value);
+            }
+        });
+        values.putIfAbsent("productName", enriched.getOrDefault("Product", ""));
+        values.putIfAbsent("clientName", enriched.getOrDefault("Client", ""));
+        String summary = tidy(tool.humanSummary(values));
+        // Enrichment is best-effort, so a template built entirely from names can collapse
+        // to a single word. A vague title on a money card is worse than a wordy one.
+        return summary.split(" ").length >= 3 ? summary : firstSentence(tool.description());
+    }
+
+    /** Enough of the tool's own description to say what is about to happen. */
+    private String firstSentence(String description) {
+        if (description == null || description.isBlank()) {
+            return "Confirm this action";
+        }
+        int stop = description.indexOf(". ");
+        return stop > 0 ? description.substring(0, stop) : description;
+    }
+
+    /**
+     * Drops placeholders the enrichment could not fill and the double spaces they leave behind,
+     * so a literal "{clientName}" never reaches an officer.
+     */
+    private String tidy(String summary) {
+        StringBuilder out = new StringBuilder(summary.length());
+        for (int i = 0; i < summary.length(); i++) {
+            char c = summary.charAt(i);
+            if (c == '{') {
+                int close = summary.indexOf('}', i);
+                if (close > i) {
+                    i = close;
+                    continue;
+                }
+            }
+            if (c == ' ' && (out.isEmpty() || out.charAt(out.length() - 1) == ' ')) {
+                continue;
+            }
+            out.append(c);
+        }
+        String trimmed = out.toString().trim();
+        return trimmed.endsWith(" for") ? trimmed.substring(0, trimmed.length() - 4).trim() : trimmed;
+    }
+
+    /** "Loan account" becomes "loanAccount", so manifest labels can be used in summary templates. */
+    private String templateKey(String label) {
+        StringBuilder key = new StringBuilder(label.length());
+        boolean startOfWord = false;
+        for (char c : label.trim().toCharArray()) {
+            if (c == ' ') {
+                startOfWord = !key.isEmpty();
+                continue;
+            }
+            key.append(startOfWord ? Character.toUpperCase(c) : Character.toLowerCase(c));
+            startOfWord = false;
+        }
+        return key.toString();
+    }
+
 
     /** Argument names the model supplied that the manifest does not declare for this tool. */
     private List<String> undeclaredArguments(ToolDefinition tool, LlmToolCall call) {

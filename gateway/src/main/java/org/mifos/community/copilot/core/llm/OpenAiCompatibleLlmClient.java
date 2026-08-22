@@ -26,12 +26,12 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
- * Streaming client for any OpenAI-compatible chat-completions API — Groq cloud
+ * Streaming client for any OpenAI-compatible chat-completions API: Groq cloud
  * ({@code https://api.groq.com/openai/v1}) and on-prem Ollama ({@code http://host:11434/v1})
  * expose the identical wire shape, which is what makes the provider a pure configuration choice
  * (ADR-001 §2.2).
  *
- * <p>Pure JDK + Jackson — no framework imports, so the Fineract plugin can embed it unchanged.
+ * <p>Pure JDK and Jackson, with no framework imports, so the Fineract plugin can embed it unchanged.
  * The API key lives in gateway configuration and is only ever attached to the provider base URL.
  */
 public final class OpenAiCompatibleLlmClient implements LlmClient {
@@ -151,7 +151,7 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         return new LlmResult(text.toString(), calls);
     }
 
-    /** Model-emitted argument JSON may be malformed — degrade to empty args, never crash. */
+    /** Model-emitted argument JSON may be malformed, so degrade to empty args rather than crashing. */
     private Map<String, Object> parseArguments(String raw) {
         if (raw == null || raw.isBlank()) {
             return Map.of();

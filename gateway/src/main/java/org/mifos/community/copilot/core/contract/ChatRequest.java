@@ -12,7 +12,7 @@ import java.util.Map;
 /**
  * Body of {@code POST /copilot/api/v1/chat} (wire contract v1).
  *
- * <p>{@code clientMsgId} is a client-generated trace id, NOT an idempotency key — the gateway
+ * <p>{@code clientMsgId} is a client-generated trace id, NOT an idempotency key. The gateway
  * mints authoritative idempotency keys server-side (ADR-001 §04). {@code context} carries what
  * the officer is looking at (clientId, loanId, screen, role, language) and is injected into the
  * system prompt; it is never trusted for authorization.

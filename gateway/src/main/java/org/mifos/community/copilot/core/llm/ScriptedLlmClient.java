@@ -17,8 +17,8 @@ import java.util.regex.Pattern;
 /**
  * Keyword-driven stand-in for a real model ({@code copilot.llm.provider=mock}).
  *
- * <p>Purpose: exercise the ENTIRE pipeline — SSE contract, tool execution against a real
- * Fineract with the officer's real credential, approval pause/resume, audit — with zero LLM
+ * <p>Purpose: exercise the ENTIRE pipeline (SSE contract, tool execution against a real
+ * Fineract with the officer's real credential, approval pause/resume, audit) with zero LLM
  * key. Only the language understanding is faked; everything downstream is production code.
  * Also used by the agent-loop unit tests.
  */
@@ -36,7 +36,7 @@ public final class ScriptedLlmClient implements LlmClient {
 
         // After a tool result, summarize it (a real model would write prose here).
         if ("tool".equals(role)) {
-            String summary = "Here is what Fineract returned (mock-LLM mode — a real model would summarize this):\n\n```json\n"
+            String summary = "Here is what Mifos X returned (mock-model mode, a real model would summarize this):\n\n```json\n"
                     + truncate(prettyJson(String.valueOf(last.get("content"))), 1200) + "\n```";
             emit(summary, onToken);
             return new LlmResult(summary, List.of());
@@ -46,27 +46,27 @@ public final class ScriptedLlmClient implements LlmClient {
 
         Matcher approve = LOAN_ID.matcher(message);
         if (message.contains("approve") && approve.find()) {
-            return new LlmResult("", List.of(new LlmToolCall("call-1", "fineract_loan_approve",
+            return new LlmResult("", List.of(new LlmToolCall("call-1", "mifos_loan_approve",
                     Map.of("loanId", Long.parseLong(approve.group(1)), "approvedOnDate", "today"))));
         }
         Matcher loan = LOAN_ID.matcher(message);
         if (message.contains("loan") && loan.find()) {
-            return new LlmResult("", List.of(new LlmToolCall("call-1", "fineract_loan_details",
+            return new LlmResult("", List.of(new LlmToolCall("call-1", "mifos_loan_details",
                     Map.of("loanId", Long.parseLong(loan.group(1))))));
         }
         Matcher client = CLIENT_ID.matcher(message);
         if (client.find()) {
-            return new LlmResult("", List.of(new LlmToolCall("call-1", "fineract_client_details",
+            return new LlmResult("", List.of(new LlmToolCall("call-1", "mifos_client_details",
                     Map.of("clientId", Long.parseLong(client.group(1))))));
         }
         Matcher search = SEARCH.matcher(message);
         if (search.find()) {
-            return new LlmResult("", List.of(new LlmToolCall("call-1", "fineract_client_search",
+            return new LlmResult("", List.of(new LlmToolCall("call-1", "mifos_client_search",
                     Map.of("query", search.group(1)))));
         }
 
         String fallback = "I am running in **mock-LLM mode** (no API key configured). I can still run real "
-                + "Fineract operations with your own login. Try: \"show client 1\", \"show loan 1\", or "
+                + "Mifos X operations with your own login. Try: \"show client 1\", \"show loan 1\", or "
                 + "\"approve loan 1\".";
         emit(fallback, onToken);
         return new LlmResult(fallback, List.of());

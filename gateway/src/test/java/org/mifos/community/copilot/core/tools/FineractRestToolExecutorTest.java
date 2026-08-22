@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Regression tests for body templating. The critical invariant: EVERY argument the officer
- * saw on the approval card reaches Fineract — a card/execution mismatch on a money field is
+ * saw on the approval card reaches Fineract. A card/execution mismatch on a money field is
  * the exact failure this gateway exists to prevent.
  */
 class FineractRestToolExecutorTest {
@@ -72,7 +72,7 @@ class FineractRestToolExecutorTest {
         JsonNode body = mapper.readTree(
                 executor.buildBody("{\"note\":\"${note}\"}", Map.of("note", "${approvedOnDate}"), TODAY));
 
-        // The value must be treated as data — never re-expanded as a template token...
+        // The value must be treated as data, never re-expanded as a template token...
         // (it IS stripped-or-kept as a literal, not resolved against other args).
         assertThat(body.toString()).doesNotContain("August");
     }

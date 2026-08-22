@@ -37,4 +37,18 @@ public interface ToolExecutor {
     default String businessDate(CallContext context) {
         return java.time.LocalDate.now().toString();
     }
+
+    /**
+     * Read the human context for a pending write, so the confirmation card can name the
+     * account, the product and the client rather than repeating identifiers back.
+     *
+     * <p>Best effort by design: this is presentation, so a failure returns an empty map and the
+     * card falls back to the tool's declared parameters instead of failing the turn.
+     *
+     * @return card row label to display-ready value, in the manifest's declared order
+     */
+    default java.util.Map<String, String> enrich(ToolDefinition tool, java.util.Map<String, Object> args,
+            CallContext context) {
+        return java.util.Map.of();
+    }
 }

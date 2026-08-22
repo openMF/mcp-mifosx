@@ -18,6 +18,7 @@ import org.mifos.community.copilot.core.convo.ConversationStore;
 import org.mifos.community.copilot.core.llm.LlmClient;
 import org.mifos.community.copilot.core.llm.LlmResult;
 import org.mifos.community.copilot.core.llm.LlmToolCall;
+import org.mifos.community.copilot.core.tools.Display;
 import org.mifos.community.copilot.core.tools.ToolDefinition;
 import org.mifos.community.copilot.core.tools.ToolExecutor;
 import org.mifos.community.copilot.core.tools.ToolManifest;
@@ -32,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.entry;
 
 /** Banking invariants of the agent loop: write-pause, default-deny, fingerprints, round cap. */
 class AgentLoopTest {
@@ -45,11 +47,17 @@ class AgentLoopTest {
                   - { name: id, type: integer, required: true, description: id }
                 rest: { method: GET, path: "/api/{id}" }
               - name: write_tool
-                description: A write tool
-                summary: "Approve loan #{loanId}"
+                description: Approve a loan application. Requires the officer's confirmation.
+                summary: "Approve {productName} for {clientName}"
                 write: true
                 params:
-                  - { name: loanId, type: integer, required: true, description: loan }
+                  - { name: loanId, type: integer, required: true, description: loan, label: Loan account, show: false }
+                  - { name: approvedLoanAmount, type: number, required: false, label: Approved amount, format: money }
+                  - { name: approvedOnDate, type: string, required: false, label: Approval date, format: date }
+                enrich:
+                  - path: /api/loans/{loanId}
+                    currency: currency.code
+                    fields: { Client: clientName, Product: loanProductName }
                 rest: { method: POST, path: "/api/{loanId}", body: '{}' }
             """;
 
@@ -98,7 +106,7 @@ class AgentLoopTest {
         assertThat(executor.executed).isEmpty(); // NOTHING executed before confirmation.
         assertThat(sink.names()).contains("action_card").doesNotContain("done");
         StreamEvent card = sink.byName("action_card");
-        assertThat(card.data().get("human_summary")).isEqualTo("Approve loan #42");
+        assertThat(card.data().get("human_summary")).isEqualTo("Approve Weekly Loan for Aisha Bello");
         assertThat(String.valueOf(card.data().get("idempotency_key"))).startsWith("cop-");
     }
 
@@ -162,7 +170,7 @@ class AgentLoopTest {
 
     @Test
     void writeCallWithUndeclaredArgumentIsRefusedNotCarded() {
-        // An invented arg would show on the card but never reach the executed body —
+        // An invented arg would show on the card but never reach the executed body,
         // the loop must refuse it so card and execution can never diverge.
         llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "write_tool",
                 Map.of("loanId", 42, "expectedDisbursementDate", "2026-09-01")))));
@@ -262,6 +270,17 @@ class AgentLoopTest {
         private String lastIdempotencyKey;
         private String nextResult = "{\"ok\":true}";
 
+        /** What the account lookup would return; empty simulates an enrichment that failed. */
+        private Map<String, String> enrichment = orderedEnrichment();
+
+        private static Map<String, String> orderedEnrichment() {
+            Map<String, String> rows = new java.util.LinkedHashMap<>();
+            rows.put(Display.CURRENCY, "USD");
+            rows.put("Client", "Aisha Bello");
+            rows.put("Product", "Weekly Loan");
+            return rows;
+        }
+
         @Override
         public String execute(ToolDefinition tool, Map<String, Object> args, CallContext context,
                 String idempotencyKey) {
@@ -269,10 +288,27 @@ class AgentLoopTest {
             lastIdempotencyKey = idempotencyKey;
             return nextResult;
         }
+
+        @Override
+        public Map<String, String> enrich(ToolDefinition tool, Map<String, Object> args, CallContext context) {
+            return enrichment;
+        }
+
+        @Override
+        public String businessDate(CallContext context) {
+            return "2026-08-21";
+        }
     }
 
     private static final class RecordingSink implements EventSink {
         private final List<StreamEvent> events = new ArrayList<>();
+
+        /** The single event of this name; fails loudly if the turn emitted none or several. */
+        StreamEvent only(String name) {
+            List<StreamEvent> matches = events.stream().filter((e) -> e.name().equals(name)).toList();
+            assertThat(matches).as("events named %s", name).hasSize(1);
+            return matches.get(0);
+        }
 
         @Override
         public void emit(StreamEvent event) {
@@ -291,5 +327,65 @@ class AgentLoopTest {
         StreamEvent byName(String name) {
             return events.stream().filter((event) -> event.name().equals(name)).findFirst().orElseThrow();
         }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theCardNamesTheClientAndProductRatherThanEchoingIds() {
+        // Victor's review: an officer confirming money must read "Weekly Loan for Aisha Bello",
+        // not "loanId 12". The loop reads the account before it ever shows the card.
+        llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "write_tool",
+                Map.of("loanId", 12, "approvedLoanAmount", 28000, "approvedOnDate", "today")))));
+
+        loop().runTurn(null, "Approve it at 28000", Map.of(), officer, sink);
+
+        StreamEvent card = sink.only("action_card");
+        Map<String, String> rows = (Map<String, String>) card.data().get("rows");
+        assertThat(rows).containsExactly(
+                entry("Client", "Aisha Bello"),
+                entry("Product", "Weekly Loan"),
+                entry("Approved amount", "USD 28,000.00"),
+                entry("Approval date", "21 August 2026"));
+        assertThat(rows).doesNotContainKey("loanId");
+        assertThat(card.data().get("human_summary")).isEqualTo("Approve Weekly Loan for Aisha Bello");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void theRawArgumentsStillTravelWithTheCardAsTheMachineRecord() {
+        // The rows are for the human; args stay the exact record of what will execute.
+        llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "write_tool",
+                Map.of("loanId", 12, "approvedLoanAmount", 28000)))));
+
+        loop().runTurn(null, "Approve it", Map.of(), officer, sink);
+
+        Map<String, Object> args = (Map<String, Object>) sink.only("action_card").data().get("args");
+        assertThat(args).containsEntry("loanId", 12).containsEntry("approvedLoanAmount", 28000);
+    }
+
+    @Test
+    void aFailedLookupFallsBackToTheToolDescriptionRatherThanAVagueTitle() {
+        executor.enrichment = Map.of();
+        llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "write_tool", Map.of("loanId", 12)))));
+
+        loop().runTurn(null, "Approve it", Map.of(), officer, sink);
+
+        // "Approve {productName} for {clientName}" would otherwise collapse to "Approve".
+        assertThat(sink.only("action_card").data().get("human_summary"))
+                .isEqualTo("Approve a loan application");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void datesAreResolvedAgainstTheBankingCalendarNotTheGatewayClock() {
+        // The gateway host can be a day ahead of the tenant; the officer must see the day the
+        // write will actually be booked on.
+        llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "write_tool",
+                Map.of("loanId", 12, "approvedOnDate", "today")))));
+
+        loop().runTurn(null, "Approve it today", Map.of(), officer, sink);
+
+        Map<String, String> rows = (Map<String, String>) sink.only("action_card").data().get("rows");
+        assertThat(rows).containsEntry("Approval date", "21 August 2026");
     }
 }
