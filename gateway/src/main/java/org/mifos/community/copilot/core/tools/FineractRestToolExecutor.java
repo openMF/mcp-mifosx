@@ -106,7 +106,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             throw new ToolExecutionException("Fineract unreachable for " + tool.name(), 0, e);
         }
 
-        if (response.statusCode() == 401 || response.statusCode() == 403) {
+        if (response.statusCode() == 401 || isPermissionDenial(response)) {
             // Auth outcomes need special loop handling (session expiry / RBAC denial).
             throw new ToolExecutionException(
                     "Fineract returned HTTP " + response.statusCode() + " for " + tool.name(),
@@ -254,6 +254,29 @@ public final class FineractRestToolExecutor implements ToolExecutor {
 
     private String text(JsonNode node) {
         return node == null || node.isMissingNode() || node.isNull() ? "" : node.asText();
+    }
+
+    /**
+     * Whether a 403 is the officer being refused, rather than the operation being refused.
+     *
+     * <p>Fineract answers 403 for two unrelated things: a role that lacks the permission, and
+     * a domain rule the request breaks, such as approving a loan after the date it is meant to
+     * be disbursed. Telling an officer their role is wrong when the real problem is a date
+     * sends them to an administrator instead of to the field they need to change, so only the
+     * first is treated as a permission failure. A rule violation arrives with the reason in
+     * {@code errors[]}, and is reported like any other rejection, with that reason attached.
+     */
+    private boolean isPermissionDenial(HttpResponse<String> response) {
+        if (response.statusCode() != 403) {
+            return false;
+        }
+        try {
+            JsonNode errors = mapper.readTree(response.body()).path("errors");
+            // No explanation to pass on, so there is nothing more useful to say than "denied".
+            return !errors.isArray() || errors.isEmpty();
+        } catch (IOException | RuntimeException e) {
+            return true;
+        }
     }
 
     /** Walk a dotted path such as {@code summary.principalOutstanding}. */

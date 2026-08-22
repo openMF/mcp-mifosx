@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Enrichment over real HTTP against a stand-in core banking API.
@@ -60,6 +61,8 @@ class EnrichmentTest {
     private String baseUrl;
     private final List<String> requestedPaths = new ArrayList<>();
     private final Map<String, Integer> statusOverrides = new LinkedHashMap<>();
+    /** Body served for an overridden status, so a 403 can carry a reason or carry none. */
+    private String errorBody;
 
     private final CallContext officer = new CallContext("Basic abc", "default", "corr-1");
 
@@ -83,7 +86,7 @@ class EnrichmentTest {
         String body = path.contains("loanproducts") ? PRODUCT_JSON : path.contains("clients") ? CLIENT_JSON : LOAN_JSON;
         int status = override != null ? override : 200;
         if (status != 200) {
-            body = "{\"developerMessage\":\"nope\"}";
+            body = errorBody != null ? errorBody : "{\"developerMessage\":\"nope\"}";
         }
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
@@ -228,5 +231,50 @@ class EnrichmentTest {
 
         assertThat(rows).isEmpty();
         assertThat(enrichmentCalls()).isEmpty();
+    }
+
+    /**
+     * Fineract answers 403 for two unrelated things, and conflating them sends an officer to
+     * an administrator when the real problem is a field they could fix themselves.
+     */
+    @Test
+    void aRuleViolationIsReportedAsARejectionWithItsReasonNotAsADeniedRole() throws Exception {
+        // Verbatim from sandbox.mifos.community, approving a loan dated after its expected
+        // disbursement: HTTP 403, but the officer's role is not the problem.
+        statusOverrides.put("/loans/12", 403);
+        errorBody = "{\"developerMessage\":\"Request was understood but caused a domain rule violation.\","
+                + "\"httpStatusCode\":\"403\",\"userMessageGlobalisationCode\":"
+                + "\"validation.msg.domain.rule.violation\",\"errors\":[{\"defaultUserMessage\":"
+                + "\"The expected disbursement date 2026-08-20 should be either on or after the approval"
+                + " date: 2026-08-22\"}]}";
+
+        String result = new FineractRestToolExecutor(baseUrl)
+                .execute(loanApprove(), Map.of("loanId", 12), officer, "cop-1");
+
+        assertThat(result).contains("expected disbursement date");
+        assertThat(result).contains("\"httpStatus\":403");
+    }
+
+    @Test
+    void a403WithNothingToExplainIsStillTreatedAsADeniedRole() {
+        // A genuine RBAC refusal carries no errors[] to pass on, so there is nothing more
+        // useful to tell the officer than that they were denied.
+        statusOverrides.put("/loans/12", 403);
+        errorBody = "{\"developerMessage\":\"Not authorised\"}";
+
+        assertThatThrownBy(() -> new FineractRestToolExecutor(baseUrl)
+                .execute(loanApprove(), Map.of("loanId", 12), officer, "cop-1"))
+                .isInstanceOf(ToolExecutionException.class)
+                .matches((e) -> ((ToolExecutionException) e).isPermissionFailure());
+    }
+
+    @Test
+    void anExpiredSessionIsAlwaysAnAuthFailure() {
+        statusOverrides.put("/loans/12", 401);
+
+        assertThatThrownBy(() -> new FineractRestToolExecutor(baseUrl)
+                .execute(loanApprove(), Map.of("loanId", 12), officer, "cop-1"))
+                .isInstanceOf(ToolExecutionException.class)
+                .matches((e) -> ((ToolExecutionException) e).isAuthFailure());
     }
 }
