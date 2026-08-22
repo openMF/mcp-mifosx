@@ -255,16 +255,27 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         }
     }
 
-    /** The tenant's configured business date, or null if the module is not enabled. */
-    private String configuredBusinessDate(HttpResponse<String> response) throws IOException {
+    /**
+     * The tenant's configured business date, or null if the module is not enabled or the
+     * response cannot be read as one.
+     *
+     * <p>Returns null rather than throwing on a body we cannot parse. A proxy that answers
+     * 200 with an HTML error page would otherwise take the whole lookup down to the host
+     * clock, when the response's own Date header is still a better answer.
+     */
+    private String configuredBusinessDate(HttpResponse<String> response) {
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             return null;
         }
-        JsonNode date = mapper.readTree(response.body()).path("date");
-        if (date.isArray() && date.size() == 3) { // Fineract returns [yyyy, M, d].
-            return LocalDate.of(date.get(0).asInt(), date.get(1).asInt(), date.get(2).asInt()).toString();
+        try {
+            JsonNode date = mapper.readTree(response.body()).path("date");
+            if (date.isArray() && date.size() == 3) { // Fineract returns [yyyy, M, d].
+                return LocalDate.of(date.get(0).asInt(), date.get(1).asInt(), date.get(2).asInt()).toString();
+            }
+            return date.isTextual() && parseIsoOrNull(date.asText()) != null ? date.asText() : null;
+        } catch (IOException | RuntimeException e) {
+            return null; // Unreadable body, or [2026, 13, 45]; let the Date header answer.
         }
-        return date.isTextual() && parseIsoOrNull(date.asText()) != null ? date.asText() : null;
     }
 
     /**
