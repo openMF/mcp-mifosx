@@ -219,13 +219,22 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      */
     @Override
     public String businessDate(CallContext context) {
-        long now = System.currentTimeMillis();
         String tenant = context.tenantId() == null ? "default" : context.tenantId();
+        long now = System.currentTimeMillis();
         CachedDate cached = businessDateByTenant.get(tenant);
         if (cached != null && now < cached.expiresAt()) {
             return cached.value();
         }
-        String resolved = LocalDate.now().toString();
+        String resolved = fetchBusinessDate(context);
+        businessDateByTenant.put(tenant, new CachedDate(resolved, now + BUSINESS_DATE_TTL_MS));
+        return resolved;
+    }
+
+    /**
+     * Ask the core banking system what day it is, falling back to this host's clock.
+     * A date that is wrong by a day is still better than a turn that fails outright.
+     */
+    private String fetchBusinessDate(CallContext context) {
         try {
             HttpRequest request = HttpRequest
                     .newBuilder(URI.create(fineractBaseUrl + "/fineract-provider/api/v1/businessdate/BUSINESS_DATE"))
@@ -236,32 +245,40 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                     .GET()
                     .build();
             HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
-            String fromBody = null;
-            if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                JsonNode date = mapper.readTree(response.body()).path("date");
-                if (date.isArray() && date.size() == 3) { // Fineract returns [yyyy, M, d].
-                    fromBody = LocalDate.of(date.get(0).asInt(), date.get(1).asInt(), date.get(2).asInt()).toString();
-                } else if (date.isTextual() && parseIsoOrNull(date.asText()) != null) {
-                    fromBody = date.asText();
-                }
-            }
-            // Many deployments run without the business-date module, and the endpoint 404s.
-            // The response's own Date header still carries the core banking server's calendar
-            // day, which beats this host's clock: a gateway in UTC+5:30 has already rolled to
-            // tomorrow while Fineract is on today, and Fineract rejects future-dated commands.
-            resolved = fromBody != null ? fromBody
-                    : response.headers()
-                            .firstValue("date")
-                            .map(this::parseHttpDateOrNull)
-                            .orElse(resolved);
+            String configured = configuredBusinessDate(response);
+            return configured != null ? configured : serverCalendarDay(response);
         } catch (IOException | InterruptedException | RuntimeException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
-            // Fall back to the host clock; a wrong-by-a-day date is better than a failed turn.
+            return LocalDate.now().toString();
         }
-        businessDateByTenant.put(tenant, new CachedDate(resolved, now + BUSINESS_DATE_TTL_MS));
-        return resolved;
+    }
+
+    /** The tenant's configured business date, or null if the module is not enabled. */
+    private String configuredBusinessDate(HttpResponse<String> response) throws IOException {
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            return null;
+        }
+        JsonNode date = mapper.readTree(response.body()).path("date");
+        if (date.isArray() && date.size() == 3) { // Fineract returns [yyyy, M, d].
+            return LocalDate.of(date.get(0).asInt(), date.get(1).asInt(), date.get(2).asInt()).toString();
+        }
+        return date.isTextual() && parseIsoOrNull(date.asText()) != null ? date.asText() : null;
+    }
+
+    /**
+     * Many deployments run without the business-date module and the endpoint 404s. The
+     * response's own Date header still carries the core banking server's calendar day, which
+     * beats this host's clock: a gateway in UTC+5:30 has already rolled over to tomorrow while
+     * Fineract is still on today, and Fineract rejects future-dated commands.
+     */
+    private String serverCalendarDay(HttpResponse<String> response) {
+        return response.headers()
+                .firstValue("date")
+                .map(this::parseHttpDateOrNull)
+                .filter((day) -> day != null)
+                .orElseGet(() -> LocalDate.now().toString());
     }
 
     /**
