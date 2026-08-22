@@ -142,7 +142,13 @@ class BusinessDateTest {
         body = "nope";
         dateHeader = null;
 
-        assertThat(resolve()).isEqualTo(LocalDate.now().toString());
+        // Bracket the call rather than comparing to a single LocalDate.now(): a run that
+        // straddles midnight would otherwise fail for no reason.
+        LocalDate before = LocalDate.now();
+        LocalDate resolved = LocalDate.parse(resolve());
+        LocalDate after = LocalDate.now();
+
+        assertThat(resolved).isBetween(before, after);
     }
 
     @Test
