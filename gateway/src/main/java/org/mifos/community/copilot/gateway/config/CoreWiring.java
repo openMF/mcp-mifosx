@@ -28,6 +28,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 
 /** Builds the framework-free core from configuration and exposes it as Spring beans. */
 @Configuration
@@ -49,19 +50,35 @@ public class CoreWiring {
         GatewayProperties.Llm llm = properties.llm();
         if ("mock".equalsIgnoreCase(llm.provider()) || llm.provider() == null || llm.provider().isBlank()) {
             log.warn("LLM provider = mock (no API key configured). Tools still execute for real; "
-                    + "set COPILOT_LLM_PROVIDER=groq|ollama for a real model.");
+                    + "set COPILOT_LLM_PROVIDER=groq|openai|ollama for a real model.");
             return new ScriptedLlmClient();
         }
-        String baseUrl = switch (llm.provider().toLowerCase()) {
-            case "groq" -> llm.baseUrl() != null && !llm.baseUrl().isBlank() ? llm.baseUrl()
-                    : "https://api.groq.com/openai/v1";
-            case "ollama" -> llm.baseUrl() != null && !llm.baseUrl().isBlank() ? llm.baseUrl()
-                    : "http://localhost:11434/v1";
-            default -> llm.baseUrl();
-        };
+        String baseUrl = resolveBaseUrl(llm.provider(), llm.baseUrl());
         log.info("LLM provider = {} ({}), model = {}, data-residency = {}", llm.provider(), baseUrl, llm.model(),
                 llm.dataResidency());
         return new OpenAiCompatibleLlmClient(baseUrl, llm.apiKey(), llm.model());
+    }
+
+    /**
+     * Endpoint for a provider name. Known providers get theirs for free; anything else that is
+     * OpenAI-compatible (Azure OpenAI, vLLM, OpenRouter, a private gateway) supplies its own via
+     * {@code COPILOT_LLM_BASE_URL}, which also overrides a known provider's default.
+     *
+     * <p>Lower-casing is pinned to {@link Locale#ROOT}: under a Turkish locale the default rules
+     * turn {@code OPENAI} into {@code openaı}, which would miss the branch and leave the endpoint
+     * unset.
+     */
+    static String resolveBaseUrl(String provider, String configuredBaseUrl) {
+        boolean explicit = configuredBaseUrl != null && !configuredBaseUrl.isBlank();
+        if (explicit) {
+            return configuredBaseUrl;
+        }
+        return switch (provider == null ? "" : provider.trim().toLowerCase(Locale.ROOT)) {
+            case "groq" -> "https://api.groq.com/openai/v1";
+            case "openai" -> "https://api.openai.com/v1";
+            case "ollama" -> "http://localhost:11434/v1";
+            default -> configuredBaseUrl;
+        };
     }
 
     @Bean
