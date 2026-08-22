@@ -40,7 +40,7 @@ import java.util.function.BiConsumer;
 /**
  * Wire contract v1 endpoints (ADR-001 §03). Each POST answers with an SSE stream; closing the
  * connection (stop button, navigation) cancels the running turn. No auto-retry semantics exist
- * server-side either — an LLM turn is not idempotent.
+ * server-side either, because an LLM turn is not idempotent.
  */
 @RestController
 @RequestMapping("/copilot/api/v1")
@@ -69,7 +69,7 @@ public class ChatController {
             }
             // Deployment-drift guard: the Copilot must NEVER execute against a different
             // Fineract than the one on the officer's screen. Writes to the "wrong bank"
-            // would be silent and catastrophic — refuse loudly instead.
+            // would be silent and catastrophic, so refuse loudly instead.
             Object uiBackend = request.context() == null ? null : request.context().get("backendOrigin");
             if (uiBackend != null && !originsMatch(String.valueOf(uiBackend), properties.fineract().baseUrl())) {
                 sink.emit(StreamEvent.error(ErrorCode.INTERNAL,
@@ -116,7 +116,7 @@ public class ChatController {
             };
 
             if (!context.hasCredential()) {
-                sink.emit(StreamEvent.error(ErrorCode.AUTH_EXPIRED, "Missing Fineract credentials.", true));
+                sink.emit(StreamEvent.error(ErrorCode.AUTH_EXPIRED, "Your session has ended. Sign in again to continue.", true));
                 sink.emit(StreamEvent.done(""));
                 flux.complete();
                 return;

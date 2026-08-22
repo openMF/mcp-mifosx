@@ -14,7 +14,7 @@ import java.util.function.Consumer;
 
 /**
  * Provider-agnostic LLM interface (ADR-001 §2.2): Groq cloud today, Ollama fully on-prem, any
- * OpenAI-compatible engine tomorrow — swapping providers is configuration, never code.
+ * OpenAI-compatible engine tomorrow, so swapping providers is configuration and never code.
  */
 public interface LlmClient {
 

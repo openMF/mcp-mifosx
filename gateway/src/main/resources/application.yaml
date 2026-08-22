@@ -14,7 +14,7 @@ copilot:
     base-url: ${COPILOT_LLM_BASE_URL:}
     api-key: ${COPILOT_LLM_API_KEY:}
     model: ${COPILOT_LLM_MODEL:qwen/qwen3.6-27b}
-    # cloud | on-prem — the operator's explicit acknowledgement of where tool results flow (ADR-001).
+    # cloud | on-prem: the operator's explicit acknowledgement of where tool results flow (ADR-001).
     data-residency: ${COPILOT_DATA_RESIDENCY:cloud}
   fineract:
     base-url: ${FINERACT_BASE_URL:https://sandbox.mifos.community}

@@ -40,7 +40,7 @@ public final class ApprovalStore {
                 conversationId,
                 call,
                 humanSummary,
-                "cop-" + UUID.randomUUID(), // Server-minted idempotency key — the only authority.
+                "cop-" + UUID.randomUUID(), // Server-minted idempotency key, the only authority.
                 context.fingerprint(),
                 Instant.now().plus(ttl));
         pending.put(approval.cardId(), approval);
@@ -59,7 +59,7 @@ public final class ApprovalStore {
     }
 
     /**
-     * Atomically consume the card — returns empty when unknown, already decided, expired, or
+     * Atomically consume the card. Returns empty when unknown, already decided, expired, or
      * presented by a different user/tenant than the one who asked. A fingerprint mismatch is
      * SIDE-EFFECT-FREE: a stranger probing a card id must not be able to destroy the rightful
      * officer's pending approval.
@@ -74,7 +74,7 @@ public final class ApprovalStore {
             return Optional.empty();
         }
         if (!approval.securityFingerprint().equals(context.fingerprint())) {
-            return Optional.empty(); // Different identity — card stays for its owner.
+            return Optional.empty(); // Different identity, so the card stays for its owner.
         }
         // Two-arg remove keeps consumption atomic against a concurrent take of the same card.
         return pending.remove(cardId, approval) ? Optional.of(approval) : Optional.empty();

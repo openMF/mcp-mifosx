@@ -52,6 +52,7 @@ go/mysql-init/
 !README.md
 **/README.md
 !go/README.md
+!gateway/README.md
 !rust/benches/results.md
 !rust/benches/README.md
 

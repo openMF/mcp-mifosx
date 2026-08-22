@@ -19,7 +19,7 @@ import java.util.Optional;
 /**
  * Loads and serves the default-deny tool manifest.
  *
- * <p>A tool the manifest does not list simply does not exist for the model — a tool-server
+ * <p>A tool the manifest does not list simply does not exist for the model, so a tool-server
  * upgrade can never widen the LLM's attack surface by annotating itself (ADR-001 §04).
  */
 public final class ToolManifest {
@@ -37,7 +37,12 @@ public final class ToolManifest {
                         (String) param.get("name"),
                         (String) param.getOrDefault("type", "string"),
                         Boolean.TRUE.equals(param.get("required")),
-                        (String) param.get("description")));
+                        (String) param.get("description"),
+                        (String) param.get("label"),
+                        (String) param.get("format"),
+                        // Shown on the confirmation card unless the manifest hides it, which
+                        // it does for identifiers that mean nothing to an officer.
+                        !Boolean.FALSE.equals(param.get("show"))));
             }
             ToolDefinition.RestMapping rest = null;
             Map<String, Object> restNode = (Map<String, Object>) entry.get("rest");
@@ -47,6 +52,14 @@ public final class ToolManifest {
                         (String) restNode.get("path"),
                         (String) restNode.get("body"));
             }
+            List<ToolDefinition.Enrich> enrich = new ArrayList<>();
+            for (Map<String, Object> node : (List<Map<String, Object>>) entry.getOrDefault("enrich", List.of())) {
+                Map<String, String> fields = new LinkedHashMap<>();
+                ((Map<String, Object>) node.getOrDefault("fields", Map.of()))
+                        .forEach((label, path) -> fields.put(label, String.valueOf(path)));
+                enrich.add(new ToolDefinition.Enrich(
+                        (String) node.get("path"), (String) node.get("currency"), fields));
+            }
             ToolDefinition definition = new ToolDefinition(
                     (String) entry.get("name"),
                     (String) entry.get("description"),
@@ -54,7 +67,8 @@ public final class ToolManifest {
                     (String) entry.get("summary"),
                     params,
                     rest,
-                    (List<String>) entry.getOrDefault("redactFields", List.of()));
+                    (List<String>) entry.getOrDefault("redactFields", List.of()),
+                    enrich);
             manifest.tools.put(definition.name(), definition);
         }
         return manifest;

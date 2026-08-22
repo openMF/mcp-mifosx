@@ -14,16 +14,53 @@ import java.util.Map;
 /**
  * One tool from the reviewed, version-controlled manifest ({@code tools.yaml}).
  *
- * <p>The manifest — not the tool server, not the model — is the enforcement authority for what
+ * <p>The manifest, not the tool server and not the model, is the enforcement authority for what
  * the LLM may touch and what counts as a write (ADR-001 §04, default-deny).
  */
 public record ToolDefinition(String name, String description, boolean write, String summaryTemplate,
-        List<Param> params, RestMapping rest, List<String> redactFields) {
+        List<Param> params, RestMapping rest, List<String> redactFields, List<Enrich> enrich) {
 
-    /** One declared parameter. */
-    public record Param(String name, String type, boolean required, String description) {}
+    /**
+     * One declared parameter.
+     *
+     * @param label what the officer reads on the confirmation card, rather than the raw
+     *     parameter name; "Approved amount" instead of {@code approvedLoanAmount}
+     * @param format {@code money} or {@code date} where the value needs presenting as such
+     * @param show false for identifiers, which say nothing to a person and are replaced on the
+     *     card by the account number and product name pulled in by {@link Enrich}
+     */
+    public record Param(String name, String type, boolean required, String description, String label, String format,
+            boolean show) {
 
-    /** How the direct-REST executor maps this tool onto the Fineract API. */
+        /** The label if the manifest gave one, otherwise the parameter name as a last resort. */
+        public String displayLabel() {
+            return label == null || label.isBlank() ? name : label;
+        }
+
+        public boolean isMoney() {
+            return "money".equalsIgnoreCase(format);
+        }
+
+        public boolean isDate() {
+            return "date".equalsIgnoreCase(format);
+        }
+    }
+
+    /**
+     * A read performed before a confirmation card is shown, so the card can name the account,
+     * the product and the client. Runs with the officer's own credential like any other call.
+     *
+     * <p>A tool may declare several: approving a new loan means naming both the client and the
+     * product, which live behind different endpoints.
+     *
+     * @param currencyPath dotted path to the currency this record is denominated in, so amounts
+     *     on the card read "USD 28,000.00" and not a bare number
+     * @param fields card row label to a dotted path in the response; a value prefixed
+     *     {@code #money:} is formatted as an amount
+     */
+    public record Enrich(String path, String currencyPath, Map<String, String> fields) {}
+
+    /** How the direct-REST executor maps this tool onto the core banking API. */
     public record RestMapping(String method, String path, String bodyTemplate) {}
 
     /** OpenAI-style function schema handed to the model. */
