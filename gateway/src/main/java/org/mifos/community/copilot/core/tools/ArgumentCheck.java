@@ -89,11 +89,17 @@ public final class ArgumentCheck {
 
     private static void checkBounds(ToolDefinition.Param param, String value, List<String> problems) {
         BigDecimal number = number(value);
-        if (number == null) {
-            return; // Not a number, so a numeric bound says nothing about it.
-        }
         BigDecimal min = number(param.min());
         BigDecimal max = number(param.max());
+        if (number == null) {
+            // Declaring a bound is declaring the field numeric. Letting "none" through because
+            // it cannot be compared meant a card was raised for a loan of "none" repayments,
+            // and the officer learned it was nonsense only when Fineract said so.
+            if (min != null || max != null) {
+                problems.add(param.displayLabel() + " must be a number.");
+            }
+            return;
+        }
         if (min != null && number.compareTo(min) < 0) {
             problems.add(param.displayLabel() + " must be at least " + min.toPlainString() + ".");
         }

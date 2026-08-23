@@ -9,7 +9,9 @@ package org.mifos.community.copilot.core.tools;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.TextNode;
 
 import org.mifos.community.copilot.core.auth.CallContext;
 
@@ -779,32 +781,62 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         if (redactFields == null || redactFields.isEmpty()) {
             return json;
         }
-        String out = json;
-        if (args != null) {
-            for (String field : redactFields) {
-                Object value = args.get(field);
-                String text = value == null ? null : String.valueOf(value).trim();
-                if (text == null || text.isEmpty()) {
-                    continue;
-                }
-                if (text.length() >= MIN_REDACTABLE_LENGTH) {
-                    out = out.replace(text, MASK);
-                } else {
-                    // Short values are matched whole, so masking an external id of "A12" does
-                    // not also eat the "A12" inside a word. Skipping them outright left the
-                    // shortest ids, which are the oldest customers, as the ones that leaked.
-                    out = out.replaceAll("(?<![\\p{L}\\p{N}])" + java.util.regex.Pattern.quote(text)
-                            + "(?![\\p{L}\\p{N}])", MASK);
-                }
-            }
-        }
+        java.util.List<String> secrets = secrets(redactFields, args);
         try {
-            JsonNode root = mapper.readTree(out);
-            redactNode(root, redactFields);
+            // Decoded first. Masking the raw document compares against escaped text, so a
+            // value carrying a quote, a backslash or an accent the server wrote as \\uXXXX
+            // never matched itself and stayed in the prose while looking masked.
+            JsonNode root = mapper.readTree(json);
+            redactNode(root, redactFields, secrets);
             return mapper.writeValueAsString(root);
         } catch (IOException e) {
-            return out; // Not JSON, but the values were masked as text, which is the leak.
+            // Not JSON, so the text is all there is and masking it directly is the best available.
+            String out = json;
+            for (String secret : secrets) {
+                out = maskWithin(out, secret);
+            }
+            return out;
         }
+    }
+
+    /** The submitted values behind the fields a tool calls private, trimmed and non-empty. */
+    private static java.util.List<String> secrets(java.util.List<String> redactFields, Map<String, Object> args) {
+        java.util.List<String> secrets = new java.util.ArrayList<>();
+        if (args == null) {
+            return secrets;
+        }
+        for (String field : redactFields) {
+            Object value = args.get(field);
+            String text = value == null ? null : String.valueOf(value).trim();
+            if (text != null && !text.isEmpty()) {
+                secrets.add(text);
+            }
+        }
+        return secrets;
+    }
+
+    /**
+     * Replace one value wherever it appears in a piece of decoded text.
+     *
+     * <p>A short value is matched whole, so masking an external id of {@code A12} does not eat
+     * the same three characters inside a longer word. Skipping short ones outright, which is
+     * what this did first, left the shortest ids as the only ones that leaked.
+     */
+    private static String maskWithin(String text, String secret) {
+        if (secret.length() >= MIN_REDACTABLE_LENGTH) {
+            return text.replace(secret, MASK);
+        }
+        // Pattern.quote makes the value a literal, and the lookarounds are single characters,
+        // so there is nothing here for a crafted value to make backtrack.
+        return text.replaceAll("(?<![\\p{L}\\p{N}])" + Pattern.quote(secret) + "(?![\\p{L}\\p{N}])", MASK);
+    }
+
+    private static String maskAll(String text, java.util.List<String> secrets) {
+        String out = text;
+        for (String secret : secrets) {
+            out = maskWithin(out, secret);
+        }
+        return out;
     }
 
     /** Above this length a value is distinctive enough to mask wherever it appears. */
@@ -812,7 +844,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
 
     private static final String MASK = "•••";
 
-    private void redactNode(JsonNode node, java.util.List<String> fields) {
+    private void redactNode(JsonNode node, java.util.List<String> fields, java.util.List<String> secrets) {
         if (node instanceof ObjectNode object) {
             for (String field : fields) {
                 if (object.has(field)) {
@@ -825,7 +857,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                 if (object.has("value")) {
                     object.put("value", MASK);
                 }
-                if (object.get("args") instanceof com.fasterxml.jackson.databind.node.ArrayNode arguments) {
+                if (object.get("args") instanceof ArrayNode arguments) {
                     arguments.forEach((argument) -> {
                         if (argument instanceof ObjectNode entry && entry.has("value")) {
                             entry.put("value", MASK);
@@ -833,9 +865,26 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                     });
                 }
             }
-            object.forEach((child) -> redactNode(child, fields));
-        } else if (node.isArray()) {
-            node.forEach((child) -> redactNode(child, fields));
+            java.util.List<String> names = new java.util.ArrayList<>();
+            object.fieldNames().forEachRemaining(names::add);
+            for (String name : names) {
+                JsonNode child = object.get(name);
+                if (child != null && child.isTextual()) {
+                    // The message prose, where Fineract writes the value it is complaining about.
+                    object.put(name, maskAll(child.asText(), secrets));
+                } else {
+                    redactNode(child, fields, secrets);
+                }
+            }
+        } else if (node instanceof ArrayNode array) {
+            for (int i = 0; i < array.size(); i++) {
+                JsonNode child = array.get(i);
+                if (child.isTextual()) {
+                    array.set(i, TextNode.valueOf(maskAll(child.asText(), secrets)));
+                } else {
+                    redactNode(child, fields, secrets);
+                }
+            }
         }
     }
 

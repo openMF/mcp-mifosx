@@ -11,6 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.util.List;
 import java.util.Map;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -62,6 +63,54 @@ class RedactionTest {
         String safe = executor.redact(body, List.of("externalId"), Map.of("externalId", "NID-88213944"));
 
         assertThat(safe).doesNotContain("NID-88213944");
+    }
+
+    /**
+     * A value the server had to escape on its way out.
+     *
+     * <p>Masking used to run over the raw document, so it compared a plain value against an
+     * escaped one and found nothing. The payload came back looking masked, because the named
+     * fields were, while the prose still carried the id in full. Everything is decoded first
+     * now, so how Fineract chose to encode it stops mattering.
+     */
+    @Test
+    void aValueTheServerEscapedIsStillMasked() {
+        FineractRestToolExecutor executor = new FineractRestToolExecutor(BASE_URL);
+        String awkward = "NID\"88213944";
+        String body = "{\"defaultUserMessage\":\"Client with externalId `NID\\\"88213944` already exists\"}";
+
+        String safe = executor.redact(body, List.of("externalId"), Map.of("externalId", awkward));
+
+        assertThat(safe).doesNotContain("88213944");
+    }
+
+    /**
+     * Same again for values the encoder has no choice about.
+     *
+     * <p>The payload is built with Jackson rather than hand-escaped, so exactly the escaping
+     * the server would apply is applied here too. The awkward characters are written as codes
+     * rather than literals so that nothing between here and the JSON quietly reinterprets
+     * them, which is a mistake this test made on its way to being written.
+     */
+    @Test
+    void aValueTheEncoderHadToEscapeIsStillMasked() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        FineractRestToolExecutor executor = new FineractRestToolExecutor(BASE_URL);
+        List<String> awkward = List.of(
+                "DOM" + (char) 92 + "4471",   // backslash
+                "NID" + (char) 34 + "4471",   // double quote
+                "line" + (char) 10 + "4471",  // newline
+                "tab" + (char) 9 + "4471");   // tab
+
+        for (String value : awkward) {
+            String body = mapper.writeValueAsString(mapper.createObjectNode()
+                    .put("defaultUserMessage", "Client with externalId `" + value + "` already exists"));
+            assertThat(body).as("the encoder really did escape it").doesNotContain(value);
+
+            String safe = executor.redact(body, List.of("externalId"), Map.of("externalId", value));
+
+            assertThat(safe).as("masked despite the escaping").doesNotContain("4471");
+        }
     }
 
     @Test

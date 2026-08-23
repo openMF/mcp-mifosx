@@ -130,6 +130,36 @@ class ArgumentCheckTest {
                 .anyMatch((problem) -> problem.contains("Repayments"));
     }
 
+    /**
+     * Declaring a bound is declaring the field numeric.
+     *
+     * <p>A value that is not a number cannot be compared to a minimum, and letting it through
+     * on those grounds meant a card was raised for a loan of "none" repayments. The officer
+     * found out it was nonsense when Fineract said so, which is the thing this whole change
+     * is meant to stop happening.
+     */
+    @Test
+    void aWordWhereANumberBelongsIsRefusedRatherThanSkipped() {
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("clientId", 1);
+        args.put("productId", 1);
+        args.put("principal", 12000);
+        args.put("numberOfRepayments", "none");
+        args.put("submittedOnDate", "2026-08-23");
+        args.put("expectedDisbursementDate", "2026-09-15");
+
+        assertThat(ArgumentCheck.problems(tool("mifos_loan_create"), args))
+                .contains("Repayments must be a number.");
+    }
+
+    /** A field with no bound declared is not turned into a number by this. */
+    @Test
+    void aFieldWithNoBoundIsNotForcedToBeNumeric() {
+        assertThat(ArgumentCheck.problems(tool("mifos_client_create"),
+                Map.of("firstname", "Grace", "lastname", "Wanjiru", "activationDate", "2026-08-23",
+                        "mobileNo", "+254 712 345678"))).isEmpty();
+    }
+
     @Test
     void aMissingRequiredValueIsNamedByItsLabelNotItsFieldName() {
         List<String> problems = ArgumentCheck.problems(tool("mifos_client_create"),
