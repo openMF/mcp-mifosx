@@ -42,6 +42,8 @@ class OfficeDerivationTest {
     private HttpServer server;
     private String baseUrl;
     private final List<String> requestedPaths = new ArrayList<>();
+    /** Bodies posted to /clients, so a test can say which office actually went on the wire. */
+    private final List<String> postedClients = new ArrayList<>();
 
     /** What /offices answers with, and whether it answers at all. */
     private String officesBody = ONE_OFFICE;
@@ -79,10 +81,14 @@ class OfficeDerivationTest {
                 : "{\"clientId\":11,\"resourceId\":11}";
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
-        exchange.sendResponseHeaders(status, bytes.length);
-        try (InputStream ignored = exchange.getRequestBody()) {
-            exchange.getResponseBody().write(bytes);
+        try (InputStream request = exchange.getRequestBody()) {
+            String sent = new String(request.readAllBytes(), StandardCharsets.UTF_8);
+            if (path.endsWith("/clients")) {
+                postedClients.add(sent);
+            }
         }
+        exchange.sendResponseHeaders(status, bytes.length);
+        exchange.getResponseBody().write(bytes);
         exchange.close();
     }
 
@@ -106,6 +112,10 @@ class OfficeDerivationTest {
 
         assertThat(requestedPaths).as("the credential was asked which offices it reaches")
                 .anyMatch((path) -> path.endsWith("/offices"));
+        assertThat(requestedPaths).as("and not asked to sign in, since nothing was in doubt")
+                .noneMatch((path) -> path.endsWith("/authentication"));
+        assertThat(postedClients).singleElement().as("the one office it can reach")
+                .asString().contains("\"officeId\":4");
     }
 
     /**
@@ -126,7 +136,8 @@ class OfficeDerivationTest {
 
         assertThat(requestedPaths).as("it asked who the officer is")
                 .anyMatch((path) -> path.endsWith("/authentication"));
-        assertThat(requestedPaths).anyMatch((path) -> path.endsWith("/clients"));
+        assertThat(postedClients).singleElement().as("her own branch, not the first one listed")
+                .asString().contains("\"officeId\":9");
     }
 
     /**
@@ -144,8 +155,8 @@ class OfficeDerivationTest {
 
         executor.execute(clientCreate(), Map.of("firstname", "Grace"), officer, "cop-1");
 
-        assertThat(requestedPaths).as("it fell back rather than trusting the claim")
-                .anyMatch((path) -> path.endsWith("/clients"));
+        assertThat(postedClients).singleElement().as("the reachable office, not the claimed one")
+                .asString().contains("\"officeId\":4").doesNotContain("77");
     }
 
     /**

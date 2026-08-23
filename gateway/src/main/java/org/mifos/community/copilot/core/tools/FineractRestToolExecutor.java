@@ -252,19 +252,6 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             officesByOfficer.put(key, reachable);
         }
         Object stated = args.get("officeId");
-        if (stated == null || String.valueOf(stated).isBlank()) {
-            // The officer's own branch, which is the right answer whenever we can get it. An
-            // administrator can see every office in the institution, so picking the only
-            // visible one stops working the moment a second branch exists, and asking them
-            // which branch they are sitting in is a strange question to be asked.
-            java.util.Optional<String> home = homeOfficeByOfficer
-                    .computeIfAbsent(key, (k) -> readHomeOffice(context));
-            if (home.isPresent() && reachable.contains(home.get())) {
-                java.util.Map<String, Object> withHome = new java.util.LinkedHashMap<>(args);
-                withHome.put("officeId", Long.parseLong(home.get()));
-                return withHome;
-            }
-        }
         if (stated != null && !String.valueOf(stated).isBlank()) {
             // Checked against what the credential actually reaches, always. Accepting it
             // whenever the list happened to be empty was a way in: one failed lookup and any
@@ -275,9 +262,16 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             return args;
         }
         if (reachable.size() == 1) {
-            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>(args);
-            out.put("officeId", Long.parseLong(reachable.iterator().next()));
-            return out;
+            // Nothing in doubt, so nothing to ask. Signing in first would make every creation
+            // in a single-branch institution wait on a call whose answer cannot change this.
+            return withOfficeId(args, reachable.iterator().next());
+        }
+        // More than one branch in reach, so the officer's own is the only sensible default.
+        // An administrator sees every office there is, and asking which one they are sitting
+        // in is a strange question with no good answer.
+        java.util.Optional<String> home = homeOffice(key, context);
+        if (home.isPresent() && reachable.contains(home.get())) {
+            return withOfficeId(args, home.get());
         }
         throw new ToolExecutionException(
                 reachable.isEmpty()
@@ -285,6 +279,31 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                                 + " Please tell your administrator."
                         : "You work in more than one office, so please say which one this is for.",
                 0, null);
+    }
+
+    private static Map<String, Object> withOfficeId(Map<String, Object> args, String officeId) {
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>(args);
+        out.put("officeId", Long.parseLong(officeId));
+        return out;
+    }
+
+    /**
+     * The officer's own office, remembered only once it is known.
+     *
+     * <p>Caching the failure would mean one bad moment from the sign-in left that officer
+     * being asked to name their branch for the life of the process. The same mistake was
+     * already made once with the reachable set; it is not worth making twice.
+     */
+    private java.util.Optional<String> homeOffice(String key, CallContext context) {
+        java.util.Optional<String> known = homeOfficeByOfficer.get(key);
+        if (known != null) {
+            return known;
+        }
+        java.util.Optional<String> found = readHomeOffice(context);
+        if (found.isPresent()) {
+            homeOfficeByOfficer.put(key, found);
+        }
+        return found;
     }
 
     /**
