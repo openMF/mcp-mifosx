@@ -79,14 +79,10 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         }
 
         String today = businessDate(context);
-        if (tool.write()) {
-            verifyOffice(context.session(), context);
-        }
-        // The product owns its interest rate, its schedule and its strategy. Anything the
-        // officer did not name is read from it rather than invented here.
-        // Normalised first, so what executes is exactly what the card showed.
+        // Normalised first, so what executes is exactly what the card showed. The office is
+        // worked out from the officer's own credential before anything else is resolved.
         Map<String, Object> effective = withComputed(tool,
-                withDefaults(tool, normalizeArguments(tool, args, context), context));
+                withDefaults(tool, withOffice(tool, normalizeArguments(tool, args, context), context), context));
         String path = substitutePath(rest.path(), effective, today);
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
                 .timeout(Duration.ofSeconds(30))
@@ -201,30 +197,43 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     }
 
     /**
-     * Refuse a session fact the officer's own credential cannot back up.
+     * The office a write lands in, worked out from the officer's own credential.
      *
-     * <p>The office arrives on the request the browser sends. That is the same trust level as
-     * the credential the browser already holds, and Fineract enforces permissions regardless,
-     * but a claim that is never checked is still a claim. Asking Fineract which offices this
-     * credential can see, and refusing anything outside that, costs one cached call and makes
-     * the value as trustworthy as the login it came with.
+     * <p>Fineract requires an office on a new client and offers no way to ask it who the
+     * caller is, so the gateway asks which offices this credential can reach. Where that is
+     * exactly one, it is theirs and there is nothing to decide. Where it is several, the
+     * officer says which, and it shows on the confirmation card so they see the branch before
+     * agreeing to it.
+     *
+     * <p>Deliberately not taken from the request the browser sends. A value the server can
+     * establish for itself should not be accepted on trust from a client, and routing it
+     * through the language model would let a branch be chosen by a sentence.
      */
-    private void verifyOffice(Map<String, Object> session, CallContext context) throws ToolExecutionException {
-        Object claimed = session.get("officeId");
-        if (claimed == null) {
-            return;
+    private Map<String, Object> withOffice(ToolDefinition tool, Map<String, Object> args, CallContext context)
+            throws ToolExecutionException {
+        String body = tool.rest() == null ? null : tool.rest().bodyTemplate();
+        if (!tool.write() || body == null || !body.contains("${officeId}")) {
+            return args;
         }
-        String key = context.fingerprint() + "|" + context.tenantId();
-        java.util.Set<String> allowed = officesByOfficer.computeIfAbsent(key, (k) -> readOffices(context));
-        if (allowed.isEmpty()) {
-            return; // Could not ask. Fineract still refuses what this officer may not do.
+        java.util.Set<String> reachable = officesByOfficer
+                .computeIfAbsent(context.fingerprint() + "|" + context.tenantId(), (k) -> readOffices(context));
+        Object stated = args.get("officeId");
+        if (stated != null && !String.valueOf(stated).isBlank()) {
+            if (!reachable.isEmpty() && !reachable.contains(String.valueOf(stated))) {
+                throw new ToolExecutionException("That office is not one you can work in.", 403, null);
+            }
+            return args;
         }
-        if (!allowed.contains(String.valueOf(claimed))) {
-            throw new ToolExecutionException(
-                    "That office is not one you can work in. Sign out and back in, and tell your "
-                            + "administrator if it happens again.",
-                    403, null);
+        if (reachable.size() == 1) {
+            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>(args);
+            out.put("officeId", Long.parseLong(reachable.iterator().next()));
+            return out;
         }
+        throw new ToolExecutionException(
+                reachable.isEmpty()
+                        ? "Could not establish which office to use. Please try again."
+                        : "You work in more than one office, so please say which one this is for.",
+                0, null);
     }
 
     /** Office ids this credential can see, empty when the question could not be asked. */

@@ -136,10 +136,14 @@ class ToolManifestTest {
 
     @Test
     void aNewClientGoesToTheOfficersOwnOfficeRatherThanOfficeOne() {
+        // The office is a slot the executor fills from the officer's own credential, not a
+        // literal and not something the browser or the model gets to choose.
         ToolDefinition create = manifest.find("mifos_client_create").orElseThrow();
 
-        assertThat(create.rest().bodyTemplate()).contains("\"officeId\":\"${session.officeId}\"");
+        assertThat(create.rest().bodyTemplate()).contains("\"officeId\":\"${officeId}\"");
         assertThat(create.rest().bodyTemplate()).doesNotContain("\"officeId\":1");
+        assertThat(param(create, "officeId").required()).isFalse();
+        assertThat(param(create, "officeId").displayLabel()).isEqualTo("Office");
     }
 
     @Test

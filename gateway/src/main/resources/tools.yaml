@@ -98,12 +98,14 @@ tools:
       - { name: mobileNo, type: string, required: false, label: Mobile number }
       - { name: dateOfBirth, type: string, required: false, label: Date of birth, format: date, description: "Date as yyyy-MM-dd" }
       - { name: externalId, type: string, required: false, label: External id, description: "The institution's own reference for this client, such as a national id" }
+      # Filled from the officer's own credential when only one office is reachable.
+      - { name: officeId, type: integer, required: false, label: Office, description: "Only needed when the officer works in more than one office" }
     rest:
       method: POST
       path: /fineract-provider/api/v1/clients
       # officeId comes from the officer's session. It was a literal 1, which put every client
       # created through the Copilot into head office whatever branch the officer worked in.
-      body: '{"officeId":"${session.officeId}","firstname":"${firstname}","lastname":"${lastname}","mobileNo":"${mobileNo}","dateOfBirth":"${dateOfBirth}","externalId":"${externalId}","legalFormId":1,"active":true,"activationDate":"${activationDate}","dateFormat":"dd MMMM yyyy","locale":"en"}'
+      body: '{"officeId":"${officeId}","firstname":"${firstname}","lastname":"${lastname}","mobileNo":"${mobileNo}","dateOfBirth":"${dateOfBirth}","externalId":"${externalId}","legalFormId":1,"active":true,"activationDate":"${activationDate}","dateFormat":"dd MMMM yyyy","locale":"en"}'
     # A rejected creation comes back echoing what was sent, and that answer is fed to the
     # model. The read tool masks the same two fields.
     redactFields: [mobileNo, dateOfBirth]
