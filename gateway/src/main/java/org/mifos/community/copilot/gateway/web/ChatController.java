@@ -129,17 +129,33 @@ public class ChatController {
             }
 
             // The loop is blocking (JDK HttpClient streams); run it off the event loop.
-            Schedulers.boundedElastic().schedule(() -> {
-                try {
-                    work.accept(context, sink);
-                } catch (Exception e) {
-                    log.error("Copilot turn failed [correlation={}]", context.correlationId(), e);
-                    sink.emit(StreamEvent.error(ErrorCode.INTERNAL, "Something went wrong on the gateway.", false));
-                    sink.emit(StreamEvent.done(""));
-                } finally {
-                    flux.complete();
-                }
-            });
+            try {
+                Schedulers.boundedElastic().schedule(() -> {
+                    try {
+                        work.accept(context, sink);
+                    } catch (Throwable t) {
+                        // Throwable, not Exception. The stream is closed in the finally either
+                        // way, so anything not caught here ends the turn with no last event at
+                        // all, and the officer is left watching a connection that has quietly
+                        // stopped rather than being told something went wrong.
+                        log.error("Copilot turn failed [correlation={}]", context.correlationId(), t);
+                        sink.emit(StreamEvent.error(ErrorCode.INTERNAL,
+                                "Something went wrong on the gateway.", false));
+                        sink.emit(StreamEvent.done(""));
+                    } finally {
+                        flux.complete();
+                    }
+                });
+            } catch (java.util.concurrent.RejectedExecutionException e) {
+                // Refused before the work started, so the guard inside it never runs. Under
+                // load this is the shape a busy gateway takes, and it deserves a sentence
+                // rather than a stream that opens and closes with nothing in it.
+                log.warn("Copilot turn rejected, scheduler saturated [correlation={}]", context.correlationId());
+                sink.emit(StreamEvent.error(ErrorCode.INTERNAL,
+                        "The Copilot is busy right now. Please try again in a moment.", true));
+                sink.emit(StreamEvent.done(""));
+                flux.complete();
+            }
         }, FluxSink.OverflowStrategy.BUFFER);
     }
 

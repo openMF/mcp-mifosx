@@ -27,6 +27,11 @@ public final class ToolManifest {
     private final Map<String, ToolDefinition> tools = new LinkedHashMap<>();
 
     @SuppressWarnings("unchecked")
+    /** A manifest value as text, so a bound written as 1 and one written as '1' both read. */
+    private static String text(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
     public static ToolManifest load(InputStream yamlStream) {
         Map<String, Object> root = new Yaml().load(yamlStream);
         ToolManifest manifest = new ToolManifest();
@@ -43,7 +48,12 @@ public final class ToolManifest {
                         // Shown on the confirmation card unless the manifest hides it, which
                         // it does for identifiers that mean nothing to an officer.
                         !Boolean.FALSE.equals(param.get("show")),
-                        Boolean.TRUE.equals(param.get("futureAllowed"))));
+                        Boolean.TRUE.equals(param.get("futureAllowed")),
+                    text(param.get("pattern")),
+                    text(param.get("mustBe")),
+                    text(param.get("min")),
+                    text(param.get("max")),
+                    text(param.get("maxLength"))));
             }
             ToolDefinition.RestMapping rest = null;
             Map<String, Object> restNode = (Map<String, Object>) entry.get("rest");

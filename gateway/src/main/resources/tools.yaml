@@ -15,6 +15,11 @@
 # `redactFields` are masked before results can reach a cloud model.
 #
 # Two things a body may read besides the officer's own arguments:
+# `pattern`, `min` and `max` are copied from the validators the Mifos X web app already
+# applies to the same field, and `mustBe` finishes the sentence "First name must ...". They
+# are deliberately no stricter than the form: the Copilot sits beside that app, so it must
+# not refuse work an officer could do in the UI, and must not become a way round it either.
+#
 #   ${session.x}  a fact the logged-in session owns, such as which office the officer works
 #                 in. The model cannot supply one, which is the point.
 #   defaults:     values read from the record that owns them before the request is built, so a
@@ -26,6 +31,9 @@ tools:
   - name: mifos_client_search
     description: Search for clients by name, account number or external id.
     write: false
+    # A search returns whole matched entities. The name has to survive for the result to be
+    # any use to the officer; the external id is a national id and does not.
+    redactFields: [entityExternalId, externalId, entityMobileNo, mobileNo]
     params:
       - { name: query, type: string, required: true, label: Search, description: Name or account number to search for }
     rest:
@@ -40,7 +48,7 @@ tools:
     rest:
       method: GET
       path: /fineract-provider/api/v1/clients/{clientId}
-    redactFields: [mobileNo, dateOfBirth]
+    redactFields: [mobileNo, dateOfBirth, externalId]
 
   - name: mifos_client_accounts
     description: List every loan and savings account belonging to a client, with balances and statuses.
@@ -92,23 +100,31 @@ tools:
     summary: "Create client {firstname} {lastname}"
     write: true
     params:
-      - { name: firstname, type: string, required: true, label: First name }
-      - { name: lastname, type: string, required: true, label: Last name }
+      # client-general-step.component.ts requires Validators.pattern('(^[A-Za-z]).*') on both.
+      # The pattern is the web app's. The lengths are Fineract's own columns, which the form
+      # does not mention at all, so a long name only failed once the officer had confirmed it.
+      - { name: firstname, type: string, required: true, label: First name, pattern: '^[A-Za-z].*', mustBe: start with a letter, maxLength: '50' }
+      - { name: lastname, type: string, required: true, label: Last name, pattern: '^[A-Za-z].*', mustBe: start with a letter, maxLength: '50' }
       - { name: activationDate, type: string, required: true, label: Activation date, format: date, description: "Date as yyyy-MM-dd, or the word today" }
-      - { name: mobileNo, type: string, required: false, label: Mobile number }
+      - { name: mobileNo, type: string, required: false, label: Mobile number, maxLength: '50' }
       - { name: dateOfBirth, type: string, required: false, label: Date of birth, format: date, description: "Date as yyyy-MM-dd" }
-      - { name: externalId, type: string, required: false, label: External id, description: "The institution's own reference for this client, such as a national id" }
+      # No format rule: the web app's external-id regex is deployment-configured and empty by
+      # default, so it enforces none, and inventing one here would refuse legitimate references.
+      - { name: externalId, type: string, required: false, label: External id, maxLength: '100', description: "The institution's own reference for this client, such as a national id" }
       # Filled from the officer's own credential when only one office is reachable.
       - { name: officeId, type: integer, required: false, label: Office, description: "Only needed when the officer works in more than one office" }
     rest:
       method: POST
       path: /fineract-provider/api/v1/clients
-      # officeId comes from the officer's session. It was a literal 1, which put every client
-      # created through the Copilot into head office whatever branch the officer worked in.
+      # officeId is established from the officer's own credential, never sent by the browser
+      # and never invented by the model. It was a literal 1, which put every client created
+      # through the Copilot into head office whatever branch the officer worked in.
       body: '{"officeId":"${officeId}","firstname":"${firstname}","lastname":"${lastname}","mobileNo":"${mobileNo}","dateOfBirth":"${dateOfBirth}","externalId":"${externalId}","legalFormId":1,"active":true,"activationDate":"${activationDate}","dateFormat":"dd MMMM yyyy","locale":"en"}'
     # A rejected creation comes back echoing what was sent, and that answer is fed to the
-    # model. The read tool masks the same two fields.
-    redactFields: [mobileNo, dateOfBirth]
+    # model. Fineract puts the value in the message text, not under a key of that name, so
+    # these are masked by value as well as by key. externalId is here because this manifest
+    # describes it as a national id, and the read tool masks the same three.
+    redactFields: [mobileNo, dateOfBirth, externalId]
 
   - name: mifos_loan_create
     description: Submit a new loan application for a client. Requires the officer's confirmation.
@@ -117,8 +133,11 @@ tools:
     params:
       - { name: clientId, type: integer, required: true, label: Client, show: false }
       - { name: productId, type: integer, required: true, label: Product, show: false, description: "Loan product id, from mifos_loan_products" }
-      - { name: principal, type: number, required: true, label: Principal, format: money }
-      - { name: numberOfRepayments, type: integer, required: true, label: Repayments, description: Number of monthly instalments }
+      # amountValueValidator() in the web app, which is where this pattern comes from.
+      - { name: principal, type: number, required: true, label: Principal, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', min: '0.000001', mustBe: 'be an amount, and not a negative one' }
+      # One place the form is looser than the server: the web app allows Validators.min(0), and
+      # Fineract requires strictly more than zero. A loan of no instalments is not a loan.
+      - { name: numberOfRepayments, type: integer, required: true, label: Repayments, min: '1', description: Number of monthly instalments }
       - { name: submittedOnDate, type: string, required: true, label: Submitted on, format: date, description: "Date as yyyy-MM-dd, or today" }
       # The one date that is meant to be in the future. Clamping it to the business date
       # rewrites every instalment on the schedule Fineract derives from it.
@@ -165,7 +184,7 @@ tools:
     params:
       - { name: loanId, type: integer, required: true, label: Loan account, show: false }
       - { name: approvedOnDate, type: string, required: true, label: Approval date, format: date, description: "Date as yyyy-MM-dd, or today" }
-      - { name: approvedLoanAmount, type: number, required: false, label: Approved amount, format: money, description: Approved principal if different from the amount applied for }
+      - { name: approvedLoanAmount, type: number, required: false, label: Approved amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', mustBe: 'be an amount, and not a negative one', description: Approved principal if different from the amount applied for }
     enrich:
       - path: /fineract-provider/api/v1/loans/{loanId}
         currency: currency.code
@@ -186,7 +205,7 @@ tools:
     params:
       - { name: loanId, type: integer, required: true, label: Loan account, show: false }
       - { name: actualDisbursementDate, type: string, required: true, label: Disbursement date, format: date, description: "Date as yyyy-MM-dd, or today" }
-      - { name: transactionAmount, type: number, required: false, label: Amount, format: money, description: Amount to disburse if different from the approved principal }
+      - { name: transactionAmount, type: number, required: false, label: Amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', mustBe: 'be an amount, and not a negative one', description: Amount to disburse if different from the approved principal }
     enrich:
       - path: /fineract-provider/api/v1/loans/{loanId}
         currency: currency.code
@@ -206,7 +225,8 @@ tools:
     write: true
     params:
       - { name: loanId, type: integer, required: true, label: Loan account, show: false }
-      - { name: transactionAmount, type: number, required: true, label: Repayment amount, format: money }
+      # The web app blocks a zero repayment with Validators.min(0.001); so does this.
+      - { name: transactionAmount, type: number, required: true, label: Repayment amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', min: '0.001', mustBe: 'be an amount, and not a negative one' }
       - { name: transactionDate, type: string, required: true, label: Transaction date, format: date, description: "Date as yyyy-MM-dd, or today" }
     enrich:
       - path: /fineract-provider/api/v1/loans/{loanId}
