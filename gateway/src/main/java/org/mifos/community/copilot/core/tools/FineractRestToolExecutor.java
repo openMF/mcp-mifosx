@@ -52,6 +52,10 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      */
     private final java.util.Map<String, CachedDate> businessDateByTenant = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** The office each officer actually belongs to, keyed by fingerprint. */
+    private final java.util.Map<String, java.util.Optional<String>> homeOfficeByOfficer =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     /**
      * Offices each officer may work in, keyed by their fingerprint so one cannot answer for another.
      *
@@ -237,6 +241,19 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             officesByOfficer.put(key, reachable);
         }
         Object stated = args.get("officeId");
+        if (stated == null || String.valueOf(stated).isBlank()) {
+            // The officer's own branch, which is the right answer whenever we can get it. An
+            // administrator can see every office in the institution, so picking the only
+            // visible one stops working the moment a second branch exists, and asking them
+            // which branch they are sitting in is a strange question to be asked.
+            java.util.Optional<String> home = homeOfficeByOfficer
+                    .computeIfAbsent(key, (k) -> readHomeOffice(context));
+            if (home.isPresent() && reachable.contains(home.get())) {
+                java.util.Map<String, Object> withHome = new java.util.LinkedHashMap<>(args);
+                withHome.put("officeId", Long.parseLong(home.get()));
+                return withHome;
+            }
+        }
         if (stated != null && !String.valueOf(stated).isBlank()) {
             // Checked against what the credential actually reaches, always. Accepting it
             // whenever the list happened to be empty was a way in: one failed lookup and any
@@ -257,6 +274,57 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                                 + " Please tell your administrator."
                         : "You work in more than one office, so please say which one this is for.",
                 0, null);
+    }
+
+    /**
+     * The office this officer belongs to, as Fineract itself reports it.
+     *
+     * <p>Fineract answers a sign-in with the user's own office, which is the only place that
+     * knows it. Reaching it needs the password, and the password is already in the header this
+     * gateway forwards to Fineract on every call, so nothing new is being trusted or held. It
+     * is never logged and never leaves this method.
+     *
+     * <p>Empty when the credential is not Basic, or the sign-in did not answer. The caller
+     * falls back to the reachable set, and refuses rather than guessing if that is ambiguous.
+     */
+    private java.util.Optional<String> readHomeOffice(CallContext context) {
+        String header = context.authorizationHeader();
+        if (header == null || !header.regionMatches(true, 0, "Basic ", 0, 6)) {
+            return java.util.Optional.empty();
+        }
+        try {
+            String decoded = new String(java.util.Base64.getDecoder().decode(header.substring(6).trim()),
+                    StandardCharsets.UTF_8);
+            int split = decoded.indexOf(':');
+            if (split < 0) {
+                return java.util.Optional.empty();
+            }
+            ObjectNode credentials = mapper.createObjectNode()
+                    .put("username", decoded.substring(0, split))
+                    .put("password", decoded.substring(split + 1));
+            HttpResponse<String> response = http.send(
+                    HttpRequest.newBuilder(URI.create(fineractBaseUrl
+                                    + "/fineract-provider/api/v1/authentication"))
+                            .timeout(Duration.ofSeconds(15))
+                            .header("Content-Type", "application/json")
+                            .header("Accept", "application/json")
+                            .header("Fineract-Platform-TenantId", context.tenantId())
+                            .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(credentials)))
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return java.util.Optional.empty();
+            }
+            JsonNode body = mapper.readTree(response.body());
+            return body.hasNonNull("officeId")
+                    ? java.util.Optional.of(body.get("officeId").asText())
+                    : java.util.Optional.empty();
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return java.util.Optional.empty(); // Fall back to the reachable set.
+        }
     }
 
     /**

@@ -47,7 +47,13 @@ class OfficeDerivationTest {
     private String officesBody = ONE_OFFICE;
     private int officesStatus = 200;
 
-    private final CallContext officer = new CallContext("Basic abc", "default", "corr-1");
+    /** The office Fineract reports as this officer's own, or 0 for a server that will not say. */
+    private int homeOffice;
+
+    /** Decodable, because the home-office lookup reads the username and password out of it. */
+    private final CallContext officer = new CallContext("Basic "
+            + java.util.Base64.getEncoder().encodeToString("mifos:password".getBytes(StandardCharsets.UTF_8)),
+            "default", "corr-1");
 
     @BeforeEach
     void startStubFineract() throws IOException {
@@ -66,8 +72,11 @@ class OfficeDerivationTest {
         String path = exchange.getRequestURI().getPath();
         requestedPaths.add(path);
         boolean offices = path.endsWith("/offices");
-        int status = offices ? officesStatus : 200;
-        String body = offices ? officesBody : "{\"clientId\":11,\"resourceId\":11}";
+        boolean signIn = path.endsWith("/authentication");
+        int status = offices ? officesStatus : signIn && homeOffice == 0 ? 404 : 200;
+        String body = offices ? officesBody
+                : signIn ? "{\"username\":\"mifos\",\"officeId\":" + homeOffice + "}"
+                : "{\"clientId\":11,\"resourceId\":11}";
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
         exchange.sendResponseHeaders(status, bytes.length);
@@ -97,6 +106,46 @@ class OfficeDerivationTest {
 
         assertThat(requestedPaths).as("the credential was asked which offices it reaches")
                 .anyMatch((path) -> path.endsWith("/offices"));
+    }
+
+    /**
+     * An officer who can see the whole institution still belongs to one branch.
+     *
+     * <p>Picking the only visible office worked until somebody added a second one, and then an
+     * administrator, who can see every branch there is, got asked which branch they were
+     * sitting in. Fineract answers a sign-in with the user's own office, so that is what a new
+     * client gets, and the reachable set is only there to check the answer is sane.
+     */
+    @Test
+    void aClientLandsInTheOfficersOwnBranchNotTheOnlyVisibleOne() throws Exception {
+        officesBody = TWO_OFFICES;
+        homeOffice = 9;
+        FineractRestToolExecutor executor = new FineractRestToolExecutor(baseUrl);
+
+        executor.execute(clientCreate(), Map.of("firstname", "Grace"), officer, "cop-1");
+
+        assertThat(requestedPaths).as("it asked who the officer is")
+                .anyMatch((path) -> path.endsWith("/authentication"));
+        assertThat(requestedPaths).anyMatch((path) -> path.endsWith("/clients"));
+    }
+
+    /**
+     * A home office outside what the credential reaches is not taken on trust.
+     *
+     * <p>It is checked against the reachable set like anything else, and when it fails that
+     * check the reachable set decides instead. Here that is unambiguous, so the write goes
+     * ahead in the office the credential can actually see rather than the one it claimed.
+     */
+    @Test
+    void aHomeOfficeTheCredentialCannotReachIsNotUsed() throws Exception {
+        officesBody = ONE_OFFICE;   // reaches office 4 only
+        homeOffice = 77;            // but the sign-in claims 77
+        FineractRestToolExecutor executor = new FineractRestToolExecutor(baseUrl);
+
+        executor.execute(clientCreate(), Map.of("firstname", "Grace"), officer, "cop-1");
+
+        assertThat(requestedPaths).as("it fell back rather than trusting the claim")
+                .anyMatch((path) -> path.endsWith("/clients"));
     }
 
     /**
