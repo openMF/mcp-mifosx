@@ -134,6 +134,17 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             throw new ToolExecutionException("Fineract unreachable for " + tool.name(), 0, e);
         }
 
+        if (response.statusCode() >= 500) {
+            // The banking system did not answer, it fell over. Calling that a rejection sends
+            // an officer looking for what they did wrong, when the truthful answer is that
+            // there is nothing wrong with the request and nothing they can do about it. A
+            // write is left indeterminate, because a 502 from a proxy says nothing about
+            // whether the server behind it committed.
+            throw new ToolExecutionException(
+                    "Fineract is not responding (HTTP " + response.statusCode() + ")",
+                    response.statusCode(), null, tool.write());
+        }
+
         if (response.statusCode() == 401 || isPermissionDenial(response)) {
             // Auth outcomes need special loop handling (session expiry / RBAC denial).
             throw new ToolExecutionException(
