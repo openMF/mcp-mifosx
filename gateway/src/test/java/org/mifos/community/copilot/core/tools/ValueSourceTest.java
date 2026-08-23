@@ -175,6 +175,32 @@ class ValueSourceTest {
                 .hasMessageContaining("office");
     }
 
+
+    @Test
+    void aBodyTemplateThatCannotBeFilledIsRefusedRatherThanSentIncomplete() {
+        // The refusal is an unchecked exception, and the loop has to survive it: letting it
+        // escape ends the turn with no explanation and the officer's card already spent.
+        String template = "{\"officeId\":\"${session.officeId}\"}";
+        FineractRestToolExecutor executor = new FineractRestToolExecutor(baseUrl);
+
+        assertThatThrownBy(() -> executor.buildBody(template, Map.of(), "2026-08-22", Map.of()))
+                .isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    void aNumberTheProductGivesArrivesAsANumberAndNotAsText() {
+        // Sending "2.5" where Fineract expects 2.5 is the kind of thing that only fails on
+        // some validators, so it has to be a number on the wire.
+        FineractRestToolExecutor executor = new FineractRestToolExecutor(baseUrl);
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("productId", 3);
+
+        String body = executor.buildBody(LOAN_BODY, executor.withDefaults(loanCreate(), args, officer()),
+                "2026-08-22", Map.of());
+
+        assertThat(body).contains("\"interestRatePerPeriod\":2.5");
+        assertThat(body).doesNotContain("\"interestRatePerPeriod\":\"2.5\"");
+    }
     private CallContext officer() {
         return new CallContext("Basic abc", "default", "corr-1", Map.of("officeId", 4L));
     }

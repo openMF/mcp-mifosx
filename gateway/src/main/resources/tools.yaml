@@ -104,6 +104,9 @@ tools:
       # officeId comes from the officer's session. It was a literal 1, which put every client
       # created through the Copilot into head office whatever branch the officer worked in.
       body: '{"officeId":"${session.officeId}","firstname":"${firstname}","lastname":"${lastname}","mobileNo":"${mobileNo}","dateOfBirth":"${dateOfBirth}","externalId":"${externalId}","legalFormId":1,"active":true,"activationDate":"${activationDate}","dateFormat":"dd MMMM yyyy","locale":"en"}'
+    # A rejected creation comes back echoing what was sent, and that answer is fed to the
+    # model. The read tool masks the same two fields.
+    redactFields: [mobileNo, dateOfBirth]
 
   - name: mifos_loan_create
     description: Submit a new loan application for a client. Requires the officer's confirmation.

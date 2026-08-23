@@ -114,6 +114,11 @@ public final class AgentLoop {
             approvals.restore(approval);
             return;
         }
+        if (status == ExecStatus.APP_ERROR && nothingWasSent(conversationId, fingerprint)) {
+            // Rejected before the request left, so the officer can fix the problem and decide
+            // again on the same card rather than starting over.
+            approvals.restore(approval);
+        }
         if (status == ExecStatus.UNKNOWN) {
             // Sent, no answer. Saying "not completed" would be a guess, and the wrong guess
             // costs a second disbursement. The card goes back with its original idempotency
@@ -275,6 +280,12 @@ public final class AgentLoop {
             } else {
                 outcome = "{\"error\":" + jsonQuote(e.getMessage()) + "}";
             }
+        } catch (RuntimeException e) {
+            // Something went wrong building the request, so nothing was sent. Report it as a
+            // rejection, which is what it is, rather than letting it escape and end the turn
+            // with no explanation and the card already spent.
+            outcome = "{\"error\":" + jsonQuote(e.getMessage() == null ? "The request could not be prepared."
+                    : e.getMessage()) + "}";
         }
         sink.emit(StreamEvent.toolCall(tool.name(), "finished", !tool.write(), System.currentTimeMillis() - startedAt));
         conversations.append(fingerprint, conversationId, toolResultMessage(call, outcome));
@@ -500,6 +511,23 @@ public final class AgentLoop {
             }
         }
         return name.toString();
+    }
+
+    /**
+     * Whether the last recorded outcome was a refusal raised before anything reached Fineract.
+     *
+     * <p>Those are worth putting the card back for: nothing ran, and the officer may be able
+     * to correct what caused it. A refusal from Fineract itself is a decision, and the card
+     * stays spent.
+     */
+    private boolean nothingWasSent(String conversationId, String fingerprint) {
+        List<Map<String, Object>> messages = conversations.messages(fingerprint, conversationId);
+        if (messages.isEmpty()) {
+            return false;
+        }
+        Object content = messages.get(messages.size() - 1).get("content");
+        String text = content == null ? "" : String.valueOf(content);
+        return text.contains("could not be prepared") || text.contains("not one you can work in");
     }
 
     /** Argument names the model supplied that the manifest does not declare for this tool. */

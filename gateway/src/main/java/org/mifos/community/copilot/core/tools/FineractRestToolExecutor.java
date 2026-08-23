@@ -50,6 +50,10 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      */
     private final java.util.Map<String, CachedDate> businessDateByTenant = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** Offices each officer may work in, keyed by their fingerprint so one cannot answer for another. */
+    private final java.util.Map<String, java.util.Set<String>> officesByOfficer =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private record CachedDate(String value, long expiresAt) {}
 
     private final HttpClient http;
@@ -75,6 +79,9 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         }
 
         String today = businessDate(context);
+        if (tool.write()) {
+            verifyOffice(context.session(), context);
+        }
         // The product owns its interest rate, its schedule and its strategy. Anything the
         // officer did not name is read from it rather than invented here.
         // Normalised first, so what executes is exactly what the card showed.
@@ -104,9 +111,13 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         HttpResponse<String> response;
         try {
             response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        } catch (java.net.http.HttpConnectTimeoutException e) {
+            // Never got a connection, so nothing was sent and nothing can have run. This is a
+            // definite failure, and saying "we are not sure" would be its own kind of wrong.
+            throw new ToolExecutionException("Could not reach Fineract for " + tool.name(), 0, e);
         } catch (java.net.http.HttpTimeoutException e) {
-            // The request was sent and the answer never came. For a write, that is not the
-            // same as a refusal, and it must not be reported as one.
+            // Sent, and the answer never came. For a write that is not a refusal, and it must
+            // not be reported as one.
             throw new ToolExecutionException("Timed out waiting for " + tool.name(), 0, e, tool.write());
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
@@ -187,6 +198,63 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             }
         }
         return effective;
+    }
+
+    /**
+     * Refuse a session fact the officer's own credential cannot back up.
+     *
+     * <p>The office arrives on the request the browser sends. That is the same trust level as
+     * the credential the browser already holds, and Fineract enforces permissions regardless,
+     * but a claim that is never checked is still a claim. Asking Fineract which offices this
+     * credential can see, and refusing anything outside that, costs one cached call and makes
+     * the value as trustworthy as the login it came with.
+     */
+    private void verifyOffice(Map<String, Object> session, CallContext context) throws ToolExecutionException {
+        Object claimed = session.get("officeId");
+        if (claimed == null) {
+            return;
+        }
+        String key = context.fingerprint() + "|" + context.tenantId();
+        java.util.Set<String> allowed = officesByOfficer.computeIfAbsent(key, (k) -> readOffices(context));
+        if (allowed.isEmpty()) {
+            return; // Could not ask. Fineract still refuses what this officer may not do.
+        }
+        if (!allowed.contains(String.valueOf(claimed))) {
+            throw new ToolExecutionException(
+                    "That office is not one you can work in. Sign out and back in, and tell your "
+                            + "administrator if it happens again.",
+                    403, null);
+        }
+    }
+
+    /** Office ids this credential can see, empty when the question could not be asked. */
+    private java.util.Set<String> readOffices(CallContext context) {
+        try {
+            HttpResponse<String> response = http.send(
+                    HttpRequest.newBuilder(URI.create(fineractBaseUrl + "/fineract-provider/api/v1/offices"))
+                            .timeout(Duration.ofSeconds(15))
+                            .header("Accept", "application/json")
+                            .header("Authorization", context.authorizationHeader())
+                            .header("Fineract-Platform-TenantId", context.tenantId())
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return java.util.Set.of();
+            }
+            java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+            for (JsonNode office : mapper.readTree(response.body())) {
+                if (office.hasNonNull("id")) {
+                    ids.add(office.get("id").asText());
+                }
+            }
+            return ids;
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return java.util.Set.of();
+        }
     }
 
     /**
