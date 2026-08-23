@@ -34,6 +34,15 @@ public interface ToolExecutor {
      * clock. Commands dated in Fineract's future are rejected, so both the system prompt and
      * date-parameter resolution must use THIS date, not {@code LocalDate.now()}.
      */
+    /**
+     * The arguments as this executor will actually send them, so a confirmation card can be
+     * built from the same values rather than from the model's originals.
+     */
+    default java.util.Map<String, Object> normalizeArguments(ToolDefinition tool, java.util.Map<String, Object> args,
+            CallContext context) {
+        return args == null ? java.util.Map.of() : args;
+    }
+
     default String businessDate(CallContext context) {
         return java.time.LocalDate.now().toString();
     }

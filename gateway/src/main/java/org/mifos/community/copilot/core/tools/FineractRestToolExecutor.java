@@ -75,7 +75,11 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         }
 
         String today = businessDate(context);
-        String path = substitutePath(rest.path(), args, today);
+        // The product owns its interest rate, its schedule and its strategy. Anything the
+        // officer did not name is read from it rather than invented here.
+        // Normalised first, so what executes is exactly what the card showed.
+        Map<String, Object> effective = withDefaults(tool, normalizeArguments(tool, args, context), context);
+        String path = substitutePath(rest.path(), effective, today);
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
                 .timeout(Duration.ofSeconds(30))
                 .header("Accept", "application/json")
@@ -90,7 +94,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         if ("GET".equalsIgnoreCase(rest.method())) {
             builder.GET();
         } else {
-            String body = buildBody(rest.bodyTemplate(), args, today);
+            String body = buildBody(rest.bodyTemplate(), effective, today, context.session());
             builder.method(rest.method().toUpperCase(Locale.ROOT),
                     HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
             builder.header("Content-Type", "application/json");
@@ -120,6 +124,66 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         return truncate(redact(response.body(), tool.redactFields()), MAX_RESULT_CHARS);
     }
 
+    /**
+     * The officer's arguments, filled out from the record that owns the unspecified ones.
+     *
+     * <p>Fineract rejects a loan application that omits its interest rate, repayment
+     * frequency, amortisation or strategy, so those fields have to be sent. They belong to the
+     * loan product, and reading them from it is the difference between a loan on the terms the
+     * institution configured and a loan on whatever was written into this file.
+     *
+     * <p>An argument the officer supplied always wins. A lookup that fails changes nothing,
+     * and the request goes on to fail at Fineract with a message naming the missing field,
+     * which is a better answer than a silent wrong rate.
+     */
+    Map<String, Object> withDefaults(ToolDefinition tool, Map<String, Object> args, CallContext context) { // package-private for tests
+        ToolDefinition.Defaults spec = tool.defaults();
+        java.util.Map<String, Object> effective = new java.util.LinkedHashMap<>();
+        if (args != null) {
+            effective.putAll(args);
+        }
+        if (spec == null || spec.path() == null || spec.fields().isEmpty()) {
+            return effective;
+        }
+        boolean anythingMissing = spec.fields().keySet().stream()
+                .anyMatch((name) -> effective.get(name) == null || String.valueOf(effective.get(name)).isBlank());
+        if (!anythingMissing) {
+            return effective; // The officer named everything; no need to ask.
+        }
+        try {
+            String path = substitutePath(spec.path(), effective, businessDate(context));
+            HttpResponse<String> response = http.send(
+                    HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
+                            .timeout(Duration.ofSeconds(15))
+                            .header("Accept", "application/json")
+                            .header("Authorization", context.authorizationHeader())
+                            .header("Fineract-Platform-TenantId", context.tenantId())
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return effective;
+            }
+            JsonNode body = mapper.readTree(response.body());
+            for (Map.Entry<String, String> field : spec.fields().entrySet()) {
+                Object supplied = effective.get(field.getKey());
+                if (supplied != null && !String.valueOf(supplied).isBlank()) {
+                    continue;
+                }
+                JsonNode node = at(body, field.getValue());
+                if (node == null || node.isMissingNode() || node.isNull()) {
+                    continue;
+                }
+                effective.put(field.getKey(), node.isNumber() ? (Object) node.numberValue() : node.asText());
+            }
+        } catch (ToolExecutionException | IOException | InterruptedException | RuntimeException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return effective;
+    }
+
     /** Replace {param} tokens in the path, URL-encoding values; unresolved required tokens fail fast. */
     private String substitutePath(String template, Map<String, Object> args, String today) throws ToolExecutionException {
         String out = template;
@@ -142,10 +206,34 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      * must never receive an empty-string stand-in for a field the officer did not set.
      */
     String buildBody(String template, Map<String, Object> args, String today) { // package-private for tests
+        return buildBody(template, args, today, Map.of());
+    }
+
+    /**
+     * Fill the request body.
+     *
+     * <p>{@code ${session.x}} comes from the officer's logged-in session and is filled first,
+     * so a value the session owns cannot be shadowed by an argument the model produced. That
+     * is the point of the prefix: an office is decided by who is signed in, never by a
+     * sentence somebody typed.
+     */
+    String buildBody(String template, Map<String, Object> args, String today, Map<String, Object> session) {
         if (template == null) {
             return "{}";
         }
         String out = template;
+        if (session != null) {
+            for (Map.Entry<String, Object> entry : session.entrySet()) {
+                Object value = entry.getValue();
+                if (value == null || String.valueOf(value).isBlank()) {
+                    continue;
+                }
+                String token = "\"${session." + entry.getKey() + "}\"";
+                out = value instanceof Number || value instanceof Boolean
+                        ? out.replace(token, String.valueOf(value))
+                        : out.replace(token, quoteJson(String.valueOf(value)));
+            }
+        }
         if (args != null) {
             for (Map.Entry<String, Object> entry : args.entrySet()) {
                 String quotedToken = "\"${" + entry.getKey() + "}\"";
@@ -156,16 +244,22 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                 if (value instanceof Number || value instanceof Boolean) {
                     out = out.replace(quotedToken, String.valueOf(value));
                 } else {
-                    out = out.replace(quotedToken, quoteJson(normalizeValue(entry.getKey(), value, today)));
+                    out = out.replace(quotedToken, quoteJson(String.valueOf(value)));
                 }
                 // Deliberately NO unquoted "${key}" replacement: values must never be able to
                 // rewrite JSON structure or trigger recursive token substitution.
             }
         }
+        if (out.contains("${session.")) {
+            throw new IllegalStateException(
+                    "This action needs a detail from your session that was not supplied. "
+                            + "Sign out and back in, and if it happens again tell your administrator "
+                            + "the Copilot did not receive the office for your login.");
+        }
         // Strip whole fields whose optional token was never filled: '"field":"${tok}",' / ',"field":"${tok}"'.
-        out = out.replaceAll("\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_]+}\"\\s*,", "");
-        out = out.replaceAll(",\\s*\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_]+}\"", "");
-        out = out.replaceAll("\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_]+}\"", "");
+        out = out.replaceAll("\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_.]+}\"\\s*,", "");
+        out = out.replaceAll(",\\s*\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_.]+}\"", "");
+        out = out.replaceAll("\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_.]+}\"", "");
         return out;
     }
 
@@ -175,6 +269,20 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      * date is clamped to it: Fineract rejects future-dated commands, and the officer meant "now".
      */
     private String normalizeValue(String name, Object value, String today) {
+        return normalizeValue(name, value, today, false);
+    }
+
+    /**
+     * A date as Fineract wants to read it.
+     *
+     * <p>Dates after the business date are pulled back to it, because Fineract refuses to book
+     * an approval or a repayment in its own future and the officer would otherwise get a
+     * validation error with no explanation. A parameter the manifest marks
+     * {@code futureAllowed} is left alone: an expected disbursement is supposed to be ahead,
+     * and moving it to today silently rewrites every instalment date on the schedule Fineract
+     * derives from it.
+     */
+    String normalizeValue(String name, Object value, String today, boolean futureAllowed) { // package-private for tests
         String raw = String.valueOf(value);
         boolean isDateParam = name.toLowerCase(Locale.ROOT).contains("date");
         if (!isDateParam) {
@@ -188,7 +296,45 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         if (parsed == null) {
             return raw; // Already a Fineract-formatted or unrecognized value; pass it through.
         }
-        return (parsed.isAfter(businessDate) ? businessDate : parsed).format(FINERACT_DATE);
+        boolean clamp = !futureAllowed && parsed.isAfter(businessDate);
+        return (clamp ? businessDate : parsed).format(FINERACT_DATE);
+    }
+
+    /**
+     * The arguments as they will actually be sent.
+     *
+     * <p>Called before the confirmation card is built, so the officer reads the value that
+     * will run. Working this out twice, once for the card and once for the request, is how a
+     * card came to say "1 September" while the wire carried today's date.
+     */
+    @Override
+    public Map<String, Object> normalizeArguments(ToolDefinition tool, Map<String, Object> args,
+            CallContext context) {
+        if (args == null || args.isEmpty()) {
+            return Map.of();
+        }
+        String today = businessDate(context);
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : args.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Number || value instanceof Boolean || value == null) {
+                out.put(entry.getKey(), value);
+                continue;
+            }
+            out.put(entry.getKey(), normalizeValue(entry.getKey(), value, today, futureAllowed(tool, entry.getKey())));
+        }
+        return out;
+    }
+
+    private boolean futureAllowed(ToolDefinition tool, String param) {
+        if (tool == null || tool.params() == null) {
+            return false;
+        }
+        return tool.params().stream()
+                .filter((p) -> p.name().equals(param))
+                .findFirst()
+                .map(ToolDefinition.Param::allowsFuture)
+                .orElse(false);
     }
 
 

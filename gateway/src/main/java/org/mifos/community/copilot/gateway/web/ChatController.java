@@ -60,7 +60,7 @@ public class ChatController {
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chat(@RequestBody ChatRequest request, ServerHttpRequest http) {
-        return run(http, (context, sink) -> {
+        return run(http, sessionFacts(request.context()), (context, sink) -> {
             String message = request.message() == null ? "" : request.message().trim();
             if (message.isEmpty() || message.length() > 500) {
                 sink.emit(StreamEvent.error(ErrorCode.INTERNAL, "Message must be 1-500 characters.", false));
@@ -89,13 +89,45 @@ public class ChatController {
     @PostMapping(value = "/actions/{cardId}/decision", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> decision(@PathVariable String cardId, @RequestBody DecisionRequest request,
             ServerHttpRequest http) {
-        return run(http, (context, sink) ->
+        // No session facts here on purpose: the ones that matter were captured when the card
+        // was raised and travel with it, so the office a write lands in cannot be changed
+        // between an officer reading the card and pressing Confirm.
+        return run(http, Map.of(), (context, sink) ->
                 agentLoop.resume(cardId, request.isApprove(), Map.of(), context, sink));
     }
 
     /** Shared plumbing: extract identity, bridge the core EventSink onto a reactive SSE stream. */
-    private Flux<ServerSentEvent<String>> run(ServerHttpRequest http, BiConsumer<CallContext, EventSink> work) {
-        CallContext context = extractContext(http);
+    /**
+     * Facts the officer's session owns, taken off the screen context the panel sends.
+     *
+     * <p>Allowlisted and coerced to numbers, because these end up in a request body. They are
+     * browser-supplied, which is the same trust level as the credential the browser already
+     * holds, and Fineract still enforces what that officer may do. What this buys is narrower
+     * and worth having: the LANGUAGE MODEL cannot reach them. It cannot put a client in
+     * another branch by being asked nicely, because the branch never passes through it.
+     */
+    private static Map<String, Object> sessionFacts(Map<String, Object> screenContext) {
+        if (screenContext == null) {
+            return Map.of();
+        }
+        Map<String, Object> facts = new java.util.LinkedHashMap<>();
+        for (String key : new String[] { "officeId", "staffId" }) {
+            Object value = screenContext.get(key);
+            if (value == null) {
+                continue;
+            }
+            try {
+                facts.put(key, Long.parseLong(String.valueOf(value).trim()));
+            } catch (NumberFormatException e) {
+                // Not a number, so not an id. Leave it out rather than send it onward.
+            }
+        }
+        return facts;
+    }
+
+    private Flux<ServerSentEvent<String>> run(ServerHttpRequest http, Map<String, Object> session,
+            BiConsumer<CallContext, EventSink> work) {
+        CallContext context = extractContext(http, session);
         return Flux.<ServerSentEvent<String>>create((FluxSink<ServerSentEvent<String>> flux) -> {
             AtomicBoolean cancelled = new AtomicBoolean(false);
             flux.onCancel(() -> cancelled.set(true));
@@ -152,7 +184,7 @@ public class ChatController {
     }
 
     /** The officer's forwarded identity. Credentials are never logged (correlation id only). */
-    private CallContext extractContext(ServerHttpRequest http) {
+    private CallContext extractContext(ServerHttpRequest http, Map<String, Object> session) {
         String authorization = http.getHeaders().getFirst("Authorization");
         String tenant = sanitizeToken(http.getHeaders().getFirst("Fineract-Platform-TenantId"), 64);
         // Client-supplied and later logged/forwarded: restrict to a plain token so it can
@@ -161,7 +193,8 @@ public class ChatController {
         return new CallContext(
                 authorization,
                 tenant == null ? "default" : tenant,
-                correlation == null ? "cop-" + UUID.randomUUID() : correlation);
+                correlation == null ? "cop-" + UUID.randomUUID() : correlation,
+                session);
     }
 
     /** Same scheme+host+port comparison; malformed input counts as a mismatch (fail closed). */

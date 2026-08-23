@@ -18,7 +18,7 @@ import java.util.Map;
  * the LLM may touch and what counts as a write (ADR-001 §04, default-deny).
  */
 public record ToolDefinition(String name, String description, boolean write, String summaryTemplate,
-        List<Param> params, RestMapping rest, List<String> redactFields, List<Enrich> enrich) {
+        List<Param> params, RestMapping rest, List<String> redactFields, List<Enrich> enrich, Defaults defaults) {
 
     /**
      * One declared parameter.
@@ -30,7 +30,12 @@ public record ToolDefinition(String name, String description, boolean write, Str
      *     card by the account number and product name pulled in by {@link Enrich}
      */
     public record Param(String name, String type, boolean required, String description, String label, String format,
-            boolean show) {
+            boolean show, boolean futureAllowed) {
+
+        public Param(String name, String type, boolean required, String description, String label, String format,
+                boolean show) {
+            this(name, type, required, description, label, format, show, false);
+        }
 
         /** The label if the manifest gave one, otherwise the parameter name as a last resort. */
         public String displayLabel() {
@@ -43,6 +48,18 @@ public record ToolDefinition(String name, String description, boolean write, Str
 
         public boolean isDate() {
             return "date".equalsIgnoreCase(format);
+        }
+
+        /**
+         * Whether a date after the business date is legitimate for this field.
+         *
+         * <p>False for almost everything, because Fineract refuses to book a repayment or an
+         * approval in its own future. True for a date that is meant to be ahead: an expected
+         * disbursement is a plan, and clamping it to today rewrites the whole repayment
+         * schedule that Fineract generates from it.
+         */
+        public boolean allowsFuture() {
+            return futureAllowed;
         }
     }
 
@@ -59,6 +76,21 @@ public record ToolDefinition(String name, String description, boolean write, Str
      *     {@code #money:} is formatted as an amount
      */
     public record Enrich(String path, String currencyPath, Map<String, String> fields) {}
+
+    /**
+     * Where a tool's unspecified parameters come from.
+     *
+     * <p>Fineract requires a loan's interest rate, repayment frequency, amortisation and
+     * strategy on every application, and refuses the request without them. They belong to the
+     * loan product, so the manifest reads them from it rather than inventing values. Hardcoding
+     * an interest rate in a request body silently overrides whatever the institution
+     * configured, which is how every loan ends up at the same rate.
+     *
+     * <p>An officer who names a value keeps it. These only fill what was left unsaid.
+     *
+     * @param fields parameter name to a dotted path in the response
+     */
+    public record Defaults(String path, Map<String, String> fields) {}
 
     /** How the direct-REST executor maps this tool onto the core banking API. */
     public record RestMapping(String method, String path, String bodyTemplate) {}

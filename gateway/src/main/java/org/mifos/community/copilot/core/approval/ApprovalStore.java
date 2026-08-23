@@ -44,7 +44,8 @@ public final class ApprovalStore {
                 "cop-" + UUID.randomUUID(), // Server-minted idempotency key, the only authority.
                 context.fingerprint(),
                 Instant.now().plus(ttl),
-                rows == null ? java.util.Map.of() : java.util.Map.copyOf(rows));
+                rows == null ? java.util.Map.of() : java.util.Map.copyOf(rows),
+                context.session());
         pending.put(approval.cardId(), approval);
         return approval;
     }

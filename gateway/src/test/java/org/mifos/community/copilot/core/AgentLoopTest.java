@@ -446,7 +446,7 @@ class AgentLoopTest {
 
         PendingApproval approval = new PendingApproval("card-1", "conv-1",
                 new LlmToolCall("c1", "write_tool", Map.of()), "Approve", "cop-1",
-                officer.fingerprint(), java.time.Instant.now().plusSeconds(60), mutable);
+                officer.fingerprint(), java.time.Instant.now().plusSeconds(60), mutable, Map.of());
         mutable.put("Client", "Someone Else");
 
         assertThat(approval.rows()).containsExactly(entry("Client", "Aisha Bello"));

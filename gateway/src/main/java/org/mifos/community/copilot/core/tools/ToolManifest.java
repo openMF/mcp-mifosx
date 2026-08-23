@@ -42,7 +42,8 @@ public final class ToolManifest {
                         (String) param.get("format"),
                         // Shown on the confirmation card unless the manifest hides it, which
                         // it does for identifiers that mean nothing to an officer.
-                        !Boolean.FALSE.equals(param.get("show"))));
+                        !Boolean.FALSE.equals(param.get("show")),
+                        Boolean.TRUE.equals(param.get("futureAllowed"))));
             }
             ToolDefinition.RestMapping rest = null;
             Map<String, Object> restNode = (Map<String, Object>) entry.get("rest");
@@ -60,6 +61,14 @@ public final class ToolManifest {
                 enrich.add(new ToolDefinition.Enrich(
                         (String) node.get("path"), (String) node.get("currency"), fields));
             }
+            ToolDefinition.Defaults defaults = null;
+            Map<String, Object> defaultsNode = (Map<String, Object>) entry.get("defaults");
+            if (defaultsNode != null) {
+                Map<String, String> fields = new LinkedHashMap<>();
+                ((Map<String, Object>) defaultsNode.getOrDefault("fields", Map.of()))
+                        .forEach((param, path) -> fields.put(param, String.valueOf(path)));
+                defaults = new ToolDefinition.Defaults((String) defaultsNode.get("path"), fields);
+            }
             ToolDefinition definition = new ToolDefinition(
                     (String) entry.get("name"),
                     (String) entry.get("description"),
@@ -68,7 +77,8 @@ public final class ToolManifest {
                     params,
                     rest,
                     (List<String>) entry.getOrDefault("redactFields", List.of()),
-                    enrich);
+                    enrich,
+                    defaults);
             manifest.tools.put(definition.name(), definition);
         }
         return manifest;

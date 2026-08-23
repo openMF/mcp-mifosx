@@ -102,7 +102,11 @@ public final class AgentLoop {
         }
         // The server-minted key from card creation goes to Fineract as Idempotency-Key:
         // a retry of this approval can never execute twice.
-        ExecStatus status = executeAndRecord(tool, call, context, approval.idempotencyKey(), conversationId,
+        // Execute under the session captured on the card, so a value the officer's screen
+        // owned when they read it is the value that runs when they confirm.
+        CallContext executionContext = new CallContext(context.authorizationHeader(), context.tenantId(),
+                context.correlationId(), approval.session());
+        ExecStatus status = executeAndRecord(tool, call, executionContext, approval.idempotencyKey(), conversationId,
                 fingerprint, sink, approval.rows());
         if (status == ExecStatus.AUTH_FAILED) {
             // Auth expired mid-decision: put the card back (same id, same idempotency key) so
@@ -191,10 +195,15 @@ public final class AgentLoop {
                     }
                     // Read the account, product and client first, so the officer confirms
                     // against names rather than identifiers.
-                    Map<String, String> enriched = executor.enrich(tool, call.arguments(), context);
-                    Map<String, String> rows = cardRows(tool, call, enriched, context);
-                    PendingApproval approval = approvals.create(conversationId, call,
-                            summaryFor(tool, call, enriched), context, rows);
+                    // Normalise before anything is shown. A date the executor would rewrite
+                    // has to be rewritten here, or the officer approves one value and another
+                    // one executes.
+                    LlmToolCall normalized = new LlmToolCall(call.id(), call.name(),
+                            executor.normalizeArguments(tool, call.arguments(), context));
+                    Map<String, String> enriched = executor.enrich(tool, normalized.arguments(), context);
+                    Map<String, String> rows = cardRows(tool, normalized, enriched, context);
+                    PendingApproval approval = approvals.create(conversationId, normalized,
+                            summaryFor(tool, normalized, enriched), context, rows);
                     // OpenAI-style history requires a tool result for EVERY id in the assistant's
                     // tool_calls message. The paused call gets its result on resume; any siblings
                     // after it are marked not-executed NOW so the next LLM turn stays valid.
@@ -204,7 +213,7 @@ public final class AgentLoop {
                                         + " turn required officer confirmation. Ask again if still needed.\"}"));
                     }
                     sink.emit(StreamEvent.actionCard(
-                            approval.cardId(), tool.name(), call.arguments(), approval.humanSummary(),
+                            approval.cardId(), tool.name(), normalized.arguments(), approval.humanSummary(),
                             approval.idempotencyKey(), approval.expiresAt().toString(), rows));
                     return; // Paused: no done event; the decision endpoint continues this turn.
                 }

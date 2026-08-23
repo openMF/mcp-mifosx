@@ -37,7 +37,7 @@ class FineractRestToolExecutorTest {
     @Test
     void approvedAmountShownOnTheCardReachesTheBody() throws Exception {
         Map<String, Object> args = new LinkedHashMap<>();
-        args.put("approvedOnDate", "2026-08-09");
+        args.put("approvedOnDate", executor.normalizeValue("approvedOnDate", "2026-08-09", TODAY, false));
         args.put("approvedLoanAmount", 40000);
 
         JsonNode body = mapper.readTree(executor.buildBody(APPROVE_TEMPLATE, args, TODAY));
@@ -78,20 +78,24 @@ class FineractRestToolExecutorTest {
     }
 
     @Test
-    void futureDatesAreClampedToTheBusinessDate() throws Exception {
-        // Fineract rejects future-dated commands; a host clock ahead of the business date
-        // must never turn a valid request into a rejection.
-        JsonNode body = mapper.readTree(
-                executor.buildBody(APPROVE_TEMPLATE, Map.of("approvedOnDate", "2026-12-31"), TODAY));
-
-        assertThat(body.get("approvedOnDate").asText()).isEqualTo("09 August 2026");
+    void aFutureDateIsPulledBackToTheBusinessDate() {
+        // Fineract refuses to book an approval in its own future, so an approval date ahead
+        // of the business date is pulled back rather than sent and rejected.
+        assertThat(executor.normalizeValue("approvedOnDate", "2026-12-31", TODAY, false))
+                .isEqualTo("09 August 2026");
     }
 
     @Test
-    void wordTodayResolvesToTheBusinessDateNotTheHostClock() throws Exception {
-        JsonNode body = mapper.readTree(
-                executor.buildBody(APPROVE_TEMPLATE, Map.of("approvedOnDate", "today"), TODAY));
+    void aDateThatIsMeantToBeAheadIsLeftWhereTheOfficerPutIt() {
+        // An expected disbursement is a plan. Pulling it back to today rewrites every
+        // instalment date on the schedule Fineract generates from it.
+        assertThat(executor.normalizeValue("expectedDisbursementDate", "2026-12-31", TODAY, true))
+                .isEqualTo("31 December 2026");
+    }
 
-        assertThat(body.get("approvedOnDate").asText()).isEqualTo("09 August 2026");
+    @Test
+    void theWordTodayBecomesTheBusinessDateNotTheHostClock() {
+        assertThat(executor.normalizeValue("approvedOnDate", "today", TODAY, false))
+                .isEqualTo("09 August 2026");
     }
 }
