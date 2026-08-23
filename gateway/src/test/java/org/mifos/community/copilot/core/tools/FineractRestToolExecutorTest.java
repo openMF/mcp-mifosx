@@ -37,7 +37,7 @@ class FineractRestToolExecutorTest {
     @Test
     void approvedAmountShownOnTheCardReachesTheBody() throws Exception {
         Map<String, Object> args = new LinkedHashMap<>();
-        args.put("approvedOnDate", "2026-08-09");
+        args.put("approvedOnDate", executor.normalizeValue("approvedOnDate", "2026-08-09", TODAY, false));
         args.put("approvedLoanAmount", 40000);
 
         JsonNode body = mapper.readTree(executor.buildBody(APPROVE_TEMPLATE, args, TODAY));
@@ -78,20 +78,64 @@ class FineractRestToolExecutorTest {
     }
 
     @Test
-    void futureDatesAreClampedToTheBusinessDate() throws Exception {
-        // Fineract rejects future-dated commands; a host clock ahead of the business date
-        // must never turn a valid request into a rejection.
-        JsonNode body = mapper.readTree(
-                executor.buildBody(APPROVE_TEMPLATE, Map.of("approvedOnDate", "2026-12-31"), TODAY));
-
-        assertThat(body.get("approvedOnDate").asText()).isEqualTo("09 August 2026");
+    void aFutureDateIsPulledBackToTheBusinessDate() {
+        // Fineract refuses to book an approval in its own future, so an approval date ahead
+        // of the business date is pulled back rather than sent and rejected.
+        assertThat(executor.normalizeValue("approvedOnDate", "2026-12-31", TODAY, false))
+                .isEqualTo("09 August 2026");
     }
 
     @Test
-    void wordTodayResolvesToTheBusinessDateNotTheHostClock() throws Exception {
-        JsonNode body = mapper.readTree(
-                executor.buildBody(APPROVE_TEMPLATE, Map.of("approvedOnDate", "today"), TODAY));
+    void aDateThatIsMeantToBeAheadIsLeftWhereTheOfficerPutIt() {
+        // An expected disbursement is a plan. Pulling it back to today rewrites every
+        // instalment date on the schedule Fineract generates from it.
+        assertThat(executor.normalizeValue("expectedDisbursementDate", "2026-12-31", TODAY, true))
+                .isEqualTo("31 December 2026");
+    }
 
-        assertThat(body.get("approvedOnDate").asText()).isEqualTo("09 August 2026");
+    @Test
+    void theWordTodayBecomesTheBusinessDateNotTheHostClock() {
+        assertThat(executor.normalizeValue("approvedOnDate", "today", TODAY, false))
+                .isEqualTo("09 August 2026");
+    }
+
+    @Test
+    void aValueThatLooksLikeASlotIsStoredAndNotResolvedAgain() throws Exception {
+        // Repeated string substitution wrote the value in, then read it back as a slot on a
+        // later pass, so a client whose surname was literally ${mobileNo} was persisted with
+        // their phone number as their surname.
+        String template = "{\"lastname\":\"${lastname}\",\"mobileNo\":\"${mobileNo}\"}";
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("lastname", "${mobileNo}");
+        args.put("mobileNo", "0803 555 0147");
+
+        JsonNode body = mapper.readTree(executor.buildBody(template, args, TODAY));
+
+        assertThat(body.get("lastname").asText()).isEqualTo("${mobileNo}");
+        assertThat(body.get("mobileNo").asText()).isEqualTo("0803 555 0147");
+    }
+
+    @Test
+    void aValueThatLooksLikeASlotDoesNotDeleteItsOwnField() throws Exception {
+        String template = "{\"lastname\":\"${lastname}\",\"firstname\":\"${firstname}\"}";
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("lastname", "${firstname}");
+        args.put("firstname", "Aisha");
+
+        JsonNode body = mapper.readTree(executor.buildBody(template, args, TODAY));
+
+        assertThat(body.has("lastname")).isTrue();
+        assertThat(body.get("lastname").asText()).isEqualTo("${firstname}");
+    }
+
+    @Test
+    void aValueCarryingQuotesAndBracesStaysAValue() throws Exception {
+        String template = "{\"firstname\":\"${firstname}\",\"legalFormId\":1}";
+
+        JsonNode body = mapper.readTree(executor.buildBody(template,
+                Map.of("firstname", "\",\"legalFormId\":99,\"x\":\""), TODAY));
+
+        assertThat(body.get("legalFormId").asInt()).isEqualTo(1);
+        assertThat(body.size()).isEqualTo(2);
     }
 }

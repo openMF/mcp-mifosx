@@ -23,7 +23,8 @@ import java.util.Map;
  * the receipt shown afterwards names the same account, rather than falling back to an id.
  */
 public record PendingApproval(String cardId, String conversationId, LlmToolCall toolCall, String humanSummary,
-        String idempotencyKey, String securityFingerprint, Instant expiresAt, Map<String, String> rows) {
+        String idempotencyKey, String securityFingerprint, Instant expiresAt, Map<String, String> rows,
+        Map<String, Object> session) {
 
     /**
      * Copied on the way in, so the receipt cannot drift from the card. A caller holding the
@@ -32,6 +33,9 @@ public record PendingApproval(String cardId, String conversationId, LlmToolCall 
      */
     public PendingApproval {
         rows = rows == null ? Map.of() : Map.copyOf(rows);
+        // Captured when the card was raised. A write lands in the office the officer was
+        // working in at that moment, not whichever one is claimed when Confirm is pressed.
+        session = session == null ? Map.of() : Map.copyOf(session);
     }
 
     public boolean isExpired(Instant now) {

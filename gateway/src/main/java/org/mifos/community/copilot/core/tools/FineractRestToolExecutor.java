@@ -50,6 +50,10 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      */
     private final java.util.Map<String, CachedDate> businessDateByTenant = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** Offices each officer may work in, keyed by their fingerprint so one cannot answer for another. */
+    private final java.util.Map<String, java.util.Set<String>> officesByOfficer =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     private record CachedDate(String value, long expiresAt) {}
 
     private final HttpClient http;
@@ -75,7 +79,11 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         }
 
         String today = businessDate(context);
-        String path = substitutePath(rest.path(), args, today);
+        // Normalised first, so what executes is exactly what the card showed. The office is
+        // worked out from the officer's own credential before anything else is resolved.
+        Map<String, Object> effective = withComputed(tool,
+                withDefaults(tool, withOffice(tool, normalizeArguments(tool, args, context), context), context));
+        String path = substitutePath(rest.path(), effective, today);
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
                 .timeout(Duration.ofSeconds(30))
                 .header("Accept", "application/json")
@@ -90,7 +98,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         if ("GET".equalsIgnoreCase(rest.method())) {
             builder.GET();
         } else {
-            String body = buildBody(rest.bodyTemplate(), args, today);
+            String body = buildBody(rest.bodyTemplate(), effective, today, context.session());
             builder.method(rest.method().toUpperCase(Locale.ROOT),
                     HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
             builder.header("Content-Type", "application/json");
@@ -99,6 +107,14 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         HttpResponse<String> response;
         try {
             response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        } catch (java.net.http.HttpConnectTimeoutException e) {
+            // Never got a connection, so nothing was sent and nothing can have run. This is a
+            // definite failure, and saying "we are not sure" would be its own kind of wrong.
+            throw new ToolExecutionException("Could not reach Fineract for " + tool.name(), 0, e);
+        } catch (java.net.http.HttpTimeoutException e) {
+            // Sent, and the answer never came. For a write that is not a refusal, and it must
+            // not be reported as one.
+            throw new ToolExecutionException("Timed out waiting for " + tool.name(), 0, e, tool.write());
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -118,6 +134,182 @@ public final class FineractRestToolExecutor implements ToolExecutor {
             return applicationError(tool.name(), response.statusCode(), response.body(), tool.redactFields());
         }
         return truncate(redact(response.body(), tool.redactFields()), MAX_RESULT_CHARS);
+    }
+
+    /**
+     * The officer's arguments, filled out from the record that owns the unspecified ones.
+     *
+     * <p>Fineract rejects a loan application that omits its interest rate, repayment
+     * frequency, amortisation or strategy, so those fields have to be sent. They belong to the
+     * loan product, and reading them from it is the difference between a loan on the terms the
+     * institution configured and a loan on whatever was written into this file.
+     *
+     * <p>An argument the officer supplied always wins. A lookup that fails changes nothing,
+     * and the request goes on to fail at Fineract with a message naming the missing field,
+     * which is a better answer than a silent wrong rate.
+     */
+    Map<String, Object> withDefaults(ToolDefinition tool, Map<String, Object> args, CallContext context) { // package-private for tests
+        ToolDefinition.Defaults spec = tool.defaults();
+        java.util.Map<String, Object> effective = new java.util.LinkedHashMap<>();
+        if (args != null) {
+            effective.putAll(args);
+        }
+        if (spec == null || spec.path() == null || spec.fields().isEmpty()) {
+            return effective;
+        }
+        boolean anythingMissing = spec.fields().keySet().stream()
+                .anyMatch((name) -> effective.get(name) == null || String.valueOf(effective.get(name)).isBlank());
+        if (!anythingMissing) {
+            return effective; // The officer named everything; no need to ask.
+        }
+        try {
+            String path = substitutePath(spec.path(), effective, businessDate(context));
+            HttpResponse<String> response = http.send(
+                    HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
+                            .timeout(Duration.ofSeconds(15))
+                            .header("Accept", "application/json")
+                            .header("Authorization", context.authorizationHeader())
+                            .header("Fineract-Platform-TenantId", context.tenantId())
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return effective;
+            }
+            JsonNode body = mapper.readTree(response.body());
+            for (Map.Entry<String, String> field : spec.fields().entrySet()) {
+                Object supplied = effective.get(field.getKey());
+                if (supplied != null && !String.valueOf(supplied).isBlank()) {
+                    continue;
+                }
+                JsonNode node = at(body, field.getValue());
+                if (node == null || node.isMissingNode() || node.isNull()) {
+                    continue;
+                }
+                effective.put(field.getKey(), node.isNumber() ? (Object) node.numberValue() : node.asText());
+            }
+        } catch (ToolExecutionException | IOException | InterruptedException | RuntimeException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+        }
+        return effective;
+    }
+
+    /**
+     * The office a write lands in, worked out from the officer's own credential.
+     *
+     * <p>Fineract requires an office on a new client and offers no way to ask it who the
+     * caller is, so the gateway asks which offices this credential can reach. Where that is
+     * exactly one, it is theirs and there is nothing to decide. Where it is several, the
+     * officer says which, and it shows on the confirmation card so they see the branch before
+     * agreeing to it.
+     *
+     * <p>Deliberately not taken from the request the browser sends. A value the server can
+     * establish for itself should not be accepted on trust from a client, and routing it
+     * through the language model would let a branch be chosen by a sentence.
+     */
+    private Map<String, Object> withOffice(ToolDefinition tool, Map<String, Object> args, CallContext context)
+            throws ToolExecutionException {
+        String body = tool.rest() == null ? null : tool.rest().bodyTemplate();
+        if (!tool.write() || body == null || !body.contains("${officeId}")) {
+            return args;
+        }
+        java.util.Set<String> reachable = officesByOfficer
+                .computeIfAbsent(context.fingerprint() + "|" + context.tenantId(), (k) -> readOffices(context));
+        Object stated = args.get("officeId");
+        if (stated != null && !String.valueOf(stated).isBlank()) {
+            if (!reachable.isEmpty() && !reachable.contains(String.valueOf(stated))) {
+                throw new ToolExecutionException("That office is not one you can work in.", 403, null);
+            }
+            return args;
+        }
+        if (reachable.size() == 1) {
+            java.util.Map<String, Object> out = new java.util.LinkedHashMap<>(args);
+            out.put("officeId", Long.parseLong(reachable.iterator().next()));
+            return out;
+        }
+        throw new ToolExecutionException(
+                reachable.isEmpty()
+                        ? "Could not establish which office to use. Please try again."
+                        : "You work in more than one office, so please say which one this is for.",
+                0, null);
+    }
+
+    /** Office ids this credential can see, empty when the question could not be asked. */
+    private java.util.Set<String> readOffices(CallContext context) {
+        try {
+            HttpResponse<String> response = http.send(
+                    HttpRequest.newBuilder(URI.create(fineractBaseUrl + "/fineract-provider/api/v1/offices"))
+                            .timeout(Duration.ofSeconds(15))
+                            .header("Accept", "application/json")
+                            .header("Authorization", context.authorizationHeader())
+                            .header("Fineract-Platform-TenantId", context.tenantId())
+                            .GET()
+                            .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                return java.util.Set.of();
+            }
+            java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+            for (JsonNode office : mapper.readTree(response.body())) {
+                if (office.hasNonNull("id")) {
+                    ids.add(office.get("id").asText());
+                }
+            }
+            return ids;
+        } catch (IOException | InterruptedException | RuntimeException e) {
+            if (e instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            return java.util.Set.of();
+        }
+    }
+
+    /**
+     * Values derived from two others, once the product's own numbers are known.
+     *
+     * <p>Only a product of two parameters is supported, which is all that is needed and all
+     * that belongs in a manifest. A loan's term is its repayment count times how often it
+     * repays; writing the term as the repayment count is correct only when a loan repays
+     * every period, and silently halves the term of a fortnightly product.
+     *
+     * <p>Anything the officer stated is left as they stated it.
+     */
+    private Map<String, Object> withComputed(ToolDefinition tool, Map<String, Object> args) {
+        if (tool.computed().isEmpty()) {
+            return args;
+        }
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>(args);
+        for (Map.Entry<String, String> rule : tool.computed().entrySet()) {
+            Object already = out.get(rule.getKey());
+            if (already != null && !String.valueOf(already).isBlank()) {
+                continue;
+            }
+            String[] operands = rule.getValue().split("\\*");
+            if (operands.length != 2) {
+                continue;
+            }
+            Double left = asNumber(out.get(operands[0].trim()));
+            Double right = asNumber(out.get(operands[1].trim()));
+            if (left == null || right == null) {
+                continue; // Not enough to compute with; Fineract will name what is missing.
+            }
+            double product = left * right;
+            out.put(rule.getKey(), product == Math.rint(product) ? (Object) (long) product : (Object) product);
+        }
+        return out;
+    }
+
+    private Double asNumber(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return value == null ? null : Double.valueOf(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     /** Replace {param} tokens in the path, URL-encoding values; unresolved required tokens fail fast. */
@@ -142,31 +334,85 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      * must never receive an empty-string stand-in for a field the officer did not set.
      */
     String buildBody(String template, Map<String, Object> args, String today) { // package-private for tests
+        return buildBody(template, args, today, Map.of());
+    }
+
+    /**
+     * Fill the request body.
+     *
+     * <p>The template is itself valid JSON, with every slot written as a quoted
+     * {@code "${name}"}, so it is parsed and walked rather than edited as text. Replacing
+     * tokens by repeated string substitution meant a value could be read back as a token on
+     * a later pass: a client whose surname was literally {@code ${mobileNo}} was persisted
+     * with their phone number as their surname.
+     *
+     * <p>A slot with nothing to fill it is dropped, because Fineract must not receive an empty
+     * string standing in for a field the officer did not set.
+     */
+    String buildBody(String template, Map<String, Object> args, String today, Map<String, Object> session) {
         if (template == null) {
             return "{}";
         }
-        String out = template;
-        if (args != null) {
-            for (Map.Entry<String, Object> entry : args.entrySet()) {
-                String quotedToken = "\"${" + entry.getKey() + "}\"";
-                Object value = entry.getValue();
-                if (value == null || String.valueOf(value).isBlank()) {
-                    continue; // Treat blank args as omitted; the field is stripped below.
-                }
-                if (value instanceof Number || value instanceof Boolean) {
-                    out = out.replace(quotedToken, String.valueOf(value));
-                } else {
-                    out = out.replace(quotedToken, quoteJson(normalizeValue(entry.getKey(), value, today)));
-                }
-                // Deliberately NO unquoted "${key}" replacement: values must never be able to
-                // rewrite JSON structure or trigger recursive token substitution.
+        try {
+            JsonNode parsed = mapper.readTree(template);
+            if (!parsed.isObject()) {
+                return template;
+            }
+            ObjectNode filled = mapper.createObjectNode();
+            fill((ObjectNode) parsed, filled, args == null ? Map.of() : args,
+                    session == null ? Map.of() : session);
+            return mapper.writeValueAsString(filled);
+        } catch (IOException e) {
+            // A template that is not JSON is a manifest bug, not a runtime condition.
+            throw new IllegalStateException("Tool body template is not valid JSON", e);
+        }
+    }
+
+    /** Copy the template into {@code out}, resolving each slot and dropping the unfilled ones. */
+    private void fill(ObjectNode template, ObjectNode out, Map<String, Object> args, Map<String, Object> session) {
+        java.util.Iterator<Map.Entry<String, JsonNode>> fields = template.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            JsonNode node = field.getValue();
+            if (node.isObject()) {
+                ObjectNode nested = mapper.createObjectNode();
+                fill((ObjectNode) node, nested, args, session);
+                out.set(field.getKey(), nested);
+                continue;
+            }
+            String slot = node.isTextual() ? slotName(node.asText()) : null;
+            if (slot == null) {
+                out.set(field.getKey(), node); // A literal the manifest meant to send.
+                continue;
+            }
+            Object value = slot.startsWith(SESSION_PREFIX)
+                    ? session.get(slot.substring(SESSION_PREFIX.length()))
+                    : args.get(slot);
+            if (value == null || String.valueOf(value).isBlank()) {
+                // Including a session slot nothing filled. No manifest declares one now that the
+                // office is worked out from the credential, and an unfilled slot is a field the
+                // officer did not set, not a reason to throw out of a request that is being built.
+                continue; // Nothing to send, so send no field at all.
+            }
+            if (value instanceof Integer || value instanceof Long) {
+                out.put(field.getKey(), ((Number) value).longValue());
+            } else if (value instanceof Number) {
+                out.put(field.getKey(), ((Number) value).doubleValue());
+            } else if (value instanceof Boolean) {
+                out.put(field.getKey(), (Boolean) value);
+            } else {
+                out.put(field.getKey(), String.valueOf(value));
             }
         }
-        // Strip whole fields whose optional token was never filled: '"field":"${tok}",' / ',"field":"${tok}"'.
-        out = out.replaceAll("\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_]+}\"\\s*,", "");
-        out = out.replaceAll(",\\s*\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_]+}\"", "");
-        out = out.replaceAll("\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_]+}\"", "");
-        return out;
+    }
+
+    private static final String SESSION_PREFIX = "session.";
+    private static final Pattern SLOT = Pattern.compile("^\\$\\{([A-Za-z0-9_.]+)}$");
+
+    /** The name inside a {@code ${...}} slot, or null when the text is an ordinary value. */
+    private static String slotName(String text) {
+        java.util.regex.Matcher matcher = SLOT.matcher(text);
+        return matcher.matches() ? matcher.group(1) : null;
     }
 
     /**
@@ -175,6 +421,20 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      * date is clamped to it: Fineract rejects future-dated commands, and the officer meant "now".
      */
     private String normalizeValue(String name, Object value, String today) {
+        return normalizeValue(name, value, today, false);
+    }
+
+    /**
+     * A date as Fineract wants to read it.
+     *
+     * <p>Dates after the business date are pulled back to it, because Fineract refuses to book
+     * an approval or a repayment in its own future and the officer would otherwise get a
+     * validation error with no explanation. A parameter the manifest marks
+     * {@code futureAllowed} is left alone: an expected disbursement is supposed to be ahead,
+     * and moving it to today silently rewrites every instalment date on the schedule Fineract
+     * derives from it.
+     */
+    String normalizeValue(String name, Object value, String today, boolean futureAllowed) { // package-private for tests
         String raw = String.valueOf(value);
         boolean isDateParam = name.toLowerCase(Locale.ROOT).contains("date");
         if (!isDateParam) {
@@ -188,7 +448,45 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         if (parsed == null) {
             return raw; // Already a Fineract-formatted or unrecognized value; pass it through.
         }
-        return (parsed.isAfter(businessDate) ? businessDate : parsed).format(FINERACT_DATE);
+        boolean clamp = !futureAllowed && parsed.isAfter(businessDate);
+        return (clamp ? businessDate : parsed).format(FINERACT_DATE);
+    }
+
+    /**
+     * The arguments as they will actually be sent.
+     *
+     * <p>Called before the confirmation card is built, so the officer reads the value that
+     * will run. Working this out twice, once for the card and once for the request, is how a
+     * card came to say "1 September" while the wire carried today's date.
+     */
+    @Override
+    public Map<String, Object> normalizeArguments(ToolDefinition tool, Map<String, Object> args,
+            CallContext context) {
+        if (args == null || args.isEmpty()) {
+            return Map.of();
+        }
+        String today = businessDate(context);
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        for (Map.Entry<String, Object> entry : args.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Number || value instanceof Boolean || value == null) {
+                out.put(entry.getKey(), value);
+                continue;
+            }
+            out.put(entry.getKey(), normalizeValue(entry.getKey(), value, today, futureAllowed(tool, entry.getKey())));
+        }
+        return out;
+    }
+
+    private boolean futureAllowed(ToolDefinition tool, String param) {
+        if (tool == null || tool.params() == null) {
+            return false;
+        }
+        return tool.params().stream()
+                .filter((p) -> p.name().equals(param))
+                .findFirst()
+                .map(ToolDefinition.Param::allowsFuture)
+                .orElse(false);
     }
 
 

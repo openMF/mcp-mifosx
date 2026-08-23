@@ -91,7 +91,9 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
             if (response.statusCode() == 429) {
                 throw new LlmException("LLM provider rate limit hit", null, true);
             }
-            throw new LlmException("LLM provider returned HTTP " + response.statusCode(), null);
+            boolean refused = response.statusCode() == 400 || response.statusCode() == 401
+                    || response.statusCode() == 403 || response.statusCode() == 404;
+            throw new LlmException("LLM provider returned HTTP " + response.statusCode(), null, false, refused);
         }
 
         return consumeStream(response.body(), onToken, cancelled);

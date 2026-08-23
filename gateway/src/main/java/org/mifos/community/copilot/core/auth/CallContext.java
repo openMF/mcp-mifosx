@@ -19,7 +19,21 @@ import java.util.HexFormat;
  * context's {@code authorizationHeader} + {@code tenantId}, so Fineract RBAC evaluates and the
  * audit trail records the real user. The credential is never logged and never sent to the LLM.
  */
-public record CallContext(String authorizationHeader, String tenantId, String correlationId) {
+public record CallContext(String authorizationHeader, String tenantId, String correlationId,
+        java.util.Map<String, Object> session) {
+
+    /**
+     * Facts the officer's session knows and the model must not choose: which office they
+     * belong to, which staff record is theirs. A body template reads these as
+     * {@code ${session.officeId}}, so a branch can never be picked by a sentence.
+     */
+    public CallContext {
+        session = session == null ? java.util.Map.of() : java.util.Map.copyOf(session);
+    }
+
+    public CallContext(String authorizationHeader, String tenantId, String correlationId) {
+        this(authorizationHeader, tenantId, correlationId, java.util.Map.of());
+    }
 
     public boolean hasCredential() {
         return authorizationHeader != null && !authorizationHeader.isBlank();

@@ -11,10 +11,16 @@ package org.mifos.community.copilot.core.tools;
 public class ToolExecutionException extends Exception {
 
     private final int statusCode;
+    private final boolean indeterminate;
 
     public ToolExecutionException(String message, int statusCode, Throwable cause) {
+        this(message, statusCode, cause, false);
+    }
+
+    public ToolExecutionException(String message, int statusCode, Throwable cause, boolean indeterminate) {
         super(message, cause);
         this.statusCode = statusCode;
+        this.indeterminate = indeterminate;
     }
 
     /** Fineract HTTP status, or 0 when the call never reached Fineract. */
@@ -28,5 +34,17 @@ public class ToolExecutionException extends Exception {
 
     public boolean isPermissionFailure() {
         return statusCode == 403;
+    }
+
+    /**
+     * True when the request may have been carried out despite the failure.
+     *
+     * <p>A read timeout is not a rejection. A disbursement that regenerates a schedule and
+     * posts accruals can take longer than the client will wait, and the write commits anyway.
+     * Telling an officer their disbursement failed when it succeeded invites them to do it
+     * again, and the second one is a second payment.
+     */
+    public boolean isIndeterminate() {
+        return indeterminate;
     }
 }

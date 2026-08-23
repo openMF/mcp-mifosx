@@ -67,8 +67,75 @@ public final class AgentLoop {
             CallContext context, EventSink sink) {
         String fingerprint = context.fingerprint();
         String conversationId = conversations.resolve(fingerprint, requestedConversationId);
+        settleAbandonedCalls(conversationId, context, fingerprint);
         conversations.append(fingerprint, conversationId, Map.of("role", "user", "content", userMessage));
         drive(conversationId, screenContext, context, sink);
+    }
+
+    /**
+     * Close off a confirmation the officer never answered.
+     *
+     * <p>Pausing for a card leaves an assistant {@code tool_calls} message in the history with
+     * no result against it, because the result is what the decision produces. Approve and
+     * reject both supply one. Walking away supplies nothing, and every OpenAI-shaped provider
+     * rejects a conversation where a tool call was asked and never answered. Without this the
+     * officer's next message returns HTTP 400 and that conversation never works again, which
+     * is a strange way to punish somebody for changing their mind.
+     *
+     * <p>So the abandoned call gets an honest result saying it was never carried out, and the
+     * card is dropped so it cannot be approved after the conversation has moved on.
+     */
+    private void settleAbandonedCalls(String conversationId, CallContext context, String fingerprint) {
+        approvals.discardFor(conversationId, context);
+        for (String callId : unansweredToolCalls(fingerprint, conversationId)) {
+            Map<String, Object> message = new LinkedHashMap<>();
+            message.put("role", "tool");
+            message.put("tool_call_id", callId);
+            message.put("content", "{\"status\":\"not_executed\",\"detail\":\"The officer did not confirm"
+                    + " this action, so nothing was carried out. Ask again if it is still wanted.\"}");
+            conversations.append(fingerprint, conversationId, message);
+        }
+    }
+
+    /**
+     * Ids from the trailing assistant {@code tool_calls} message that nothing has answered.
+     *
+     * <p>Only the trailing one matters: any earlier batch was settled when the turn that
+     * raised it finished, and a turn cannot pause twice.
+     */
+    private List<String> unansweredToolCalls(String fingerprint, String conversationId) {
+        List<Map<String, Object>> messages = conversations.messages(fingerprint, conversationId);
+        int last = -1;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i).get("tool_calls") != null) {
+                last = i;
+                break;
+            }
+        }
+        if (last < 0) {
+            return List.of();
+        }
+        java.util.Set<String> answered = new java.util.LinkedHashSet<>();
+        for (int i = last + 1; i < messages.size(); i++) {
+            Object id = messages.get(i).get("tool_call_id");
+            if (id != null) {
+                answered.add(String.valueOf(id));
+            }
+        }
+        List<String> unanswered = new java.util.ArrayList<>();
+        Object raw = messages.get(last).get("tool_calls");
+        if (raw instanceof List<?> calls) {
+            for (Object entry : calls) {
+                if (entry instanceof Map<?, ?> call) {
+                    Object id = call.get("id");
+                    String text = id == null ? "call-0" : String.valueOf(id);
+                    if (!answered.contains(text)) {
+                        unanswered.add(text);
+                    }
+                }
+            }
+        }
+        return unanswered;
     }
 
     /** Resume a paused turn after the officer's decision. */
@@ -102,12 +169,32 @@ public final class AgentLoop {
         }
         // The server-minted key from card creation goes to Fineract as Idempotency-Key:
         // a retry of this approval can never execute twice.
-        ExecStatus status = executeAndRecord(tool, call, context, approval.idempotencyKey(), conversationId,
+        // Execute under the session captured on the card, so a value the officer's screen
+        // owned when they read it is the value that runs when they confirm.
+        CallContext executionContext = new CallContext(context.authorizationHeader(), context.tenantId(),
+                context.correlationId(), approval.session());
+        ExecStatus status = executeAndRecord(tool, call, executionContext, approval.idempotencyKey(), conversationId,
                 fingerprint, sink, approval.rows());
         if (status == ExecStatus.AUTH_FAILED) {
             // Auth expired mid-decision: put the card back (same id, same idempotency key) so
             // the officer's retry after re-login succeeds instead of dead-ending.
             approvals.restore(approval);
+            return;
+        }
+        if (status == ExecStatus.APP_ERROR && nothingWasSent(conversationId, fingerprint)) {
+            // Rejected before the request left, so the officer can fix the problem and decide
+            // again on the same card rather than starting over.
+            approvals.restore(approval);
+        }
+        if (status == ExecStatus.UNKNOWN) {
+            // Sent, no answer. Saying "not completed" would be a guess, and the wrong guess
+            // costs a second disbursement. The card goes back with its original idempotency
+            // key, so a retry that turns out to be a duplicate is refused by Fineract itself.
+            approvals.restore(approval);
+            sink.emit(StreamEvent.token("? Not confirmed: " + approval.humanSummary()
+                    + ". The banking system did not answer in time, so this may or may not have gone"
+                    + " through. Open the account and check before trying again.\n\n"));
+            sink.emit(StreamEvent.done(conversationId));
             return;
         }
         // Status line BEFORE the summary turn: if the LLM is unavailable or rate-limited for
@@ -132,7 +219,9 @@ public final class AgentLoop {
         /** Fineract rejected it (validation/business error), recorded for the model to explain. */
         APP_ERROR,
         /** The officer's session expired, so the turn already ended with AUTH_EXPIRED. */
-        AUTH_FAILED
+        AUTH_FAILED,
+        /** The request was sent and no answer came back, so nobody knows whether it ran. */
+        UNKNOWN
     }
 
     /** The shared LLM<->tools cycle; ends with done, an action_card pause, or an error. */
@@ -147,9 +236,16 @@ public final class AgentLoop {
                         (delta) -> sink.emit(StreamEvent.token(delta)),
                         sink::isCancelled);
             } catch (LlmException e) {
-                sink.emit(StreamEvent.error(
-                        e.isRateLimited() ? ErrorCode.RATE_LIMITED : ErrorCode.LLM_UNAVAILABLE,
-                        "The AI model is unavailable right now. Please try again shortly.", true));
+                // A refusal is not an outage. Telling an officer to try again shortly, when the
+                // key is wrong or the request was malformed, sends them round a loop that cannot
+                // come out anywhere. Say it is not going to work and let somebody look at it.
+                sink.emit(e.isClientError()
+                        ? StreamEvent.error(ErrorCode.LLM_UNAVAILABLE,
+                                "The AI model rejected this request. Retrying will not help, so please"
+                                        + " tell your administrator.", false)
+                        : StreamEvent.error(
+                                e.isRateLimited() ? ErrorCode.RATE_LIMITED : ErrorCode.LLM_UNAVAILABLE,
+                                "The AI model is unavailable right now. Please try again shortly.", true));
                 sink.emit(StreamEvent.done(conversationId));
                 return;
             }
@@ -191,10 +287,15 @@ public final class AgentLoop {
                     }
                     // Read the account, product and client first, so the officer confirms
                     // against names rather than identifiers.
-                    Map<String, String> enriched = executor.enrich(tool, call.arguments(), context);
-                    Map<String, String> rows = cardRows(tool, call, enriched, context);
-                    PendingApproval approval = approvals.create(conversationId, call,
-                            summaryFor(tool, call, enriched), context, rows);
+                    // Normalise before anything is shown. A date the executor would rewrite
+                    // has to be rewritten here, or the officer approves one value and another
+                    // one executes.
+                    LlmToolCall normalized = new LlmToolCall(call.id(), call.name(),
+                            executor.normalizeArguments(tool, call.arguments(), context));
+                    Map<String, String> enriched = executor.enrich(tool, normalized.arguments(), context);
+                    Map<String, String> rows = cardRows(tool, normalized, enriched, context);
+                    PendingApproval approval = approvals.create(conversationId, normalized,
+                            summaryFor(tool, normalized, enriched), context, rows);
                     // OpenAI-style history requires a tool result for EVERY id in the assistant's
                     // tool_calls message. The paused call gets its result on resume; any siblings
                     // after it are marked not-executed NOW so the next LLM turn stays valid.
@@ -204,13 +305,21 @@ public final class AgentLoop {
                                         + " turn required officer confirmation. Ask again if still needed.\"}"));
                     }
                     sink.emit(StreamEvent.actionCard(
-                            approval.cardId(), tool.name(), call.arguments(), approval.humanSummary(),
+                            approval.cardId(), tool.name(), normalized.arguments(), approval.humanSummary(),
                             approval.idempotencyKey(), approval.expiresAt().toString(), rows));
                     return; // Paused: no done event; the decision endpoint continues this turn.
                 }
-                if (executeAndRecord(tool, call, context, null, conversationId, fingerprint, sink, Map.of())
-                        == ExecStatus.AUTH_FAILED) {
+                ExecStatus readStatus = executeAndRecord(tool, call, context, null, conversationId,
+                        fingerprint, sink, Map.of());
+                if (readStatus == ExecStatus.AUTH_FAILED) {
                     return; // Auth expired, so the turn already ended with AUTH_EXPIRED + done.
+                }
+                if (readStatus == ExecStatus.UNKNOWN) {
+                    // Only writes are marked indeterminate, so this is a read that timed out.
+                    sink.emit(StreamEvent.error(ErrorCode.TOOL_FAILED,
+                            "The banking system did not answer in time. Please try again.", true));
+                    sink.emit(StreamEvent.done(conversationId));
+                    return;
                 }
                 if (sink.isCancelled()) {
                     return;
@@ -236,11 +345,21 @@ public final class AgentLoop {
                         "Your session expired. Please sign in again and retry.", true));
                 sink.emit(StreamEvent.done(conversationId));
                 return ExecStatus.AUTH_FAILED;
+            } else if (e.isIndeterminate()) {
+                sink.emit(StreamEvent.toolCall(tool.name(), "finished", !tool.write(),
+                        System.currentTimeMillis() - startedAt));
+                return ExecStatus.UNKNOWN;
             } else if (e.isPermissionFailure()) {
                 outcome = "{\"error\":\"Your Mifos X role does not permit this operation.\"}";
             } else {
                 outcome = "{\"error\":" + jsonQuote(e.getMessage()) + "}";
             }
+        } catch (RuntimeException e) {
+            // Something went wrong building the request, so nothing was sent. Report it as a
+            // rejection, which is what it is, rather than letting it escape and end the turn
+            // with no explanation and the card already spent.
+            outcome = "{\"error\":" + jsonQuote(e.getMessage() == null ? "The request could not be prepared."
+                    : e.getMessage()) + "}";
         }
         sink.emit(StreamEvent.toolCall(tool.name(), "finished", !tool.write(), System.currentTimeMillis() - startedAt));
         conversations.append(fingerprint, conversationId, toolResultMessage(call, outcome));
@@ -466,6 +585,23 @@ public final class AgentLoop {
             }
         }
         return name.toString();
+    }
+
+    /**
+     * Whether the last recorded outcome was a refusal raised before anything reached Fineract.
+     *
+     * <p>Those are worth putting the card back for: nothing ran, and the officer may be able
+     * to correct what caused it. A refusal from Fineract itself is a decision, and the card
+     * stays spent.
+     */
+    private boolean nothingWasSent(String conversationId, String fingerprint) {
+        List<Map<String, Object>> messages = conversations.messages(fingerprint, conversationId);
+        if (messages.isEmpty()) {
+            return false;
+        }
+        Object content = messages.get(messages.size() - 1).get("content");
+        String text = content == null ? "" : String.valueOf(content);
+        return text.contains("could not be prepared") || text.contains("not one you can work in");
     }
 
     /** Argument names the model supplied that the manifest does not declare for this tool. */

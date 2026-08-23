@@ -103,7 +103,9 @@ class EnrichmentTest {
                 List.of(new ToolDefinition.Param("loanId", "integer", true, null, "Loan account", null, false)),
                 new ToolDefinition.RestMapping("POST", "/loans/{loanId}", "{}"),
                 List.of(),
-                List.of(blocks));
+                List.of(blocks),
+                null,
+                Map.of());
     }
 
     private Map<String, String> enrichLoan12(ToolDefinition.Enrich... blocks) {

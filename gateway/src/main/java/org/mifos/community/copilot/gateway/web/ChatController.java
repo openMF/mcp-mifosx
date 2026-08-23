@@ -60,7 +60,9 @@ public class ChatController {
 
     @PostMapping(value = "/chat", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> chat(@RequestBody ChatRequest request, ServerHttpRequest http) {
-        return run(http, (context, sink) -> {
+        // Nothing about the officer's identity is taken from the request body. The office a
+        // write lands in is worked out from their own credential, further down.
+        return run(http, Map.of(), (context, sink) -> {
             String message = request.message() == null ? "" : request.message().trim();
             if (message.isEmpty() || message.length() > 500) {
                 sink.emit(StreamEvent.error(ErrorCode.INTERNAL, "Message must be 1-500 characters.", false));
@@ -89,13 +91,17 @@ public class ChatController {
     @PostMapping(value = "/actions/{cardId}/decision", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<ServerSentEvent<String>> decision(@PathVariable String cardId, @RequestBody DecisionRequest request,
             ServerHttpRequest http) {
-        return run(http, (context, sink) ->
+        // No session facts here on purpose: the ones that matter were captured when the card
+        // was raised and travel with it, so the office a write lands in cannot be changed
+        // between an officer reading the card and pressing Confirm.
+        return run(http, Map.of(), (context, sink) ->
                 agentLoop.resume(cardId, request.isApprove(), Map.of(), context, sink));
     }
 
     /** Shared plumbing: extract identity, bridge the core EventSink onto a reactive SSE stream. */
-    private Flux<ServerSentEvent<String>> run(ServerHttpRequest http, BiConsumer<CallContext, EventSink> work) {
-        CallContext context = extractContext(http);
+    private Flux<ServerSentEvent<String>> run(ServerHttpRequest http, Map<String, Object> session,
+            BiConsumer<CallContext, EventSink> work) {
+        CallContext context = extractContext(http, session);
         return Flux.<ServerSentEvent<String>>create((FluxSink<ServerSentEvent<String>> flux) -> {
             AtomicBoolean cancelled = new AtomicBoolean(false);
             flux.onCancel(() -> cancelled.set(true));
@@ -152,7 +158,7 @@ public class ChatController {
     }
 
     /** The officer's forwarded identity. Credentials are never logged (correlation id only). */
-    private CallContext extractContext(ServerHttpRequest http) {
+    private CallContext extractContext(ServerHttpRequest http, Map<String, Object> session) {
         String authorization = http.getHeaders().getFirst("Authorization");
         String tenant = sanitizeToken(http.getHeaders().getFirst("Fineract-Platform-TenantId"), 64);
         // Client-supplied and later logged/forwarded: restrict to a plain token so it can
@@ -161,7 +167,8 @@ public class ChatController {
         return new CallContext(
                 authorization,
                 tenant == null ? "default" : tenant,
-                correlation == null ? "cop-" + UUID.randomUUID() : correlation);
+                correlation == null ? "cop-" + UUID.randomUUID() : correlation,
+                session);
     }
 
     /** Same scheme+host+port comparison; malformed input counts as a mismatch (fail closed). */

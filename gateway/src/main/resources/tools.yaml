@@ -13,6 +13,13 @@
 # the code the record is denominated in, so amounts on the card read "USD 28,000.00".
 #
 # `redactFields` are masked before results can reach a cloud model.
+#
+# Two things a body may read besides the officer's own arguments:
+#   ${session.x}  a fact the logged-in session owns, such as which office the officer works
+#                 in. The model cannot supply one, which is the point.
+#   defaults:     values read from the record that owns them before the request is built, so a
+#                 loan takes its rate and its schedule from its product rather than from a
+#                 literal written here. Anything the officer named is left alone.
 
 tools:
   # ── Reading ──────────────────────────────────────────────────────────────────
@@ -81,7 +88,7 @@ tools:
 
   # ── Writing, every one pauses for the officer ────────────────────────────────
   - name: mifos_client_create
-    description: Create and activate a new client. Requires the officer's confirmation.
+    description: Create and activate a new client in the officer's own office. Requires the officer's confirmation.
     summary: "Create client {firstname} {lastname}"
     write: true
     params:
@@ -89,10 +96,19 @@ tools:
       - { name: lastname, type: string, required: true, label: Last name }
       - { name: activationDate, type: string, required: true, label: Activation date, format: date, description: "Date as yyyy-MM-dd, or the word today" }
       - { name: mobileNo, type: string, required: false, label: Mobile number }
+      - { name: dateOfBirth, type: string, required: false, label: Date of birth, format: date, description: "Date as yyyy-MM-dd" }
+      - { name: externalId, type: string, required: false, label: External id, description: "The institution's own reference for this client, such as a national id" }
+      # Filled from the officer's own credential when only one office is reachable.
+      - { name: officeId, type: integer, required: false, label: Office, description: "Only needed when the officer works in more than one office" }
     rest:
       method: POST
       path: /fineract-provider/api/v1/clients
-      body: '{"officeId":1,"firstname":"${firstname}","lastname":"${lastname}","mobileNo":"${mobileNo}","legalFormId":1,"active":true,"activationDate":"${activationDate}","dateFormat":"dd MMMM yyyy","locale":"en"}'
+      # officeId comes from the officer's session. It was a literal 1, which put every client
+      # created through the Copilot into head office whatever branch the officer worked in.
+      body: '{"officeId":"${officeId}","firstname":"${firstname}","lastname":"${lastname}","mobileNo":"${mobileNo}","dateOfBirth":"${dateOfBirth}","externalId":"${externalId}","legalFormId":1,"active":true,"activationDate":"${activationDate}","dateFormat":"dd MMMM yyyy","locale":"en"}'
+    # A rejected creation comes back echoing what was sent, and that answer is fed to the
+    # model. The read tool masks the same two fields.
+    redactFields: [mobileNo, dateOfBirth]
 
   - name: mifos_loan_create
     description: Submit a new loan application for a client. Requires the officer's confirmation.
@@ -104,7 +120,9 @@ tools:
       - { name: principal, type: number, required: true, label: Principal, format: money }
       - { name: numberOfRepayments, type: integer, required: true, label: Repayments, description: Number of monthly instalments }
       - { name: submittedOnDate, type: string, required: true, label: Submitted on, format: date, description: "Date as yyyy-MM-dd, or today" }
-      - { name: expectedDisbursementDate, type: string, required: true, label: Expected disbursement, format: date, description: "Date as yyyy-MM-dd, or today" }
+      # The one date that is meant to be in the future. Clamping it to the business date
+      # rewrites every instalment on the schedule Fineract derives from it.
+      - { name: expectedDisbursementDate, type: string, required: true, label: Expected disbursement, format: date, futureAllowed: true, description: "Date as yyyy-MM-dd, or today" }
     enrich:
       - path: /fineract-provider/api/v1/clients/{clientId}
         fields:
@@ -115,10 +133,30 @@ tools:
         currency: currency.code
         fields:
           Product: name
+    # Fineract requires all of these on every application and refuses the request without
+    # them, so they cannot be left out. They belong to the loan product, and they were written
+    # here as literals: every loan carried 12 percent and a monthly schedule whatever the
+    # product said, which for a weekly microfinance product is simply the wrong loan.
+    defaults:
+      path: /fineract-provider/api/v1/loanproducts/{productId}
+      fields:
+        interestRatePerPeriod: interestRatePerPeriod
+        numberOfRepayments: numberOfRepayments
+        repaymentEvery: repaymentEvery
+        repaymentFrequencyType: repaymentFrequencyType.id
+        loanTermFrequencyType: repaymentFrequencyType.id
+        amortizationType: amortizationType.id
+        interestType: interestType.id
+        interestCalculationPeriodType: interestCalculationPeriodType.id
+        transactionProcessingStrategyCode: transactionProcessingStrategyCode
+    # The term is the repayment count times how often the loan repays. Writing it as the
+    # repayment count alone was right only while repaymentEvery was pinned to 1.
+    computed:
+      loanTermFrequency: numberOfRepayments * repaymentEvery
     rest:
       method: POST
       path: /fineract-provider/api/v1/loans
-      body: '{"clientId":"${clientId}","productId":"${productId}","principal":"${principal}","loanTermFrequency":"${numberOfRepayments}","loanTermFrequencyType":2,"numberOfRepayments":"${numberOfRepayments}","repaymentEvery":1,"repaymentFrequencyType":2,"interestRatePerPeriod":12,"amortizationType":1,"interestType":1,"interestCalculationPeriodType":1,"transactionProcessingStrategyCode":"mifos-standard-strategy","expectedDisbursementDate":"${expectedDisbursementDate}","submittedOnDate":"${submittedOnDate}","loanType":"individual","locale":"en","dateFormat":"dd MMMM yyyy"}'
+      body: '{"clientId":"${clientId}","productId":"${productId}","principal":"${principal}","loanTermFrequency":"${loanTermFrequency}","loanTermFrequencyType":"${loanTermFrequencyType}","numberOfRepayments":"${numberOfRepayments}","repaymentEvery":"${repaymentEvery}","repaymentFrequencyType":"${repaymentFrequencyType}","interestRatePerPeriod":"${interestRatePerPeriod}","amortizationType":"${amortizationType}","interestType":"${interestType}","interestCalculationPeriodType":"${interestCalculationPeriodType}","transactionProcessingStrategyCode":"${transactionProcessingStrategyCode}","expectedDisbursementDate":"${expectedDisbursementDate}","submittedOnDate":"${submittedOnDate}","loanType":"individual","locale":"en","dateFormat":"dd MMMM yyyy"}'
 
   - name: mifos_loan_approve
     description: Approve a loan application that is awaiting approval. Requires the officer's confirmation.

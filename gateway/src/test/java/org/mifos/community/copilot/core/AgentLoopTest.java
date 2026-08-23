@@ -256,8 +256,90 @@ class AgentLoopTest {
 
     // ─── Test doubles ──────────────────────────────────────────────────────────
 
+    /**
+     * An officer is shown a confirmation and never answers it.
+     *
+     * <p>Approve and reject both write a result against the paused call. Walking away writes
+     * nothing, and a conversation carrying a tool call that was asked and never answered is
+     * rejected outright by every OpenAI-shaped provider. Their next message would come back
+     * HTTP 400, and would keep coming back HTTP 400, so a moment's hesitation would cost them
+     * the conversation.
+     */
+    @Test
+    void anUndecidedCardDoesNotBreakTheNextMessage() {
+        String conversationId = openConversation();
+        llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "write_tool", Map.of("loanId", 7)))));
+        loop().runTurn(conversationId, "approve loan 7", Map.of(), officer, sink);
+        assertThat(sink.names()).contains("action_card");
+
+        // No decision. The officer asks for something else instead.
+        llm.enqueue(new LlmResult("Here is the list.", List.of()));
+        loop().runTurn(conversationId, "actually, show me today's clients", Map.of(), officer, sink);
+
+        assertThat(unansweredIn(llm.lastMessages))
+                .as("every tool call the provider is shown has a result against it")
+                .isEmpty();
+    }
+
+    @Test
+    void anAbandonedCardCanNoLongerBeApproved() {
+        String conversationId = openConversation();
+        llm.enqueue(new LlmResult("", List.of(new LlmToolCall("c1", "write_tool", Map.of("loanId", 7)))));
+        loop().runTurn(conversationId, "approve loan 7", Map.of(), officer, sink);
+        String cardId = String.valueOf(sink.byName("action_card").data().get("card_id"));
+
+        llm.enqueue(new LlmResult("Here is the list.", List.of()));
+        loop().runTurn(conversationId, "actually, show me today's clients", Map.of(), officer, sink);
+
+        RecordingSink lateDecision = new RecordingSink();
+        loop().resume(cardId, true, Map.of(), officer, lateDecision);
+
+        assertThat(executor.executed).as("a card the conversation has moved past does not execute")
+                .doesNotContain("write_tool");
+        assertThat(lateDecision.byName("error").data().get("code")).isEqualTo("PERMISSION_DENIED");
+    }
+
+    /** Start a conversation and return the id the store actually minted for it. */
+    private String openConversation() {
+        llm.enqueue(new LlmResult("Hello.", List.of()));
+        RecordingSink opening = new RecordingSink();
+        loop().runTurn(null, "hello", Map.of(), officer, opening);
+        return String.valueOf(opening.byName("done").data().get("conversation_id"));
+    }
+
+    /** Tool call ids in the trailing assistant tool_calls message with nothing answering them. */
+    private static List<String> unansweredIn(List<Map<String, Object>> messages) {
+        int last = -1;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i).get("tool_calls") != null) {
+                last = i;
+                break;
+            }
+        }
+        if (last < 0) {
+            return List.of();
+        }
+        java.util.Set<String> answered = new java.util.LinkedHashSet<>();
+        for (int i = last + 1; i < messages.size(); i++) {
+            Object id = messages.get(i).get("tool_call_id");
+            if (id != null) {
+                answered.add(String.valueOf(id));
+            }
+        }
+        List<String> unanswered = new ArrayList<>();
+        for (Object entry : (List<?>) messages.get(last).get("tool_calls")) {
+            Object id = ((Map<?, ?>) entry).get("id");
+            String text = id == null ? "call-0" : String.valueOf(id);
+            if (!answered.contains(text)) {
+                unanswered.add(text);
+            }
+        }
+        return unanswered;
+    }
+
     private static final class ScriptedLlm implements LlmClient {
         private final Deque<LlmResult> queue = new ArrayDeque<>();
+        private List<Map<String, Object>> lastMessages = List.of();
 
         void enqueue(LlmResult result) {
             queue.add(result);
@@ -266,6 +348,7 @@ class AgentLoopTest {
         @Override
         public LlmResult complete(List<Map<String, Object>> messages, List<Map<String, Object>> tools,
                 java.util.function.Consumer<String> onToken, java.util.function.BooleanSupplier cancelled) {
+            lastMessages = List.copyOf(messages);
             LlmResult result = queue.poll();
             if (result == null) {
                 return new LlmResult("(no scripted response)", List.of());
@@ -446,7 +529,7 @@ class AgentLoopTest {
 
         PendingApproval approval = new PendingApproval("card-1", "conv-1",
                 new LlmToolCall("c1", "write_tool", Map.of()), "Approve", "cop-1",
-                officer.fingerprint(), java.time.Instant.now().plusSeconds(60), mutable);
+                officer.fingerprint(), java.time.Instant.now().plusSeconds(60), mutable, Map.of());
         mutable.put("Client", "Someone Else");
 
         assertThat(approval.rows()).containsExactly(entry("Client", "Aisha Bello"));
