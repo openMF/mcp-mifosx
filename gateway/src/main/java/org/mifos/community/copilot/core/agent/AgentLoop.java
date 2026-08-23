@@ -67,8 +67,75 @@ public final class AgentLoop {
             CallContext context, EventSink sink) {
         String fingerprint = context.fingerprint();
         String conversationId = conversations.resolve(fingerprint, requestedConversationId);
+        settleAbandonedCalls(conversationId, context, fingerprint);
         conversations.append(fingerprint, conversationId, Map.of("role", "user", "content", userMessage));
         drive(conversationId, screenContext, context, sink);
+    }
+
+    /**
+     * Close off a confirmation the officer never answered.
+     *
+     * <p>Pausing for a card leaves an assistant {@code tool_calls} message in the history with
+     * no result against it, because the result is what the decision produces. Approve and
+     * reject both supply one. Walking away supplies nothing, and every OpenAI-shaped provider
+     * rejects a conversation where a tool call was asked and never answered. Without this the
+     * officer's next message returns HTTP 400 and that conversation never works again, which
+     * is a strange way to punish somebody for changing their mind.
+     *
+     * <p>So the abandoned call gets an honest result saying it was never carried out, and the
+     * card is dropped so it cannot be approved after the conversation has moved on.
+     */
+    private void settleAbandonedCalls(String conversationId, CallContext context, String fingerprint) {
+        approvals.discardFor(conversationId, context);
+        for (String callId : unansweredToolCalls(fingerprint, conversationId)) {
+            Map<String, Object> message = new LinkedHashMap<>();
+            message.put("role", "tool");
+            message.put("tool_call_id", callId);
+            message.put("content", "{\"status\":\"not_executed\",\"detail\":\"The officer did not confirm"
+                    + " this action, so nothing was carried out. Ask again if it is still wanted.\"}");
+            conversations.append(fingerprint, conversationId, message);
+        }
+    }
+
+    /**
+     * Ids from the trailing assistant {@code tool_calls} message that nothing has answered.
+     *
+     * <p>Only the trailing one matters: any earlier batch was settled when the turn that
+     * raised it finished, and a turn cannot pause twice.
+     */
+    private List<String> unansweredToolCalls(String fingerprint, String conversationId) {
+        List<Map<String, Object>> messages = conversations.messages(fingerprint, conversationId);
+        int last = -1;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i).get("tool_calls") != null) {
+                last = i;
+                break;
+            }
+        }
+        if (last < 0) {
+            return List.of();
+        }
+        java.util.Set<String> answered = new java.util.LinkedHashSet<>();
+        for (int i = last + 1; i < messages.size(); i++) {
+            Object id = messages.get(i).get("tool_call_id");
+            if (id != null) {
+                answered.add(String.valueOf(id));
+            }
+        }
+        List<String> unanswered = new java.util.ArrayList<>();
+        Object raw = messages.get(last).get("tool_calls");
+        if (raw instanceof List<?> calls) {
+            for (Object entry : calls) {
+                if (entry instanceof Map<?, ?> call) {
+                    Object id = call.get("id");
+                    String text = id == null ? "call-0" : String.valueOf(id);
+                    if (!answered.contains(text)) {
+                        unanswered.add(text);
+                    }
+                }
+            }
+        }
+        return unanswered;
     }
 
     /** Resume a paused turn after the officer's decision. */
@@ -169,9 +236,16 @@ public final class AgentLoop {
                         (delta) -> sink.emit(StreamEvent.token(delta)),
                         sink::isCancelled);
             } catch (LlmException e) {
-                sink.emit(StreamEvent.error(
-                        e.isRateLimited() ? ErrorCode.RATE_LIMITED : ErrorCode.LLM_UNAVAILABLE,
-                        "The AI model is unavailable right now. Please try again shortly.", true));
+                // A refusal is not an outage. Telling an officer to try again shortly, when the
+                // key is wrong or the request was malformed, sends them round a loop that cannot
+                // come out anywhere. Say it is not going to work and let somebody look at it.
+                sink.emit(e.isClientError()
+                        ? StreamEvent.error(ErrorCode.LLM_UNAVAILABLE,
+                                "The AI model rejected this request. Retrying will not help, so please"
+                                        + " tell your administrator.", false)
+                        : StreamEvent.error(
+                                e.isRateLimited() ? ErrorCode.RATE_LIMITED : ErrorCode.LLM_UNAVAILABLE,
+                                "The AI model is unavailable right now. Please try again shortly.", true));
                 sink.emit(StreamEvent.done(conversationId));
                 return;
             }

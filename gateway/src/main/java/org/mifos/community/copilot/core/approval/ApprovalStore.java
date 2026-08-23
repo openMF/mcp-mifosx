@@ -62,6 +62,20 @@ public final class ApprovalStore {
     }
 
     /**
+     * Drop every card still waiting in this conversation, and say which calls they answered for.
+     *
+     * <p>Called when the officer moves on without deciding. Two things have to happen together:
+     * the abandoned card must stop being decidable, because approving it later would execute an
+     * action out of order against a conversation that has moved past it, and the tool call it
+     * was holding open has to be closed off. Doing only the second would leave a live card
+     * pointing at a call the history has already settled.
+     */
+    public void discardFor(String conversationId, CallContext context) {
+        pending.values().removeIf((approval) -> approval.conversationId().equals(conversationId)
+                && approval.securityFingerprint().equals(context.fingerprint()));
+    }
+
+    /**
      * Atomically consume the card. Returns empty when unknown, already decided, expired, or
      * presented by a different user/tenant than the one who asked. A fingerprint mismatch is
      * SIDE-EFFECT-FREE: a stranger probing a card id must not be able to destroy the rightful

@@ -163,28 +163,26 @@ class ValueSourceTest {
         assertThat(body).doesNotContain("99");
     }
 
+    /**
+     * Building a request body does not throw, whatever it is handed.
+     *
+     * <p>It used to, for a session slot nothing filled, back when the office arrived on the
+     * request from the browser and its absence meant something had gone wrong. The office is
+     * now worked out from the officer's own credential before the body is built, so an
+     * unfilled slot is just a field nobody set. Throwing from here ended the turn with no
+     * explanation and the officer's card already spent, which was a poor trade for a
+     * condition that can no longer arise.
+     */
     @Test
-    void anAbsentSessionFactRefusesTheRequestRatherThanQuietlyDroppingTheField() {
-        // Dropping it would post a client with no office and let Fineract decide, which is the
-        // same class of wrongness the session token was introduced to remove.
+    void anUnfilledSlotIsDroppedRatherThanThrowingOutOfAHalfBuiltRequest() {
         String template = "{\"officeId\":\"${session.officeId}\",\"firstname\":\"${firstname}\"}";
         FineractRestToolExecutor executor = new FineractRestToolExecutor(baseUrl);
 
-        assertThatThrownBy(() -> executor.buildBody(template, Map.of("firstname", "Aisha"), "2026-08-22", Map.of()))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("office");
-    }
+        String body = executor.buildBody(template, Map.of("firstname", "Aisha"), "2026-08-22", Map.of());
 
-
-    @Test
-    void aBodyTemplateThatCannotBeFilledIsRefusedRatherThanSentIncomplete() {
-        // The refusal is an unchecked exception, and the loop has to survive it: letting it
-        // escape ends the turn with no explanation and the officer's card already spent.
-        String template = "{\"officeId\":\"${session.officeId}\"}";
-        FineractRestToolExecutor executor = new FineractRestToolExecutor(baseUrl);
-
-        assertThatThrownBy(() -> executor.buildBody(template, Map.of(), "2026-08-22", Map.of()))
-                .isInstanceOf(IllegalStateException.class);
+        assertThat(body).contains("Aisha");
+        assertThat(body).as("no empty string standing in for a field nobody set")
+                .doesNotContain("officeId");
     }
 
     @Test

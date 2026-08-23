@@ -340,24 +340,14 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     /**
      * Fill the request body.
      *
-     * <p>{@code ${session.x}} comes from the officer's logged-in session and is filled first,
-     * so a value the session owns cannot be shadowed by an argument the model produced. That
-     * is the point of the prefix: an office is decided by who is signed in, never by a
-     * sentence somebody typed.
-     */
-    /**
-     * Fill the request body.
-     *
      * <p>The template is itself valid JSON, with every slot written as a quoted
      * {@code "${name}"}, so it is parsed and walked rather than edited as text. Replacing
      * tokens by repeated string substitution meant a value could be read back as a token on
      * a later pass: a client whose surname was literally {@code ${mobileNo}} was persisted
      * with their phone number as their surname.
      *
-     * <p>A slot named {@code session.x} is filled from the officer's logged-in session and
-     * never from an argument, so a value the session owns cannot be shadowed by something the
-     * model produced. A slot with nothing to fill it is dropped, because Fineract must not
-     * receive an empty string standing in for a field the officer did not set.
+     * <p>A slot with nothing to fill it is dropped, because Fineract must not receive an empty
+     * string standing in for a field the officer did not set.
      */
     String buildBody(String template, Map<String, Object> args, String today, Map<String, Object> session) {
         if (template == null) {
@@ -399,12 +389,9 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                     ? session.get(slot.substring(SESSION_PREFIX.length()))
                     : args.get(slot);
             if (value == null || String.valueOf(value).isBlank()) {
-                if (slot.startsWith(SESSION_PREFIX)) {
-                    throw new IllegalStateException(
-                            "This action needs a detail from your session that was not supplied. "
-                                    + "Sign out and back in, and if it happens again tell your administrator "
-                                    + "the Copilot did not receive the office for your login.");
-                }
+                // Including a session slot nothing filled. No manifest declares one now that the
+                // office is worked out from the credential, and an unfilled slot is a field the
+                // officer did not set, not a reason to throw out of a request that is being built.
                 continue; // Nothing to send, so send no field at all.
             }
             if (value instanceof Integer || value instanceof Long) {
