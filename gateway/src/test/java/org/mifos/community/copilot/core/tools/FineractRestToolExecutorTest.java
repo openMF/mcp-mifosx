@@ -98,4 +98,44 @@ class FineractRestToolExecutorTest {
         assertThat(executor.normalizeValue("approvedOnDate", "today", TODAY, false))
                 .isEqualTo("09 August 2026");
     }
+
+    @Test
+    void aValueThatLooksLikeASlotIsStoredAndNotResolvedAgain() throws Exception {
+        // Repeated string substitution wrote the value in, then read it back as a slot on a
+        // later pass, so a client whose surname was literally ${mobileNo} was persisted with
+        // their phone number as their surname.
+        String template = "{\"lastname\":\"${lastname}\",\"mobileNo\":\"${mobileNo}\"}";
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("lastname", "${mobileNo}");
+        args.put("mobileNo", "0803 555 0147");
+
+        JsonNode body = mapper.readTree(executor.buildBody(template, args, TODAY));
+
+        assertThat(body.get("lastname").asText()).isEqualTo("${mobileNo}");
+        assertThat(body.get("mobileNo").asText()).isEqualTo("0803 555 0147");
+    }
+
+    @Test
+    void aValueThatLooksLikeASlotDoesNotDeleteItsOwnField() throws Exception {
+        String template = "{\"lastname\":\"${lastname}\",\"firstname\":\"${firstname}\"}";
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("lastname", "${firstname}");
+        args.put("firstname", "Aisha");
+
+        JsonNode body = mapper.readTree(executor.buildBody(template, args, TODAY));
+
+        assertThat(body.has("lastname")).isTrue();
+        assertThat(body.get("lastname").asText()).isEqualTo("${firstname}");
+    }
+
+    @Test
+    void aValueCarryingQuotesAndBracesStaysAValue() throws Exception {
+        String template = "{\"firstname\":\"${firstname}\",\"legalFormId\":1}";
+
+        JsonNode body = mapper.readTree(executor.buildBody(template,
+                Map.of("firstname", "\",\"legalFormId\":99,\"x\":\""), TODAY));
+
+        assertThat(body.get("legalFormId").asInt()).isEqualTo(1);
+        assertThat(body.size()).isEqualTo(2);
+    }
 }

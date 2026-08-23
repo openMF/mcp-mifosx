@@ -18,7 +18,12 @@ import java.util.Map;
  * the LLM may touch and what counts as a write (ADR-001 §04, default-deny).
  */
 public record ToolDefinition(String name, String description, boolean write, String summaryTemplate,
-        List<Param> params, RestMapping rest, List<String> redactFields, List<Enrich> enrich, Defaults defaults) {
+        List<Param> params, RestMapping rest, List<String> redactFields, List<Enrich> enrich, Defaults defaults,
+        Map<String, String> computed) {
+
+    public ToolDefinition {
+        computed = computed == null ? Map.of() : Map.copyOf(computed);
+    }
 
     /**
      * One declared parameter.
@@ -91,6 +96,14 @@ public record ToolDefinition(String name, String description, boolean write, Str
      * @param fields parameter name to a dotted path in the response
      */
     public record Defaults(String path, Map<String, String> fields) {}
+
+    /*
+     * A tool may also declare `computed:` entries of the form "a * b", naming two other
+     * parameters. A loan's term is its number of repayments multiplied by how often it
+     * repays, and a manifest token cannot multiply. Aliasing the term to the repayment count
+     * is only right while a loan repays every single period; on a fortnightly product it
+     * understates the term by half, and Fineract books arrears against the wrong dates.
+     */
 
     /** How the direct-REST executor maps this tool onto the core banking API. */
     public record RestMapping(String method, String path, String bodyTemplate) {}

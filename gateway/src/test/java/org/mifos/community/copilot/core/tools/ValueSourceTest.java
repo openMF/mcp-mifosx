@@ -92,7 +92,8 @@ class ValueSourceTest {
                 List.of(new ToolDefinition.Param("productId", "integer", true, null, "Product", null, false)),
                 new ToolDefinition.RestMapping("POST", "/loans", LOAN_BODY),
                 List.of(), List.of(),
-                new ToolDefinition.Defaults("/loanproducts/{productId}", fields));
+                new ToolDefinition.Defaults("/loanproducts/{productId}", fields),
+                Map.of());
     }
 
     @Test

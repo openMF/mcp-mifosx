@@ -78,7 +78,8 @@ public final class ToolManifest {
                     rest,
                     (List<String>) entry.getOrDefault("redactFields", List.of()),
                     enrich,
-                    defaults);
+                    defaults,
+                    (Map<String, String>) entry.getOrDefault("computed", Map.of()));
             manifest.tools.put(definition.name(), definition);
         }
         return manifest;

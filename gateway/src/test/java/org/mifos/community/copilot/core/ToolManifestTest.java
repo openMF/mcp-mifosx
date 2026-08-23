@@ -111,4 +111,53 @@ class ToolManifestTest {
     private static ToolDefinition.Param param(ToolDefinition tool, String name) {
         return tool.params().stream().filter((p) -> p.name().equals(name)).findFirst().orElseThrow();
     }
+
+    @Test
+    void aLoansTermIsComputedRatherThanAliasedToItsRepaymentCount() {
+        // The term is the repayment count times how often the loan repays. Sending the count
+        // alone is right only while repaymentEvery is 1, which it no longer is now that the
+        // value comes from the product: a fortnightly loan had half the term it should.
+        ToolDefinition create = manifest.find("mifos_loan_create").orElseThrow();
+
+        assertThat(create.computed()).containsEntry("loanTermFrequency", "numberOfRepayments * repaymentEvery");
+        assertThat(create.rest().bodyTemplate()).contains("\"loanTermFrequency\":\"${loanTermFrequency}\"");
+    }
+
+    @Test
+    void aLoanReadsItsTermsFromItsProductInsteadOfCarryingThemInTheManifest() {
+        ToolDefinition create = manifest.find("mifos_loan_create").orElseThrow();
+
+        assertThat(create.defaults()).isNotNull();
+        assertThat(create.defaults().fields())
+                .containsKeys("interestRatePerPeriod", "repaymentEvery", "repaymentFrequencyType",
+                        "amortizationType", "interestType", "transactionProcessingStrategyCode");
+        assertThat(create.rest().bodyTemplate()).doesNotContain("\"interestRatePerPeriod\":12");
+    }
+
+    @Test
+    void aNewClientGoesToTheOfficersOwnOfficeRatherThanOfficeOne() {
+        ToolDefinition create = manifest.find("mifos_client_create").orElseThrow();
+
+        assertThat(create.rest().bodyTemplate()).contains("\"officeId\":\"${session.officeId}\"");
+        assertThat(create.rest().bodyTemplate()).doesNotContain("\"officeId\":1");
+    }
+
+    @Test
+    void theOnlyDateAllowedToBeAheadIsTheOneThatIsMeantToBe() {
+        // Fineract refuses an approval or a repayment in its own future, so those are pulled
+        // back. An expected disbursement is a plan and has to survive as the officer set it.
+        for (ToolDefinition tool : manifest.all()) {
+            for (ToolDefinition.Param param : tool.params()) {
+                if (param.allowsFuture()) {
+                    assertThat(param.name())
+                            .as("%s.%s", tool.name(), param.name())
+                            .isEqualTo("expectedDisbursementDate");
+                }
+            }
+        }
+        assertThat(param(manifest.find("mifos_loan_create").orElseThrow(), "expectedDisbursementDate").allowsFuture())
+                .isTrue();
+        assertThat(param(manifest.find("mifos_loan_approve").orElseThrow(), "approvedOnDate").allowsFuture())
+                .isFalse();
+    }
 }

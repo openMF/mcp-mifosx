@@ -78,7 +78,8 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         // The product owns its interest rate, its schedule and its strategy. Anything the
         // officer did not name is read from it rather than invented here.
         // Normalised first, so what executes is exactly what the card showed.
-        Map<String, Object> effective = withDefaults(tool, normalizeArguments(tool, args, context), context);
+        Map<String, Object> effective = withComputed(tool,
+                withDefaults(tool, normalizeArguments(tool, args, context), context));
         String path = substitutePath(rest.path(), effective, today);
         HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
                 .timeout(Duration.ofSeconds(30))
@@ -103,6 +104,10 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         HttpResponse<String> response;
         try {
             response = http.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+        } catch (java.net.http.HttpTimeoutException e) {
+            // The request was sent and the answer never came. For a write, that is not the
+            // same as a refusal, and it must not be reported as one.
+            throw new ToolExecutionException("Timed out waiting for " + tool.name(), 0, e, tool.write());
         } catch (IOException | InterruptedException e) {
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
@@ -184,6 +189,52 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         return effective;
     }
 
+    /**
+     * Values derived from two others, once the product's own numbers are known.
+     *
+     * <p>Only a product of two parameters is supported, which is all that is needed and all
+     * that belongs in a manifest. A loan's term is its repayment count times how often it
+     * repays; writing the term as the repayment count is correct only when a loan repays
+     * every period, and silently halves the term of a fortnightly product.
+     *
+     * <p>Anything the officer stated is left as they stated it.
+     */
+    private Map<String, Object> withComputed(ToolDefinition tool, Map<String, Object> args) {
+        if (tool.computed().isEmpty()) {
+            return args;
+        }
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>(args);
+        for (Map.Entry<String, String> rule : tool.computed().entrySet()) {
+            Object already = out.get(rule.getKey());
+            if (already != null && !String.valueOf(already).isBlank()) {
+                continue;
+            }
+            String[] operands = rule.getValue().split("\\*");
+            if (operands.length != 2) {
+                continue;
+            }
+            Double left = asNumber(out.get(operands[0].trim()));
+            Double right = asNumber(out.get(operands[1].trim()));
+            if (left == null || right == null) {
+                continue; // Not enough to compute with; Fineract will name what is missing.
+            }
+            double product = left * right;
+            out.put(rule.getKey(), product == Math.rint(product) ? (Object) (long) product : (Object) product);
+        }
+        return out;
+    }
+
+    private Double asNumber(Object value) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        try {
+            return value == null ? null : Double.valueOf(String.valueOf(value).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
     /** Replace {param} tokens in the path, URL-encoding values; unresolved required tokens fail fast. */
     private String substitutePath(String template, Map<String, Object> args, String today) throws ToolExecutionException {
         String out = template;
@@ -217,50 +268,87 @@ public final class FineractRestToolExecutor implements ToolExecutor {
      * is the point of the prefix: an office is decided by who is signed in, never by a
      * sentence somebody typed.
      */
+    /**
+     * Fill the request body.
+     *
+     * <p>The template is itself valid JSON, with every slot written as a quoted
+     * {@code "${name}"}, so it is parsed and walked rather than edited as text. Replacing
+     * tokens by repeated string substitution meant a value could be read back as a token on
+     * a later pass: a client whose surname was literally {@code ${mobileNo}} was persisted
+     * with their phone number as their surname.
+     *
+     * <p>A slot named {@code session.x} is filled from the officer's logged-in session and
+     * never from an argument, so a value the session owns cannot be shadowed by something the
+     * model produced. A slot with nothing to fill it is dropped, because Fineract must not
+     * receive an empty string standing in for a field the officer did not set.
+     */
     String buildBody(String template, Map<String, Object> args, String today, Map<String, Object> session) {
         if (template == null) {
             return "{}";
         }
-        String out = template;
-        if (session != null) {
-            for (Map.Entry<String, Object> entry : session.entrySet()) {
-                Object value = entry.getValue();
-                if (value == null || String.valueOf(value).isBlank()) {
-                    continue;
+        try {
+            JsonNode parsed = mapper.readTree(template);
+            if (!parsed.isObject()) {
+                return template;
+            }
+            ObjectNode filled = mapper.createObjectNode();
+            fill((ObjectNode) parsed, filled, args == null ? Map.of() : args,
+                    session == null ? Map.of() : session);
+            return mapper.writeValueAsString(filled);
+        } catch (IOException e) {
+            // A template that is not JSON is a manifest bug, not a runtime condition.
+            throw new IllegalStateException("Tool body template is not valid JSON", e);
+        }
+    }
+
+    /** Copy the template into {@code out}, resolving each slot and dropping the unfilled ones. */
+    private void fill(ObjectNode template, ObjectNode out, Map<String, Object> args, Map<String, Object> session) {
+        java.util.Iterator<Map.Entry<String, JsonNode>> fields = template.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> field = fields.next();
+            JsonNode node = field.getValue();
+            if (node.isObject()) {
+                ObjectNode nested = mapper.createObjectNode();
+                fill((ObjectNode) node, nested, args, session);
+                out.set(field.getKey(), nested);
+                continue;
+            }
+            String slot = node.isTextual() ? slotName(node.asText()) : null;
+            if (slot == null) {
+                out.set(field.getKey(), node); // A literal the manifest meant to send.
+                continue;
+            }
+            Object value = slot.startsWith(SESSION_PREFIX)
+                    ? session.get(slot.substring(SESSION_PREFIX.length()))
+                    : args.get(slot);
+            if (value == null || String.valueOf(value).isBlank()) {
+                if (slot.startsWith(SESSION_PREFIX)) {
+                    throw new IllegalStateException(
+                            "This action needs a detail from your session that was not supplied. "
+                                    + "Sign out and back in, and if it happens again tell your administrator "
+                                    + "the Copilot did not receive the office for your login.");
                 }
-                String token = "\"${session." + entry.getKey() + "}\"";
-                out = value instanceof Number || value instanceof Boolean
-                        ? out.replace(token, String.valueOf(value))
-                        : out.replace(token, quoteJson(String.valueOf(value)));
+                continue; // Nothing to send, so send no field at all.
+            }
+            if (value instanceof Integer || value instanceof Long) {
+                out.put(field.getKey(), ((Number) value).longValue());
+            } else if (value instanceof Number) {
+                out.put(field.getKey(), ((Number) value).doubleValue());
+            } else if (value instanceof Boolean) {
+                out.put(field.getKey(), (Boolean) value);
+            } else {
+                out.put(field.getKey(), String.valueOf(value));
             }
         }
-        if (args != null) {
-            for (Map.Entry<String, Object> entry : args.entrySet()) {
-                String quotedToken = "\"${" + entry.getKey() + "}\"";
-                Object value = entry.getValue();
-                if (value == null || String.valueOf(value).isBlank()) {
-                    continue; // Treat blank args as omitted; the field is stripped below.
-                }
-                if (value instanceof Number || value instanceof Boolean) {
-                    out = out.replace(quotedToken, String.valueOf(value));
-                } else {
-                    out = out.replace(quotedToken, quoteJson(String.valueOf(value)));
-                }
-                // Deliberately NO unquoted "${key}" replacement: values must never be able to
-                // rewrite JSON structure or trigger recursive token substitution.
-            }
-        }
-        if (out.contains("${session.")) {
-            throw new IllegalStateException(
-                    "This action needs a detail from your session that was not supplied. "
-                            + "Sign out and back in, and if it happens again tell your administrator "
-                            + "the Copilot did not receive the office for your login.");
-        }
-        // Strip whole fields whose optional token was never filled: '"field":"${tok}",' / ',"field":"${tok}"'.
-        out = out.replaceAll("\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_.]+}\"\\s*,", "");
-        out = out.replaceAll(",\\s*\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_.]+}\"", "");
-        out = out.replaceAll("\"[A-Za-z0-9_]+\"\\s*:\\s*\"\\$\\{[A-Za-z0-9_.]+}\"", "");
-        return out;
+    }
+
+    private static final String SESSION_PREFIX = "session.";
+    private static final Pattern SLOT = Pattern.compile("^\\$\\{([A-Za-z0-9_.]+)}$");
+
+    /** The name inside a {@code ${...}} slot, or null when the text is an ordinary value. */
+    private static String slotName(String text) {
+        java.util.regex.Matcher matcher = SLOT.matcher(text);
+        return matcher.matches() ? matcher.group(1) : null;
     }
 
     /**

@@ -144,10 +144,14 @@ tools:
         interestType: interestType.id
         interestCalculationPeriodType: interestCalculationPeriodType.id
         transactionProcessingStrategyCode: transactionProcessingStrategyCode
+    # The term is the repayment count times how often the loan repays. Writing it as the
+    # repayment count alone was right only while repaymentEvery was pinned to 1.
+    computed:
+      loanTermFrequency: numberOfRepayments * repaymentEvery
     rest:
       method: POST
       path: /fineract-provider/api/v1/loans
-      body: '{"clientId":"${clientId}","productId":"${productId}","principal":"${principal}","loanTermFrequency":"${numberOfRepayments}","loanTermFrequencyType":"${loanTermFrequencyType}","numberOfRepayments":"${numberOfRepayments}","repaymentEvery":"${repaymentEvery}","repaymentFrequencyType":"${repaymentFrequencyType}","interestRatePerPeriod":"${interestRatePerPeriod}","amortizationType":"${amortizationType}","interestType":"${interestType}","interestCalculationPeriodType":"${interestCalculationPeriodType}","transactionProcessingStrategyCode":"${transactionProcessingStrategyCode}","expectedDisbursementDate":"${expectedDisbursementDate}","submittedOnDate":"${submittedOnDate}","loanType":"individual","locale":"en","dateFormat":"dd MMMM yyyy"}'
+      body: '{"clientId":"${clientId}","productId":"${productId}","principal":"${principal}","loanTermFrequency":"${loanTermFrequency}","loanTermFrequencyType":"${loanTermFrequencyType}","numberOfRepayments":"${numberOfRepayments}","repaymentEvery":"${repaymentEvery}","repaymentFrequencyType":"${repaymentFrequencyType}","interestRatePerPeriod":"${interestRatePerPeriod}","amortizationType":"${amortizationType}","interestType":"${interestType}","interestCalculationPeriodType":"${interestCalculationPeriodType}","transactionProcessingStrategyCode":"${transactionProcessingStrategyCode}","expectedDisbursementDate":"${expectedDisbursementDate}","submittedOnDate":"${submittedOnDate}","loanType":"individual","locale":"en","dateFormat":"dd MMMM yyyy"}'
 
   - name: mifos_loan_approve
     description: Approve a loan application that is awaiting approval. Requires the officer's confirmation.

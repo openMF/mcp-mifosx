@@ -114,6 +114,17 @@ public final class AgentLoop {
             approvals.restore(approval);
             return;
         }
+        if (status == ExecStatus.UNKNOWN) {
+            // Sent, no answer. Saying "not completed" would be a guess, and the wrong guess
+            // costs a second disbursement. The card goes back with its original idempotency
+            // key, so a retry that turns out to be a duplicate is refused by Fineract itself.
+            approvals.restore(approval);
+            sink.emit(StreamEvent.token("? Not confirmed: " + approval.humanSummary()
+                    + ". The banking system did not answer in time, so this may or may not have gone"
+                    + " through. Open the account and check before trying again.\n\n"));
+            sink.emit(StreamEvent.done(conversationId));
+            return;
+        }
         // Status line BEFORE the summary turn: if the LLM is unavailable or rate-limited for
         // the summary, the officer must still see what happened. It must never say "Executed"
         // for an action the core banking system rejected, which misleads on a money path.
@@ -136,7 +147,9 @@ public final class AgentLoop {
         /** Fineract rejected it (validation/business error), recorded for the model to explain. */
         APP_ERROR,
         /** The officer's session expired, so the turn already ended with AUTH_EXPIRED. */
-        AUTH_FAILED
+        AUTH_FAILED,
+        /** The request was sent and no answer came back, so nobody knows whether it ran. */
+        UNKNOWN
     }
 
     /** The shared LLM<->tools cycle; ends with done, an action_card pause, or an error. */
@@ -217,9 +230,17 @@ public final class AgentLoop {
                             approval.idempotencyKey(), approval.expiresAt().toString(), rows));
                     return; // Paused: no done event; the decision endpoint continues this turn.
                 }
-                if (executeAndRecord(tool, call, context, null, conversationId, fingerprint, sink, Map.of())
-                        == ExecStatus.AUTH_FAILED) {
+                ExecStatus readStatus = executeAndRecord(tool, call, context, null, conversationId,
+                        fingerprint, sink, Map.of());
+                if (readStatus == ExecStatus.AUTH_FAILED) {
                     return; // Auth expired, so the turn already ended with AUTH_EXPIRED + done.
+                }
+                if (readStatus == ExecStatus.UNKNOWN) {
+                    // Only writes are marked indeterminate, so this is a read that timed out.
+                    sink.emit(StreamEvent.error(ErrorCode.TOOL_FAILED,
+                            "The banking system did not answer in time. Please try again.", true));
+                    sink.emit(StreamEvent.done(conversationId));
+                    return;
                 }
                 if (sink.isCancelled()) {
                     return;
@@ -245,6 +266,10 @@ public final class AgentLoop {
                         "Your session expired. Please sign in again and retry.", true));
                 sink.emit(StreamEvent.done(conversationId));
                 return ExecStatus.AUTH_FAILED;
+            } else if (e.isIndeterminate()) {
+                sink.emit(StreamEvent.toolCall(tool.name(), "finished", !tool.write(),
+                        System.currentTimeMillis() - startedAt));
+                return ExecStatus.UNKNOWN;
             } else if (e.isPermissionFailure()) {
                 outcome = "{\"error\":\"Your Mifos X role does not permit this operation.\"}";
             } else {
