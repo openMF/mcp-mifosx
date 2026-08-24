@@ -83,9 +83,9 @@ public class CoreWiring {
 
     @Bean
     ToolExecutor toolExecutor(GatewayProperties properties) {
-        log.info("Tool executor = direct Fineract REST at {} (officer credential passthrough)",
-                properties.fineract().baseUrl());
-        return new FineractRestToolExecutor(properties.fineract().baseUrl());
+        log.info("Tool executor = direct Fineract REST at {}{} (officer credential passthrough)",
+                properties.fineract().baseUrl(), properties.fineract().apiPath());
+        return new FineractRestToolExecutor(properties.fineract().baseUrl(), properties.fineract().apiPath());
     }
 
     @Bean
