@@ -638,13 +638,31 @@ public final class AgentLoop {
             int wait = e.retryAfterSeconds();
             return StreamEvent.error(ErrorCode.RATE_LIMITED,
                     wait > 0
-                            ? "That was a lot of questions at once. Try again in " + wait
-                                    + (wait == 1 ? " second." : " seconds.")
+                            ? "That was a lot of questions at once. Try again in " + spellWait(wait) + "."
                             : "That was a lot of questions at once. Please wait a moment and try again.",
                     true);
         }
         return StreamEvent.error(ErrorCode.LLM_UNAVAILABLE,
                 "The AI model is unavailable right now. Please try again shortly.", true);
+    }
+
+    /**
+     * A wait in the units a person would use for it.
+     *
+     * <p>Seconds are right up to a point, and past that they stop being a quantity anybody
+     * reads: nobody counts out a hundred and fifty of them. Rounded up for the same reason the
+     * wait itself is, so the officer is never sent back early.
+     */
+    private static String spellWait(int seconds) {
+        if (seconds <= 90) {
+            return seconds + (seconds == 1 ? " second" : " seconds");
+        }
+        int minutes = (int) Math.ceil(seconds / 60d);
+        if (minutes <= 90) {
+            return minutes + (minutes == 1 ? " minute" : " minutes");
+        }
+        int hours = (int) Math.ceil(minutes / 60d);
+        return hours + (hours == 1 ? " hour" : " hours");
     }
 
     /** The problems as a JSON array, so the model reads them as a list rather than a sentence. */

@@ -13,16 +13,24 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpHeaders;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
 /**
@@ -166,34 +174,97 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         }
     }
 
+    /** A duration as providers spell them: {@code 30}, {@code 1500ms}, {@code 2m59.56s}. */
+    private static final Pattern DURATION_PART = Pattern.compile("(\\d+(?:\\.\\d+)?)\\s*(ms|h|m|s)?");
+
+    /**
+     * Longer than any chat-completions budget legitimately takes to reset.
+     *
+     * <p>Some providers put an epoch timestamp on these headers rather than a duration. Read as
+     * seconds that is a number in the billions, and telling an officer to come back in fifty
+     * years is worse than telling them nothing. A day is the line: daily token budgets are the
+     * slowest thing that legitimately resets, and an epoch value is five orders of magnitude
+     * past it. Anything beyond is treated as a shape we do not understand.
+     */
+    private static final int LONGEST_CREDIBLE_WAIT_SECONDS = 86_400;
+
     /**
      * The wait the provider asked for, in whole seconds, or zero if it did not ask.
      *
-     * <p>Both spellings are in the wild: a plain number of seconds, and the provider-specific
-     * one that Groq and others send with a fractional part. Rounded up, because coming back
-     * fractionally early only earns a second refusal.
+     * <p>Retry-After is the standard header and the provider's own answer, so it wins outright.
+     * Failing that, the two rate-limit budgets reset independently: an officer who has run out
+     * of requests is still refused when the token budget resets, so the longer of the two is
+     * the honest number rather than whichever header is read first.
+     *
+     * <p>Rounded up, because coming back fractionally early only earns a second refusal.
      */
     private static int retryAfterSeconds(HttpResponse<?> response) {
-        for (String header : new String[] { "retry-after", "x-ratelimit-reset-tokens",
-            "x-ratelimit-reset-requests" }) {
-            String value = response.headers().firstValue(header).orElse(null);
-            if (value == null || value.isBlank()) {
-                continue;
-            }
-            try {
-                double seconds = value.endsWith("ms")
-                        ? Double.parseDouble(value.substring(0, value.length() - 2)) / 1000
-                        : Double.parseDouble(value.endsWith("s")
-                                ? value.substring(0, value.length() - 1)
-                                : value);
-                if (seconds > 0) {
-                    return (int) Math.ceil(seconds);
-                }
-            } catch (NumberFormatException e) {
-                // A shape we do not know. Better to say nothing than to invent a number.
-            }
+        return retryAfterSeconds(response.headers());
+    }
+
+    static int retryAfterSeconds(HttpHeaders headers) {
+        double stated = headers.firstValue("retry-after")
+                .map(OpenAiCompatibleLlmClient::parseRetryAfter)
+                .orElse(0d);
+        if (stated > 0) {
+            return (int) Math.ceil(stated);
         }
-        return 0;
+
+        double longest = 0;
+        for (String header : new String[] { "x-ratelimit-reset-tokens", "x-ratelimit-reset-requests" }) {
+            longest = Math.max(longest, headers.firstValue(header)
+                    .map(OpenAiCompatibleLlmClient::parseDuration)
+                    .orElse(0d));
+        }
+        return (int) Math.ceil(longest);
+    }
+
+    /** Retry-After carries either a duration or, per RFC 7231, the date it may be retried. */
+    static double parseRetryAfter(String value) {
+        double duration = parseDuration(value);
+        if (duration > 0) {
+            return duration;
+        }
+        try {
+            long seconds = Duration.between(Instant.now(),
+                    ZonedDateTime.parse(value.trim(), DateTimeFormatter.RFC_1123_DATE_TIME).toInstant()).toSeconds();
+            return credible(seconds);
+        } catch (DateTimeParseException e) {
+            return 0; // A shape we do not know. Better to say nothing than to invent a number.
+        }
+    }
+
+    /**
+     * A duration in seconds, or zero for anything this does not recognise.
+     *
+     * <p>Compound spellings are the point: Groq sends {@code 2m59.56s} on its reset headers, and
+     * reading only the trailing unit would have called that fifty-nine seconds.
+     */
+    static double parseDuration(String value) {
+        String text = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (text.isEmpty()) {
+            return 0;
+        }
+        Matcher matcher = DURATION_PART.matcher(text);
+        double seconds = 0;
+        int consumed = 0;
+        while (matcher.find() && matcher.start() == consumed) {
+            double amount = Double.parseDouble(matcher.group(1));
+            String unit = matcher.group(2);
+            seconds += amount * switch (unit == null ? "" : unit) {
+                case "ms" -> 0.001;
+                case "m" -> 60;
+                case "h" -> 3600;
+                default -> 1;
+            };
+            consumed = matcher.end();
+        }
+        // Partly understood is not understood: "5 minutes" must not be read as five seconds.
+        return consumed == text.length() ? credible(seconds) : 0;
+    }
+
+    private static double credible(double seconds) {
+        return seconds > 0 && seconds <= LONGEST_CREDIBLE_WAIT_SECONDS ? seconds : 0;
     }
 
     private static final class PartialToolCall {
