@@ -240,13 +240,9 @@ public final class AgentLoop {
                 // A refusal is not an outage. Telling an officer to try again shortly, when the
                 // key is wrong or the request was malformed, sends them round a loop that cannot
                 // come out anywhere. Say it is not going to work and let somebody look at it.
-                sink.emit(e.isClientError()
-                        ? StreamEvent.error(ErrorCode.LLM_UNAVAILABLE,
-                                "The AI model rejected this request. Retrying will not help, so please"
-                                        + " tell your administrator.", false)
-                        : StreamEvent.error(
-                                e.isRateLimited() ? ErrorCode.RATE_LIMITED : ErrorCode.LLM_UNAVAILABLE,
-                                "The AI model is unavailable right now. Please try again shortly.", true));
+                // Being throttled and being down are different things and were told the same
+                // way, so a self-inflicted twenty second wait read as the service being broken.
+                sink.emit(llmErrorEvent(e));
                 sink.emit(StreamEvent.done(conversationId));
                 return;
             } catch (RuntimeException e) {
@@ -622,6 +618,33 @@ public final class AgentLoop {
         Object content = messages.get(messages.size() - 1).get("content");
         String text = content == null ? "" : String.valueOf(content);
         return text.contains("could not be prepared") || text.contains("not one you can work in");
+    }
+
+    /**
+     * What to tell the officer when the model did not answer.
+     *
+     * <p>Three different things happen here and they used to produce two sentences between
+     * them. A refusal will not come right by waiting. An outage might. Being throttled
+     * certainly will, and the provider usually says when, which is the difference between a
+     * sentence somebody can act on and one they can only stare at.
+     */
+    private StreamEvent llmErrorEvent(LlmException e) {
+        if (e.isClientError()) {
+            return StreamEvent.error(ErrorCode.LLM_UNAVAILABLE,
+                    "The AI model rejected this request. Retrying will not help, so please tell your"
+                            + " administrator.", false);
+        }
+        if (e.isRateLimited()) {
+            int wait = e.retryAfterSeconds();
+            return StreamEvent.error(ErrorCode.RATE_LIMITED,
+                    wait > 0
+                            ? "That was a lot of questions at once. Try again in " + wait
+                                    + (wait == 1 ? " second." : " seconds.")
+                            : "That was a lot of questions at once. Please wait a moment and try again.",
+                    true);
+        }
+        return StreamEvent.error(ErrorCode.LLM_UNAVAILABLE,
+                "The AI model is unavailable right now. Please try again shortly.", true);
     }
 
     /** The problems as a JSON array, so the model reads them as a list rather than a sentence. */

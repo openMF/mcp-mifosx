@@ -89,7 +89,8 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         if (response.statusCode() != 200) {
             response.body().close(); // Release the connection before bailing.
             if (response.statusCode() == 429) {
-                throw new LlmException("LLM provider rate limit hit", null, true);
+                throw new LlmException("LLM provider rate limit hit", null, true, false,
+                        retryAfterSeconds(response));
             }
             boolean refused = response.statusCode() == 400 || response.statusCode() == 401
                     || response.statusCode() == 403 || response.statusCode() == 404;
@@ -163,6 +164,36 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         } catch (IOException e) {
             return Map.of();
         }
+    }
+
+    /**
+     * The wait the provider asked for, in whole seconds, or zero if it did not ask.
+     *
+     * <p>Both spellings are in the wild: a plain number of seconds, and the provider-specific
+     * one that Groq and others send with a fractional part. Rounded up, because coming back
+     * fractionally early only earns a second refusal.
+     */
+    private static int retryAfterSeconds(HttpResponse<?> response) {
+        for (String header : new String[] { "retry-after", "x-ratelimit-reset-tokens",
+            "x-ratelimit-reset-requests" }) {
+            String value = response.headers().firstValue(header).orElse(null);
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            try {
+                double seconds = value.endsWith("ms")
+                        ? Double.parseDouble(value.substring(0, value.length() - 2)) / 1000
+                        : Double.parseDouble(value.endsWith("s")
+                                ? value.substring(0, value.length() - 1)
+                                : value);
+                if (seconds > 0) {
+                    return (int) Math.ceil(seconds);
+                }
+            } catch (NumberFormatException e) {
+                // A shape we do not know. Better to say nothing than to invent a number.
+            }
+        }
+        return 0;
     }
 
     private static final class PartialToolCall {
