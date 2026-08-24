@@ -34,12 +34,32 @@ public record ToolDefinition(String name, String description, boolean write, Str
      * @param show false for identifiers, which say nothing to a person and are replaced on the
      *     card by the account number and product name pulled in by {@link Enrich}
      */
+    /**
+     * One parameter, including what counts as a valid value for it.
+     *
+     * <p>{@code pattern}, {@code min} and {@code max} are copied from the rules the Mifos web
+     * app already enforces on the same field, and are deliberately no stricter. The Copilot
+     * sits beside that app rather than behind it, so a value the officer could type into the
+     * form has to be a value they can ask for in a sentence. Being stricter here would refuse
+     * legitimate work; being looser makes the Copilot a way round the app's own controls,
+     * which is how a client came to be created with a fifteen digit number for a name.
+     *
+     * <p>{@code mustBe} completes the sentence "First name must ...", because a regular
+     * expression is not something to show a loan officer.
+     */
     public record Param(String name, String type, boolean required, String description, String label, String format,
-            boolean show, boolean futureAllowed) {
+            boolean show, boolean futureAllowed, String pattern, String mustBe, String min, String max,
+            String maxLength) {
 
         public Param(String name, String type, boolean required, String description, String label, String format,
                 boolean show) {
             this(name, type, required, description, label, format, show, false);
+        }
+
+        public Param(String name, String type, boolean required, String description, String label, String format,
+                boolean show, boolean futureAllowed) {
+            this(name, type, required, description, label, format, show, futureAllowed, null, null, null, null,
+                    null);
         }
 
         /** The label if the manifest gave one, otherwise the parameter name as a last resort. */

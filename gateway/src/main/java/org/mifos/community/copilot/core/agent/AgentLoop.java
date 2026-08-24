@@ -18,6 +18,7 @@ import org.mifos.community.copilot.core.llm.LlmException;
 import org.mifos.community.copilot.core.llm.LlmResult;
 import org.mifos.community.copilot.core.llm.LlmToolCall;
 import org.mifos.community.copilot.core.tools.Display;
+import org.mifos.community.copilot.core.tools.ArgumentCheck;
 import org.mifos.community.copilot.core.tools.ToolDefinition;
 import org.mifos.community.copilot.core.tools.ToolExecutionException;
 import org.mifos.community.copilot.core.tools.ToolExecutor;
@@ -248,6 +249,14 @@ public final class AgentLoop {
                                 "The AI model is unavailable right now. Please try again shortly.", true));
                 sink.emit(StreamEvent.done(conversationId));
                 return;
+            } catch (RuntimeException e) {
+                // The response body is read as a stream of lines, and a connection that dies
+                // mid-read surfaces as an unchecked wrapper rather than the declared failure.
+                // Letting it escape leaves the officer watching a stream that never ends.
+                sink.emit(StreamEvent.error(ErrorCode.LLM_UNAVAILABLE,
+                        "The AI model stopped responding. Please try again.", true));
+                sink.emit(StreamEvent.done(conversationId));
+                return;
             }
             if (sink.isCancelled()) {
                 return; // Stop is silent: nothing else may run after a cancel.
@@ -271,6 +280,17 @@ public final class AgentLoop {
                     // Default-deny: the model asked for something outside the manifest.
                     conversations.append(fingerprint, conversationId, toolResultMessage(call,
                             "{\"error\":\"Tool '" + call.name() + "' is not available.\"}"));
+                    continue;
+                }
+                // Values the web app would not accept are not values the Copilot may send.
+                // Checked before the card, because the card is where the officer agrees to
+                // this, and before enrichment, which costs a call that a bad value wastes.
+                List<String> invalid = ArgumentCheck.problems(tool, call.arguments());
+                if (!invalid.isEmpty()) {
+                    conversations.append(fingerprint, conversationId, toolResultMessage(call,
+                            "{\"error\":\"not_valid\",\"problems\":" + jsonArray(invalid)
+                                    + ",\"detail\":\"Nothing was sent. Tell the officer what is wrong,"
+                                    + " in your own words, and ask for a value that works.\"}"));
                     continue;
                 }
                 if (tool.write()) {
@@ -604,6 +624,15 @@ public final class AgentLoop {
         return text.contains("could not be prepared") || text.contains("not one you can work in");
     }
 
+    /** The problems as a JSON array, so the model reads them as a list rather than a sentence. */
+    private String jsonArray(List<String> values) {
+        StringBuilder out = new StringBuilder("[");
+        for (int i = 0; i < values.size(); i++) {
+            out.append(i == 0 ? "" : ",").append(jsonQuote(values.get(i)));
+        }
+        return out.append("]").toString();
+    }
+
     /** Argument names the model supplied that the manifest does not declare for this tool. */
     private List<String> undeclaredArguments(ToolDefinition tool, LlmToolCall call) {
         if (call.arguments() == null || call.arguments().isEmpty()) {
@@ -631,7 +660,8 @@ public final class AgentLoop {
         List<Map<String, Object>> encoded = calls.stream().map((call) -> Map.<String, Object>of(
                 "id", call.id() == null ? "call-0" : call.id(),
                 "type", "function",
-                "function", Map.of("name", call.name(), "arguments", encodeArguments(call.arguments())))).toList();
+                "function", Map.of("name", call.name(), "arguments",
+                        encodeArguments(manifest.find(call.name()).orElse(null), call.arguments())))).toList();
         Map<String, Object> message = new LinkedHashMap<>();
         message.put("role", "assistant");
         message.put("content", "");
@@ -645,6 +675,29 @@ public final class AgentLoop {
         message.put("tool_call_id", call.id() == null ? "call-0" : call.id());
         message.put("content", content);
         return message;
+    }
+
+    /**
+     * The arguments as the model will see them again, with the private ones masked.
+     *
+     * <p>What a tool declares private is masked in the answer Fineract gives, and was not
+     * masked in the record of what was asked. That record is replayed to the model on every
+     * later round of the same conversation, so a phone number went out once as an argument
+     * and then again on every turn that followed.
+     *
+     * <p>The officer still sees the real values, on the card, which is where they check them.
+     */
+    private String encodeArguments(ToolDefinition tool, Map<String, Object> arguments) {
+        if (tool == null || tool.redactFields().isEmpty() || arguments == null) {
+            return encodeArguments(arguments);
+        }
+        Map<String, Object> masked = new LinkedHashMap<>(arguments);
+        for (String field : tool.redactFields()) {
+            if (masked.get(field) != null) {
+                masked.put(field, "•••");
+            }
+        }
+        return encodeArguments(masked);
     }
 
     private String encodeArguments(Map<String, Object> arguments) {

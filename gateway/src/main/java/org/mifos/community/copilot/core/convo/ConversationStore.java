@@ -49,10 +49,27 @@ public final class ConversationStore {
         }
     }
 
+    /**
+     * The conversation so far, as a snapshot.
+     *
+     * <p>A copy, not the list itself. {@link #append} adds a message and then trims the oldest
+     * back off, so the list momentarily holds one more than its limit and then shrinks. A
+     * reader walking it by index at that moment reads past the end, and the same officer with
+     * two tabs open is enough to arrange that. It surfaced as an exception escaping a decision
+     * after the write had already reached Fineract, which is the worst possible moment for
+     * one, and the caller cannot be expected to know it must hold a lock it cannot see.
+     */
     public List<Map<String, Object>> messages(String fingerprint, String conversationId) {
         Map<String, List<Map<String, Object>>> conversations = userStore(fingerprint);
+        List<Map<String, Object>> messages;
         synchronized (conversations) {
-            return conversations.getOrDefault(conversationId, new ArrayList<>());
+            messages = conversations.get(conversationId);
+        }
+        if (messages == null) {
+            return new ArrayList<>();
+        }
+        synchronized (messages) {
+            return new ArrayList<>(messages);
         }
     }
 
