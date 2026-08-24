@@ -14,6 +14,11 @@
 #
 # `redactFields` are masked before results can reach a cloud model.
 #
+# A tool's `path` names a resource and nothing else. Where that resource lives is a
+# property of the installation rather than of the tool: a bare Fineract serves them
+# under /fineract-provider/api/v1, and one behind an API manager does not. That root
+# is configuration (FINERACT_API_PATH) and is deliberately absent from this file.
+#
 # Two things a body may read besides the officer's own arguments:
 # `pattern`, `min` and `max` are copied from the validators the Mifos X web app already
 # applies to the same field, and `mustBe` finishes the sentence "First name must ...". They
@@ -29,16 +34,21 @@
 tools:
   # ── Reading ──────────────────────────────────────────────────────────────────
   - name: mifos_client_search
-    description: Search for clients by name, account number or external id.
+    description: Find clients by name. Matches part of a name and ignores capitalisation.
     write: false
-    # A search returns whole matched entities. The name has to survive for the result to be
-    # any use to the officer; the external id is a national id and does not.
-    redactFields: [entityExternalId, externalId, entityMobileNo, mobileNo]
+    # This used /search, which is case-sensitive: "VICTOR" found the client and "victor" found
+    # nothing, so an officer typing normally was told their client did not exist. The clients
+    # endpoint's own name filter is case-insensitive and matches on part of a name, which is
+    # what somebody asking after a person actually wants.
+    #
+    # A search returns whole matched clients. The name has to survive for the result to be any
+    # use to the officer; the phone number and the national id do not.
+    redactFields: [externalId, mobileNo]
     params:
-      - { name: query, type: string, required: true, label: Search, description: Name or account number to search for }
+      - { name: query, type: string, required: true, label: Search, description: A name, or any part of one }
     rest:
       method: GET
-      path: /fineract-provider/api/v1/search?query={query}&resource=clients
+      path: /clients?name={query}
 
   - name: mifos_client_details
     description: Fetch one client's profile, including status, office and activation date.
@@ -47,7 +57,7 @@ tools:
       - { name: clientId, type: integer, required: true, label: Client, description: The client's system id }
     rest:
       method: GET
-      path: /fineract-provider/api/v1/clients/{clientId}
+      path: /clients/{clientId}
     redactFields: [mobileNo, dateOfBirth, externalId]
 
   - name: mifos_client_accounts
@@ -57,7 +67,7 @@ tools:
       - { name: clientId, type: integer, required: true, label: Client, description: The client's system id }
     rest:
       method: GET
-      path: /fineract-provider/api/v1/clients/{clientId}/accounts
+      path: /clients/{clientId}/accounts
 
   - name: mifos_loan_details
     description: Fetch one loan account, including product, principal, outstanding balance and status.
@@ -66,7 +76,7 @@ tools:
       - { name: loanId, type: integer, required: true, label: Loan account, description: The loan's system id }
     rest:
       method: GET
-      path: /fineract-provider/api/v1/loans/{loanId}
+      path: /loans/{loanId}
 
   - name: mifos_loan_schedule
     description: Fetch a loan's repayment schedule with due dates and outstanding instalments.
@@ -75,7 +85,7 @@ tools:
       - { name: loanId, type: integer, required: true, label: Loan account, description: The loan's system id }
     rest:
       method: GET
-      path: /fineract-provider/api/v1/loans/{loanId}?associations=repaymentSchedule
+      path: /loans/{loanId}?associations=repaymentSchedule
 
   - name: mifos_savings_details
     description: Fetch one savings account, including balance, status and product.
@@ -84,7 +94,7 @@ tools:
       - { name: accountId, type: integer, required: true, label: Savings account, description: The savings account's system id }
     rest:
       method: GET
-      path: /fineract-provider/api/v1/savingsaccounts/{accountId}
+      path: /savingsaccounts/{accountId}
 
   - name: mifos_loan_products
     description: List the loan products this office offers. Use this before creating a loan.
@@ -92,7 +102,7 @@ tools:
     params: []
     rest:
       method: GET
-      path: /fineract-provider/api/v1/loanproducts
+      path: /loanproducts
 
   # ── Writing, every one pauses for the officer ────────────────────────────────
   - name: mifos_client_create
@@ -115,7 +125,7 @@ tools:
       - { name: officeId, type: integer, required: false, label: Office, description: "Only needed when the officer works in more than one office" }
     rest:
       method: POST
-      path: /fineract-provider/api/v1/clients
+      path: /clients
       # officeId is established from the officer's own credential, never sent by the browser
       # and never invented by the model. It was a literal 1, which put every client created
       # through the Copilot into head office whatever branch the officer worked in.
@@ -143,12 +153,12 @@ tools:
       # rewrites every instalment on the schedule Fineract derives from it.
       - { name: expectedDisbursementDate, type: string, required: true, label: Expected disbursement, format: date, futureAllowed: true, description: "Date as yyyy-MM-dd, or today" }
     enrich:
-      - path: /fineract-provider/api/v1/clients/{clientId}
+      - path: /clients/{clientId}
         fields:
           Client: displayName
           Client account: accountNo
           Office: officeName
-      - path: /fineract-provider/api/v1/loanproducts/{productId}
+      - path: /loanproducts/{productId}
         currency: currency.code
         fields:
           Product: name
@@ -157,7 +167,7 @@ tools:
     # here as literals: every loan carried 12 percent and a monthly schedule whatever the
     # product said, which for a weekly microfinance product is simply the wrong loan.
     defaults:
-      path: /fineract-provider/api/v1/loanproducts/{productId}
+      path: /loanproducts/{productId}
       fields:
         interestRatePerPeriod: interestRatePerPeriod
         numberOfRepayments: numberOfRepayments
@@ -174,7 +184,7 @@ tools:
       loanTermFrequency: numberOfRepayments * repaymentEvery
     rest:
       method: POST
-      path: /fineract-provider/api/v1/loans
+      path: /loans
       body: '{"clientId":"${clientId}","productId":"${productId}","principal":"${principal}","loanTermFrequency":"${loanTermFrequency}","loanTermFrequencyType":"${loanTermFrequencyType}","numberOfRepayments":"${numberOfRepayments}","repaymentEvery":"${repaymentEvery}","repaymentFrequencyType":"${repaymentFrequencyType}","interestRatePerPeriod":"${interestRatePerPeriod}","amortizationType":"${amortizationType}","interestType":"${interestType}","interestCalculationPeriodType":"${interestCalculationPeriodType}","transactionProcessingStrategyCode":"${transactionProcessingStrategyCode}","expectedDisbursementDate":"${expectedDisbursementDate}","submittedOnDate":"${submittedOnDate}","loanType":"individual","locale":"en","dateFormat":"dd MMMM yyyy"}'
 
   - name: mifos_loan_approve
@@ -186,7 +196,7 @@ tools:
       - { name: approvedOnDate, type: string, required: true, label: Approval date, format: date, description: "Date as yyyy-MM-dd, or today" }
       - { name: approvedLoanAmount, type: number, required: false, label: Approved amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', mustBe: 'be an amount, and not a negative one', description: Approved principal if different from the amount applied for }
     enrich:
-      - path: /fineract-provider/api/v1/loans/{loanId}
+      - path: /loans/{loanId}
         currency: currency.code
         fields:
           Client: clientName
@@ -195,7 +205,7 @@ tools:
           Applied for: "#money:principal"
     rest:
       method: POST
-      path: /fineract-provider/api/v1/loans/{loanId}?command=approve
+      path: /loans/{loanId}?command=approve
       body: '{"approvedOnDate":"${approvedOnDate}","approvedLoanAmount":"${approvedLoanAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
 
   - name: mifos_loan_disburse
@@ -207,7 +217,7 @@ tools:
       - { name: actualDisbursementDate, type: string, required: true, label: Disbursement date, format: date, description: "Date as yyyy-MM-dd, or today" }
       - { name: transactionAmount, type: number, required: false, label: Amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', mustBe: 'be an amount, and not a negative one', description: Amount to disburse if different from the approved principal }
     enrich:
-      - path: /fineract-provider/api/v1/loans/{loanId}
+      - path: /loans/{loanId}
         currency: currency.code
         fields:
           Client: clientName
@@ -216,7 +226,7 @@ tools:
           Approved amount: "#money:approvedPrincipal"
     rest:
       method: POST
-      path: /fineract-provider/api/v1/loans/{loanId}?command=disburse
+      path: /loans/{loanId}?command=disburse
       body: '{"actualDisbursementDate":"${actualDisbursementDate}","transactionAmount":"${transactionAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
 
   - name: mifos_loan_repayment
@@ -229,7 +239,7 @@ tools:
       - { name: transactionAmount, type: number, required: true, label: Repayment amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', min: '0.001', mustBe: 'be an amount, and not a negative one' }
       - { name: transactionDate, type: string, required: true, label: Transaction date, format: date, description: "Date as yyyy-MM-dd, or today" }
     enrich:
-      - path: /fineract-provider/api/v1/loans/{loanId}
+      - path: /loans/{loanId}
         currency: currency.code
         fields:
           Client: clientName
@@ -238,5 +248,5 @@ tools:
           Outstanding: "#money:summary.principalOutstanding"
     rest:
       method: POST
-      path: /fineract-provider/api/v1/loans/{loanId}/transactions?command=repayment
+      path: /loans/{loanId}/transactions?command=repayment
       body: '{"transactionDate":"${transactionDate}","transactionAmount":"${transactionAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'

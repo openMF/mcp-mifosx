@@ -70,21 +70,34 @@ public final class FineractRestToolExecutor implements ToolExecutor {
 
     private final HttpClient http;
     private final ObjectMapper mapper = new ObjectMapper();
-    /** What the manifest is written against, and what a bare Fineract actually serves. */
-    private static final String MANIFEST_API_PATH = "/fineract-provider/api/v1";
+    /** Where a Fineract with nothing in front of it serves its API. */
+    public static final String DEFAULT_API_PATH = "/fineract-provider/api/v1";
 
     private final String fineractBaseUrl;
     private final String apiPath;
 
+    /**
+     * An executor against a Fineract deployed the ordinary way.
+     *
+     * @param fineractBaseUrl scheme and host, with or without a trailing slash
+     */
     public FineractRestToolExecutor(String fineractBaseUrl) {
-        this(fineractBaseUrl, MANIFEST_API_PATH);
+        this(fineractBaseUrl, DEFAULT_API_PATH);
     }
 
+    /**
+     * An executor against a Fineract that something may sit in front of.
+     *
+     * @param fineractBaseUrl scheme and host, with or without a trailing slash
+     * @param apiPath         the API root the manifest's resource paths hang off:
+     *                        {@code /fineract-provider/api/v1} for a bare server, or something
+     *                        like {@code /1.0/core/api/v1} behind an API manager. Written
+     *                        either way round, a missing leading slash is added and a trailing
+     *                        one removed. Null or blank means the default.
+     */
     public FineractRestToolExecutor(String fineractBaseUrl, String apiPath) {
         this.fineractBaseUrl = fineractBaseUrl.replaceAll("/+$", "");
-        this.apiPath = apiPath == null || apiPath.isBlank()
-                ? MANIFEST_API_PATH
-                : apiPath.replaceAll("/+$", "");
+        this.apiPath = normalizeApiPath(apiPath);
         this.http = HttpClient.newBuilder()
                 // Generous: sandbox/gateway-fronted Fineracts can be slow to accept connections,
                 // and JVMs on dual-stack hosts may burn seconds on IPv6 before falling back.
@@ -94,19 +107,33 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     }
 
     /**
-     * The full URL for a manifest path, under whatever prefix this deployment serves.
+     * An API root written any of the ways somebody might reasonably write it.
      *
-     * <p>The manifest is written against a bare Fineract, which answers at
-     * {@code /fineract-provider/api/v1}. Behind an API manager the same server answers
-     * somewhere else: the Mifos community sandbox publishes it at {@code /1.0/core/api/v1},
-     * and the web app is told so separately as FINERACT_API_PROVIDER. The gateway had no
-     * business assuming the bare layout, so the prefix is swapped here rather than written
-     * eighteen times into the YAML.
+     * <p>Accepting a single spelling would mean a deployment fails over a missing slash, and
+     * fails as a run of 404s rather than as anything that names the cause.
      */
-    private String url(String manifestPath) {
-        return fineractBaseUrl + (manifestPath.startsWith(MANIFEST_API_PATH)
-                ? apiPath + manifestPath.substring(MANIFEST_API_PATH.length())
-                : manifestPath);
+    public static String normalizeApiPath(String apiPath) {
+        if (apiPath == null || apiPath.isBlank()) {
+            return DEFAULT_API_PATH;
+        }
+        String trimmed = apiPath.trim().replaceAll("/+$", "");
+        if (trimmed.isEmpty()) {
+            return ""; // Served at the root; the resource paths are absolute already.
+        }
+        return trimmed.startsWith("/") ? trimmed : "/" + trimmed;
+    }
+
+    /**
+     * The full URL for a resource the manifest names.
+     *
+     * <p>The manifest says {@code /clients}, because that is the resource and it is the same
+     * everywhere. Where {@code /clients} actually lives belongs to the installation: a bare
+     * Fineract puts it under {@code /fineract-provider/api/v1} and one behind an API manager
+     * does not. Keeping those apart is why nothing here has to recognise a prefix in order to
+     * replace it, and why a path this code has never seen still lands in the right place.
+     */
+    private String url(String resourcePath) {
+        return fineractBaseUrl + apiPath + resourcePath;
     }
 
     @Override
@@ -360,7 +387,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                     .put("username", decoded.substring(0, split))
                     .put("password", decoded.substring(split + 1));
             HttpResponse<String> response = http.send(
-                    HttpRequest.newBuilder(URI.create(url(MANIFEST_API_PATH + "/authentication")))
+                    HttpRequest.newBuilder(URI.create(url("/authentication")))
                             .timeout(Duration.ofSeconds(15))
                             .header("Content-Type", "application/json")
                             .header("Accept", "application/json")
@@ -393,7 +420,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     private java.util.Optional<java.util.Set<String>> readOffices(CallContext context) {
         try {
             HttpResponse<String> response = http.send(
-                    HttpRequest.newBuilder(URI.create(url(MANIFEST_API_PATH + "/offices")))
+                    HttpRequest.newBuilder(URI.create(url("/offices")))
                             .timeout(Duration.ofSeconds(15))
                             .header("Accept", "application/json")
                             .header("Authorization", context.authorizationHeader())
@@ -801,7 +828,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     private String fetchBusinessDate(CallContext context) {
         try {
             HttpRequest request = HttpRequest
-                    .newBuilder(URI.create(url(MANIFEST_API_PATH + "/businessdate/BUSINESS_DATE")))
+                    .newBuilder(URI.create(url("/businessdate/BUSINESS_DATE")))
                     .timeout(Duration.ofSeconds(10))
                     .header("Accept", "application/json")
                     .header("Authorization", context.authorizationHeader())
