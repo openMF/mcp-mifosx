@@ -70,16 +70,43 @@ public final class FineractRestToolExecutor implements ToolExecutor {
 
     private final HttpClient http;
     private final ObjectMapper mapper = new ObjectMapper();
+    /** What the manifest is written against, and what a bare Fineract actually serves. */
+    private static final String MANIFEST_API_PATH = "/fineract-provider/api/v1";
+
     private final String fineractBaseUrl;
+    private final String apiPath;
 
     public FineractRestToolExecutor(String fineractBaseUrl) {
+        this(fineractBaseUrl, MANIFEST_API_PATH);
+    }
+
+    public FineractRestToolExecutor(String fineractBaseUrl, String apiPath) {
         this.fineractBaseUrl = fineractBaseUrl.replaceAll("/+$", "");
+        this.apiPath = apiPath == null || apiPath.isBlank()
+                ? MANIFEST_API_PATH
+                : apiPath.replaceAll("/+$", "");
         this.http = HttpClient.newBuilder()
                 // Generous: sandbox/gateway-fronted Fineracts can be slow to accept connections,
                 // and JVMs on dual-stack hosts may burn seconds on IPv6 before falling back.
                 .connectTimeout(Duration.ofSeconds(20))
                 .followRedirects(HttpClient.Redirect.NORMAL) // Fineract behind an API gateway may 30x.
                 .build();
+    }
+
+    /**
+     * The full URL for a manifest path, under whatever prefix this deployment serves.
+     *
+     * <p>The manifest is written against a bare Fineract, which answers at
+     * {@code /fineract-provider/api/v1}. Behind an API manager the same server answers
+     * somewhere else: the Mifos community sandbox publishes it at {@code /1.0/core/api/v1},
+     * and the web app is told so separately as FINERACT_API_PROVIDER. The gateway had no
+     * business assuming the bare layout, so the prefix is swapped here rather than written
+     * eighteen times into the YAML.
+     */
+    private String url(String manifestPath) {
+        return fineractBaseUrl + (manifestPath.startsWith(MANIFEST_API_PATH)
+                ? apiPath + manifestPath.substring(MANIFEST_API_PATH.length())
+                : manifestPath);
     }
 
     @Override
@@ -96,7 +123,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         Map<String, Object> effective = withComputed(tool,
                 withDefaults(tool, withOffice(tool, normalizeArguments(tool, args, context), context), context));
         String path = substitutePath(rest.path(), effective, today);
-        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(url(path)))
                 .timeout(Duration.ofSeconds(30))
                 .header("Accept", "application/json")
                 .header("Authorization", context.authorizationHeader())
@@ -189,7 +216,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         try {
             String path = substitutePath(spec.path(), effective, businessDate(context));
             HttpResponse<String> response = http.send(
-                    HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
+                    HttpRequest.newBuilder(URI.create(url(path)))
                             .timeout(Duration.ofSeconds(15))
                             .header("Accept", "application/json")
                             .header("Authorization", context.authorizationHeader())
@@ -333,8 +360,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                     .put("username", decoded.substring(0, split))
                     .put("password", decoded.substring(split + 1));
             HttpResponse<String> response = http.send(
-                    HttpRequest.newBuilder(URI.create(fineractBaseUrl
-                                    + "/fineract-provider/api/v1/authentication"))
+                    HttpRequest.newBuilder(URI.create(url(MANIFEST_API_PATH + "/authentication")))
                             .timeout(Duration.ofSeconds(15))
                             .header("Content-Type", "application/json")
                             .header("Accept", "application/json")
@@ -367,7 +393,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     private java.util.Optional<java.util.Set<String>> readOffices(CallContext context) {
         try {
             HttpResponse<String> response = http.send(
-                    HttpRequest.newBuilder(URI.create(fineractBaseUrl + "/fineract-provider/api/v1/offices"))
+                    HttpRequest.newBuilder(URI.create(url(MANIFEST_API_PATH + "/offices")))
                             .timeout(Duration.ofSeconds(15))
                             .header("Accept", "application/json")
                             .header("Authorization", context.authorizationHeader())
@@ -645,7 +671,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
         }
         try {
             String path = substitutePath(spec.path(), args, businessDate(context));
-            HttpRequest request = HttpRequest.newBuilder(URI.create(fineractBaseUrl + path))
+            HttpRequest request = HttpRequest.newBuilder(URI.create(url(path)))
                     .timeout(Duration.ofSeconds(15))
                     .header("Accept", "application/json")
                     .header("Authorization", context.authorizationHeader())
@@ -775,7 +801,7 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     private String fetchBusinessDate(CallContext context) {
         try {
             HttpRequest request = HttpRequest
-                    .newBuilder(URI.create(fineractBaseUrl + "/fineract-provider/api/v1/businessdate/BUSINESS_DATE"))
+                    .newBuilder(URI.create(url(MANIFEST_API_PATH + "/businessdate/BUSINESS_DATE")))
                     .timeout(Duration.ofSeconds(10))
                     .header("Accept", "application/json")
                     .header("Authorization", context.authorizationHeader())

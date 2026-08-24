@@ -20,7 +20,23 @@ public record GatewayProperties(Llm llm, Fineract fineract, Cors cors, Approval 
 
     public record Llm(String provider, String baseUrl, String apiKey, String model, String dataResidency) {}
 
-    public record Fineract(String baseUrl) {}
+    /**
+     * Where Fineract is, and under what path.
+     *
+     * <p>{@code apiPath} exists because a bare Fineract serves at
+     * {@code /fineract-provider/api/v1} and a Fineract behind an API manager does not. The
+     * Mifos community sandbox publishes the same server at {@code /1.0/core/api/v1}, and the
+     * web app is already told this separately as FINERACT_API_PROVIDER, so the gateway had no
+     * business assuming it.
+     */
+    public record Fineract(String baseUrl, String apiPath) {
+
+        public Fineract {
+            apiPath = apiPath == null || apiPath.isBlank() ? DEFAULT_API_PATH : apiPath.replaceAll("/+$", "");
+        }
+
+        public static final String DEFAULT_API_PATH = "/fineract-provider/api/v1";
+    }
 
     public record Cors(List<String> allowedOrigins) {}
 

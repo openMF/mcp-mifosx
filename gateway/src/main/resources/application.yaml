@@ -18,6 +18,9 @@ copilot:
     data-residency: ${COPILOT_DATA_RESIDENCY:cloud}
   fineract:
     base-url: ${FINERACT_BASE_URL:https://sandbox.mifos.community}
+    # A bare Fineract answers here. Behind an API manager it does not: the community
+    # sandbox publishes the same server at /1.0/core/api/v1.
+    api-path: ${FINERACT_API_PATH:/fineract-provider/api/v1}
   cors:
     allowed-origins: ${COPILOT_ALLOWED_ORIGINS:http://localhost:4200}
   approval:
