@@ -102,12 +102,42 @@ Point the web-app at it: `copilotMcpBaseUrl: 'http://localhost:8090'`.
 | Env var | Default | Meaning |
 |---|---|---|
 | `COPILOT_PORT` | `8090` | Listen port |
-| `COPILOT_LLM_PROVIDER` | `mock` | `mock` \| `groq` \| `ollama` (or any OpenAI-compatible via `COPILOT_LLM_BASE_URL`) |
-| `COPILOT_LLM_API_KEY` | — | Provider key — **server-side only** |
+| `COPILOT_LLM_PROVIDER` | `mock` | `mock` \| `groq` \| `openai` \| `ollama`. Anything else OpenAI-compatible works too, by supplying `COPILOT_LLM_BASE_URL` |
+| `COPILOT_LLM_API_KEY` | — | Provider key — **server-side only**. Not needed for `mock` |
 | `COPILOT_LLM_MODEL` | `qwen/qwen3.6-27b` | Model id |
+| `COPILOT_LLM_BASE_URL` | — | Only for an OpenAI-compatible engine the gateway does not know by name: Azure OpenAI, vLLM, OpenRouter, a private gateway. Leave unset for `groq`, `openai` and `ollama`, which resolve their own. Set, it overrides the provider's default |
 | `FINERACT_BASE_URL` | `https://sandbox.mifos.community` | The Fineract the tools call. **Must be the same Fineract the web-app is configured against**, or the drift guard refuses to run |
+| `FINERACT_API_PATH` | `/fineract-provider/api/v1` | Where that Fineract publishes its API, under the base URL. See below |
 | `COPILOT_ALLOWED_ORIGINS` | `http://localhost:4200` | CORS allow-list (comma-separated) |
 | `COPILOT_DATA_RESIDENCY` | `cloud` | Operator's explicit acknowledgement of where tool results flow |
+| `COPILOT_APPROVAL_TTL_SECONDS` | `300` | How long a pending confirmation card stays approvable before it expires |
+
+#### Pointing at a Fineract behind an API manager
+
+`FINERACT_BASE_URL` and `FINERACT_API_PATH` are separate because they answer different
+questions: *which* Fineract, and *where it publishes its API*. A bare Fineract answers on the
+default path, so most deployments never set the second one. Behind an API manager it does not,
+and the same server is republished somewhere else entirely.
+
+The community sandbox is the example to hand. Both of these reach the same Fineract:
+
+```bash
+# a bare Fineract
+FINERACT_BASE_URL=https://sandbox.mifos.community
+FINERACT_API_PATH=/fineract-provider/api/v1      # the default, so it can be omitted
+
+# the same server behind the community API manager
+FINERACT_BASE_URL=https://apis.mifos.community
+FINERACT_API_PATH=/1.0/core/api/v1
+```
+
+Getting this wrong looks like the gateway being broken rather than misconfigured: every tool
+call returns 404 and the assistant reports that a client who exists cannot be found. If tools
+fail while `/health` is happy, check this pair first.
+
+Whatever the web-app is configured against has to match `FINERACT_BASE_URL`. The web-app sends
+its own backend origin on every turn and the gateway refuses to run when the two differ, so a
+Copilot can never write to a different bank than the one on the officer's screen.
 
 ### Endpoints (wire contract v1)
 
@@ -141,7 +171,7 @@ call, which is to say `loanId 12` and `28000`, and that is not something anyone 
     - { name: approvedOnDate, type: string, required: true, label: Approval date, format: date }
     - { name: approvedLoanAmount, type: number, label: Approved amount, format: money }
   enrich:
-    - path: /fineract-provider/api/v1/loans/{loanId}
+    - path: /loans/{loanId}
       currency: currency.code
       fields:
         Client: clientName
@@ -150,7 +180,7 @@ call, which is to say `loanId 12` and `28000`, and that is not something anyone 
         Applied for: "#money:principal"
   rest:
     method: POST
-    path: /fineract-provider/api/v1/loans/{loanId}?command=approve
+    path: /loans/{loanId}?command=approve
     body: '{"approvedOnDate":"${approvedOnDate}", ...}'
 ```
 
@@ -160,6 +190,11 @@ call, which is to say `loanId 12` and `28000`, and that is not something anyone 
 | `format` | `money` or `date`, so `28000` is shown as `USD 28,000.00` and `today` as `21 August 2026` |
 | `show: false` | Hides an identifier. An account number and a product name mean something to a person; a database id does not |
 | `enrich` | Reads performed with the officer's own credential before the card is shown, so it can name the account, the product and the client. A list, because approving a new loan means naming both the client and the product and those live behind different endpoints |
+
+Every `path` in the manifest is relative to the resource root, never the whole URL. The gateway
+joins `FINERACT_BASE_URL` and `FINERACT_API_PATH` in front of it, so writing the API root into
+a tool here would produce it twice and every call would 404. Which root to use is a property of
+the deployment, not of the tool, which is why it is configuration.
 | `enrich[].currency` | Dotted path to the currency the record is held in, which is where the `USD` prefix comes from |
 | `fields` | Card row label to a dotted path in the response. Prefix a path with `#money:` to format it as an amount |
 | `summary` | The card's one-line title. `{clientName}` and `{productName}` are filled from the enrichment |
