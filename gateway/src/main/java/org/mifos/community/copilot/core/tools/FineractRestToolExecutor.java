@@ -653,9 +653,58 @@ public final class FineractRestToolExecutor implements ToolExecutor {
                 out.put(entry.getKey(), value);
                 continue;
             }
+            if (isNameParam(tool, entry.getKey())) {
+                out.put(entry.getKey(), asStoredName(String.valueOf(value)));
+                continue;
+            }
             out.put(entry.getKey(), normalizeValue(entry.getKey(), value, today, futureAllowed(tool, entry.getKey())));
         }
         return out;
+    }
+
+    private boolean isNameParam(ToolDefinition tool, String param) {
+        if (tool == null || tool.params() == null) {
+            return false;
+        }
+        return tool.params().stream()
+                .filter((p) -> p.name().equals(param))
+                .findFirst()
+                .map(ToolDefinition.Param::isName)
+                .orElse(false);
+    }
+
+    /**
+     * A name in the casing Fineract stores names in, so a filter that is case-sensitive
+     * still finds the person.
+     *
+     * <p>An officer types aisha, AISHA or aIsHa and means the same woman. The clients
+     * resource matches displayName literally, so on a case-sensitive collation every one of
+     * those returns nothing and the assistant reports that a client sitting in the database
+     * does not exist. Each word is capitalised the way a name is entered on the form that
+     * created it.
+     *
+     * <p>This is a normalisation, not a correction: a name genuinely stored against unusual
+     * casing is still found by typing it that way, because a word already in that shape is
+     * returned unchanged.
+     */
+    static String asStoredName(String typed) { // package-private for tests
+        if (typed == null || typed.isBlank()) {
+            return typed == null ? "" : typed;
+        }
+        StringBuilder out = new StringBuilder(typed.length());
+        boolean startOfWord = true;
+        for (int i = 0; i < typed.length(); i++) {
+            char c = typed.charAt(i);
+            if (Character.isLetter(c)) {
+                out.append(startOfWord ? Character.toUpperCase(c) : Character.toLowerCase(c));
+                startOfWord = false;
+            } else {
+                // Spaces, hyphens and apostrophes all begin a new word in a name.
+                out.append(c);
+                startOfWord = true;
+            }
+        }
+        return out.toString();
     }
 
     private boolean futureAllowed(ToolDefinition tool, String param) {

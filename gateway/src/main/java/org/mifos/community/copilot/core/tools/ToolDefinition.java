@@ -71,6 +71,11 @@ public record ToolDefinition(String name, String description, boolean write, Str
             return "money".equalsIgnoreCase(format);
         }
 
+        /** A person's name, which Fineract stores and matches in its own casing. */
+        public boolean isName() {
+            return "name".equalsIgnoreCase(format);
+        }
+
         public boolean isDate() {
             return "date".equalsIgnoreCase(format);
         }
