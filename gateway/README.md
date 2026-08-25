@@ -102,12 +102,42 @@ Point the web-app at it: `copilotMcpBaseUrl: 'http://localhost:8090'`.
 | Env var | Default | Meaning |
 |---|---|---|
 | `COPILOT_PORT` | `8090` | Listen port |
-| `COPILOT_LLM_PROVIDER` | `mock` | `mock` \| `groq` \| `ollama` (or any OpenAI-compatible via `COPILOT_LLM_BASE_URL`) |
-| `COPILOT_LLM_API_KEY` | — | Provider key — **server-side only** |
+| `COPILOT_LLM_PROVIDER` | `mock` | `mock` \| `groq` \| `openai` \| `ollama`. Anything else OpenAI-compatible works too, by supplying `COPILOT_LLM_BASE_URL` |
+| `COPILOT_LLM_API_KEY` | — | Provider key — **server-side only**. Not needed for `mock` |
 | `COPILOT_LLM_MODEL` | `qwen/qwen3.6-27b` | Model id |
+| `COPILOT_LLM_BASE_URL` | — | Only for an OpenAI-compatible engine the gateway does not know by name: Azure OpenAI, vLLM, OpenRouter, a private gateway. Leave unset for `groq`, `openai` and `ollama`, which resolve their own. Set, it overrides the provider's default |
 | `FINERACT_BASE_URL` | `https://sandbox.mifos.community` | The Fineract the tools call. **Must be the same Fineract the web-app is configured against**, or the drift guard refuses to run |
+| `FINERACT_API_PATH` | `/fineract-provider/api/v1` | Where that Fineract publishes its API, under the base URL. See below |
 | `COPILOT_ALLOWED_ORIGINS` | `http://localhost:4200` | CORS allow-list (comma-separated) |
 | `COPILOT_DATA_RESIDENCY` | `cloud` | Operator's explicit acknowledgement of where tool results flow |
+| `COPILOT_APPROVAL_TTL_SECONDS` | `300` | How long a pending confirmation card stays approvable before it expires |
+
+#### Pointing at a Fineract behind an API manager
+
+`FINERACT_BASE_URL` and `FINERACT_API_PATH` are separate because they answer different
+questions: *which* Fineract, and *where it publishes its API*. A bare Fineract answers on the
+default path, so most deployments never set the second one. Behind an API manager it does not,
+and the same server is republished somewhere else entirely.
+
+The community sandbox is the example to hand. Both of these reach the same Fineract:
+
+```bash
+# a bare Fineract
+FINERACT_BASE_URL=https://sandbox.mifos.community
+FINERACT_API_PATH=/fineract-provider/api/v1      # the default, so it can be omitted
+
+# the same server behind the community API manager
+FINERACT_BASE_URL=https://apis.mifos.community
+FINERACT_API_PATH=/1.0/core/api/v1
+```
+
+Getting this wrong looks like the gateway being broken rather than misconfigured: every tool
+call returns 404 and the assistant reports that a client who exists cannot be found. If tools
+fail while `/health` is happy, check this pair first.
+
+Whatever the web-app is configured against has to match `FINERACT_BASE_URL`. The web-app sends
+its own backend origin on every turn and the gateway refuses to run when the two differ, so a
+Copilot can never write to a different bank than the one on the officer's screen.
 
 ### Endpoints (wire contract v1)
 
