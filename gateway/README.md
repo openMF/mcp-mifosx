@@ -171,7 +171,7 @@ call, which is to say `loanId 12` and `28000`, and that is not something anyone 
     - { name: approvedOnDate, type: string, required: true, label: Approval date, format: date }
     - { name: approvedLoanAmount, type: number, label: Approved amount, format: money }
   enrich:
-    - path: /fineract-provider/api/v1/loans/{loanId}
+    - path: /loans/{loanId}
       currency: currency.code
       fields:
         Client: clientName
@@ -180,7 +180,7 @@ call, which is to say `loanId 12` and `28000`, and that is not something anyone 
         Applied for: "#money:principal"
   rest:
     method: POST
-    path: /fineract-provider/api/v1/loans/{loanId}?command=approve
+    path: /loans/{loanId}?command=approve
     body: '{"approvedOnDate":"${approvedOnDate}", ...}'
 ```
 
@@ -190,6 +190,11 @@ call, which is to say `loanId 12` and `28000`, and that is not something anyone 
 | `format` | `money` or `date`, so `28000` is shown as `USD 28,000.00` and `today` as `21 August 2026` |
 | `show: false` | Hides an identifier. An account number and a product name mean something to a person; a database id does not |
 | `enrich` | Reads performed with the officer's own credential before the card is shown, so it can name the account, the product and the client. A list, because approving a new loan means naming both the client and the product and those live behind different endpoints |
+
+Every `path` in the manifest is relative to the resource root, never the whole URL. The gateway
+joins `FINERACT_BASE_URL` and `FINERACT_API_PATH` in front of it, so writing the API root into
+a tool here would produce it twice and every call would 404. Which root to use is a property of
+the deployment, not of the tool, which is why it is configuration.
 | `enrich[].currency` | Dotted path to the currency the record is held in, which is where the `USD` prefix comes from |
 | `fields` | Card row label to a dotted path in the response. Prefix a path with `#money:` to format it as an amount |
 | `summary` | The card's one-line title. `{clientName}` and `{productName}` are filled from the enrichment |
