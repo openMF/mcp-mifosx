@@ -34,21 +34,28 @@
 tools:
   # ── Reading ──────────────────────────────────────────────────────────────────
   - name: mifos_client_search
-    description: Find clients by name. Matches part of a name and ignores capitalisation.
+    description: Find clients by name. Matches part of a name, however it was typed.
     write: false
-    # This used /search, which is case-sensitive: "VICTOR" found the client and "victor" found
-    # nothing, so an officer typing normally was told their client did not exist. The clients
-    # endpoint's own name filter is case-insensitive and matches on part of a name, which is
-    # what somebody asking after a person actually wants.
+    # This used /search, which matches literally: "Victor" found the client and "victor"
+    # found nothing, so an officer typing normally was told their client did not exist.
+    #
+    # displayName is the filter the clients resource actually binds, and it matches on part
+    # of a name. There is no bound filter called name: passing one is silently dropped and
+    # every client in the office comes back, which is worse than the problem being fixed.
+    # The casing is handled on our side, by format: name below: a name typed in one case is
+    # capitalised, and a name typed with capitals inside it is left exactly as written, since
+    # McDonald and de la Cruz do not survive a general rule. A name whose internal capitals
+    # are typed flat still needs a case-insensitive collation on the Fineract side.
     #
     # A search returns whole matched clients. The name has to survive for the result to be any
     # use to the officer; the phone number and the national id do not.
     redactFields: [externalId, mobileNo]
     params:
-      - { name: query, type: string, required: true, label: Search, description: A name, or any part of one }
+      - { name: query, type: string, required: true, label: Search, format: name,
+          description: A name, or any part of one }
     rest:
       method: GET
-      path: /clients?name={query}
+      path: /clients?displayName={query}
 
   - name: mifos_client_details
     description: Fetch one client's profile, including status, office and activation date.
