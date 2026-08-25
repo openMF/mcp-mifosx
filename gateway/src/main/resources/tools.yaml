@@ -42,7 +42,10 @@ tools:
     # displayName is the filter the clients resource actually binds, and it matches on part
     # of a name. There is no bound filter called name: passing one is silently dropped and
     # every client in the office comes back, which is worse than the problem being fixed.
-    # The casing is handled on our side, by format: name below.
+    # The casing is handled on our side, by format: name below: a name typed in one case is
+    # capitalised, and a name typed with capitals inside it is left exactly as written, since
+    # McDonald and de la Cruz do not survive a general rule. A name whose internal capitals
+    # are typed flat still needs a case-insensitive collation on the Fineract side.
     #
     # A search returns whole matched clients. The name has to survive for the result to be any
     # use to the officer; the phone number and the national id do not.

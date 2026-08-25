@@ -69,6 +69,27 @@ class ClientSearchTest {
         assertThat(FineractRestToolExecutor.asStoredName("MARIA DE SOUZA")).isEqualTo("Maria De Souza");
     }
 
+    /**
+     * Confirmed against a real Fineract: displayName=McDonald finds Ronald McDonald and
+     * displayName=Mcdonald finds nobody. Capitalising every word is the wrong answer for any
+     * name that keeps a capital somewhere a general rule would not put one.
+     */
+    @Test
+    void aNameSpelledDeliberatelyIsLeftAlone() {
+        assertThat(FineractRestToolExecutor.asStoredName("McDonald")).isEqualTo("McDonald");
+        assertThat(FineractRestToolExecutor.asStoredName("O'Connor")).isEqualTo("O'Connor");
+        assertThat(FineractRestToolExecutor.asStoredName("de la Cruz")).isEqualTo("de la Cruz");
+        assertThat(FineractRestToolExecutor.asStoredName("van der Berg")).isEqualTo("van der Berg");
+        assertThat(FineractRestToolExecutor.asStoredName("Ronald McDonald")).isEqualTo("Ronald McDonald");
+    }
+
+    /** Typing it all one way says nothing about the capitals, so there is nothing to preserve. */
+    @Test
+    void aNameTypedFlatIsStillCapitalised() {
+        assertThat(FineractRestToolExecutor.asStoredName("ronald mcdonald")).isEqualTo("Ronald Mcdonald");
+        assertThat(FineractRestToolExecutor.asStoredName("DE LA CRUZ")).isEqualTo("De La Cruz");
+    }
+
     /** Hyphens and apostrophes start a word in a name as surely as a space does. */
     @Test
     void punctuationInsideANameStartsANewWord() {

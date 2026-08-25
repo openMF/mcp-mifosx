@@ -674,22 +674,82 @@ public final class FineractRestToolExecutor implements ToolExecutor {
     }
 
     /**
+     * Whether the typing already says where the capitals belong.
+     *
+     * <p>True for anything with a capital that is not starting a word, which is the shape of a
+     * name somebody has spelled deliberately. All lower case and all upper case both say
+     * nothing, and are the two ways a name gets typed when nobody is thinking about it.
+     */
+    private static boolean carriesItsOwnCasing(String typed) {
+        // SHOUTED is not deliberate, it is a caps-lock key. Without this, every capital after
+        // the first letter reads as meaningful and AISHA would be sent through untouched.
+        boolean anyLowerCase = false;
+        for (int i = 0; i < typed.length(); i++) {
+            if (Character.isLowerCase(typed.charAt(i))) {
+                anyLowerCase = true;
+                break;
+            }
+        }
+        if (!anyLowerCase) {
+            return false;
+        }
+
+        boolean startOfWord = true;
+        boolean wordBeganCapitalised = false;
+        boolean afterALowerCaseWord = false;
+        for (int i = 0; i < typed.length(); i++) {
+            char c = typed.charAt(i);
+            if (!Character.isLetter(c)) {
+                startOfWord = true;
+                continue;
+            }
+            if (Character.isUpperCase(c)) {
+                // A capital inside a word is only meaningful when the word opened with one.
+                // McDonald and MacLeod look like this; aIsHa is a key held down, and reading
+                // that as a spelling would leave the officer searching for nobody.
+                if (!startOfWord && wordBeganCapitalised) {
+                    return true;
+                }
+                if (startOfWord && afterALowerCaseWord) {
+                    return true; // A capitalised word following a lower-case one: de la Cruz.
+                }
+            } else if (startOfWord) {
+                afterALowerCaseWord = true;
+            }
+            if (startOfWord) {
+                wordBeganCapitalised = Character.isUpperCase(c);
+            }
+            startOfWord = false;
+        }
+        return false;
+    }
+
+    /**
      * A name in the casing Fineract stores names in, so a filter that is case-sensitive
      * still finds the person.
      *
-     * <p>An officer types aisha, AISHA or aIsHa and means the same woman. The clients
-     * resource matches displayName literally, so on a case-sensitive collation every one of
-     * those returns nothing and the assistant reports that a client sitting in the database
-     * does not exist. Each word is capitalised the way a name is entered on the form that
-     * created it.
+     * <p>An officer types aisha, AISHA or aIsHa and means the same woman. The clients resource
+     * matches displayName literally, so on a case-sensitive collation every one of those
+     * returns nothing and the assistant reports that a client sitting in the database does not
+     * exist. Where the typing carries no information about where the capitals go, each word is
+     * capitalised the way a name is entered on the form that created it.
      *
-     * <p>This is a normalisation, not a correction: a name genuinely stored against unusual
-     * casing is still found by typing it that way, because a word already in that shape is
-     * returned unchanged.
+     * <p>Where it does carry that information, it is left alone. McDonald, de la Cruz and
+     * O'Connor all have capitals somewhere a general rule would not put them, and rewriting
+     * them to Mcdonald, De La Cruz and O'connor finds nobody at all. Somebody who typed a
+     * capital in the middle of a word has said something, and this is not the place to
+     * overrule them.
+     *
+     * <p>The case it cannot help with is a name like mcdonald typed all in one case: there is
+     * no way to know the D is a capital, and finding it needs a case-insensitive collation on
+     * the Fineract side.
      */
     static String asStoredName(String typed) { // package-private for tests
         if (typed == null || typed.isBlank()) {
             return typed == null ? "" : typed;
+        }
+        if (carriesItsOwnCasing(typed)) {
+            return typed;
         }
         StringBuilder out = new StringBuilder(typed.length());
         boolean startOfWord = true;
