@@ -31,11 +31,11 @@ public record GatewayProperties(Llm llm, Fineract fineract, Cors cors, Approval 
      */
     public record Fineract(String baseUrl, String apiPath) {
 
+        /** Through the executor's own rule, so the two boundaries cannot disagree. */
         public Fineract {
-            apiPath = apiPath == null || apiPath.isBlank() ? DEFAULT_API_PATH : apiPath.replaceAll("/+$", "");
+            apiPath = org.mifos.community.copilot.core.tools.FineractRestToolExecutor
+                    .normalizeApiPath(apiPath);
         }
-
-        public static final String DEFAULT_API_PATH = "/fineract-provider/api/v1";
     }
 
     public record Cors(List<String> allowedOrigins) {}

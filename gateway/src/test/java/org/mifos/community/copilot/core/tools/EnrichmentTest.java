@@ -80,7 +80,9 @@ class EnrichmentTest {
     }
 
     private void respond(HttpExchange exchange) throws IOException {
-        String path = exchange.getRequestURI().getPath();
+        // Below the API root, so a test names /loans/12 the way the manifest names it.
+        String path = exchange.getRequestURI().getPath()
+                .replace(FineractRestToolExecutor.DEFAULT_API_PATH, "");
         requestedPaths.add(path);
         Integer override = statusOverrides.get(path);
         String body = path.contains("loanproducts") ? PRODUCT_JSON : path.contains("clients") ? CLIENT_JSON : LOAN_JSON;

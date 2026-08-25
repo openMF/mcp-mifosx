@@ -45,7 +45,9 @@ class RedactionPostureTest {
     private static Map<String, List<String>> expected() {
         Map<String, List<String>> posture = new LinkedHashMap<>();
         // Reads that carry a person.
-        posture.put("mifos_client_search", List.of("entityExternalId", "externalId", "entityMobileNo", "mobileNo"));
+        // Plain field names now: this reads /clients rather than /search, and /search was the
+        // thing that wrapped everything in entityXxx.
+        posture.put("mifos_client_search", List.of("externalId", "mobileNo"));
         posture.put("mifos_client_details", List.of("mobileNo", "dateOfBirth", "externalId"));
         // Writes that echo what was submitted when Fineract rejects them.
         posture.put("mifos_client_create", List.of("mobileNo", "dateOfBirth", "externalId"));

@@ -99,7 +99,7 @@ class OfficeDerivationTest {
                         true, false),
                         new ToolDefinition.Param("officeId", "integer", false, "office", "Office", null, false,
                                 false)),
-                new ToolDefinition.RestMapping("POST", "/fineract-provider/api/v1/clients",
+                new ToolDefinition.RestMapping("POST", "/clients",
                         "{\"officeId\":\"${officeId}\",\"firstname\":\"${firstname}\"}"),
                 List.of(), List.of(), null, Map.of());
     }

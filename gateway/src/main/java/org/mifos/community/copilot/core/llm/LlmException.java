@@ -12,6 +12,7 @@ public class LlmException extends Exception {
 
     private final boolean rateLimited;
     private final boolean clientError;
+    private final int retryAfterSeconds;
 
     public LlmException(String message, Throwable cause) {
         this(message, cause, false, false);
@@ -22,9 +23,15 @@ public class LlmException extends Exception {
     }
 
     public LlmException(String message, Throwable cause, boolean rateLimited, boolean clientError) {
+        this(message, cause, rateLimited, clientError, 0);
+    }
+
+    public LlmException(String message, Throwable cause, boolean rateLimited, boolean clientError,
+            int retryAfterSeconds) {
         super(message, cause);
         this.rateLimited = rateLimited;
         this.clientError = clientError;
+        this.retryAfterSeconds = retryAfterSeconds;
     }
 
     public boolean isRateLimited() {
@@ -40,5 +47,16 @@ public class LlmException extends Exception {
      */
     public boolean isClientError() {
         return clientError;
+    }
+
+    /**
+     * How long the provider asked us to wait, or zero when it did not say.
+     *
+     * <p>Worth passing on. "Try again shortly" is not something an officer can act on, and
+     * without a number they either give up or hammer it, both of which are worse than being
+     * told to wait twenty seconds.
+     */
+    public int retryAfterSeconds() {
+        return retryAfterSeconds;
     }
 }
