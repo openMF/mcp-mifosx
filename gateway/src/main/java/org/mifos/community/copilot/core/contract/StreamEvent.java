@@ -23,9 +23,55 @@ public record StreamEvent(String name, Map<String, Object> data) {
         return new StreamEvent("token", Map.of("delta", delta));
     }
 
+    /**
+     * A fragment of the model's reasoning, on its own channel so it is never mistaken for
+     * advice.
+     *
+     * <p>Sent separately from {@code token} rather than mixed into it, because the two are
+     * different kinds of thing: one is what the assistant is telling the officer, the other is
+     * how it got there. A client that does not know this event ignores it and shows the answer
+     * exactly as before.
+     */
+    public static StreamEvent thinkingStart() {
+        return new StreamEvent("thinking", Map.of("phase", "start"));
+    }
+
+    /**
+     * A fragment of the model's working notes.
+     *
+     * <p>Deliberately not called reasoning or explanation on the wire. Chain of thought is not
+     * a faithful account of how a model reached an answer, and naming it as one here would
+     * put that claim into every client that ever reads this contract.
+     */
+    public static StreamEvent thinkingDelta(String delta) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("phase", "delta");
+        data.put("delta", delta);
+        return new StreamEvent("thinking", data);
+    }
+
+    public static StreamEvent thinkingEnd(long elapsedMs) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("phase", "end");
+        data.put("elapsed_ms", elapsedMs);
+        return new StreamEvent("thinking", data);
+    }
+
     public static StreamEvent toolCall(String tool, String phase, boolean readOnly, long durationMs) {
+        return toolCall(tool, tool, phase, readOnly, durationMs);
+    }
+
+    /**
+     * A step in what the gateway did, named the way an officer would say it.
+     *
+     * <p>{@code label} comes from the tool manifest, never from a model. A step log is part of
+     * the record of what happened on a client's account, and a record whose wording changes
+     * between runs is not much of a record.
+     */
+    public static StreamEvent toolCall(String tool, String label, String phase, boolean readOnly, long durationMs) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("tool", tool);
+        data.put("label", label);
         data.put("phase", phase);
         data.put("read_only", readOnly);
         if (durationMs >= 0) {

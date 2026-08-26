@@ -27,6 +27,14 @@ public final class ToolManifest {
     private final Map<String, ToolDefinition> tools = new LinkedHashMap<>();
 
     @SuppressWarnings("unchecked")
+    /** The step wording for a tool, absent for anything the manifest has not named yet. */
+    private static ToolDefinition.Step step(Map<String, Object> node) {
+        if (node == null) {
+            return null;
+        }
+        return new ToolDefinition.Step((String) node.get("running"), (String) node.get("done"));
+    }
+
     /** A manifest value as text, so a bound written as 1 and one written as '1' both read. */
     private static String text(Object value) {
         return value == null ? null : String.valueOf(value);
@@ -89,7 +97,8 @@ public final class ToolManifest {
                     (List<String>) entry.getOrDefault("redactFields", List.of()),
                     enrich,
                     defaults,
-                    (Map<String, String>) entry.getOrDefault("computed", Map.of()));
+                    (Map<String, String>) entry.getOrDefault("computed", Map.of()),
+                    step((Map<String, Object>) entry.get("step")));
             manifest.tools.put(definition.name(), definition);
         }
         return manifest;

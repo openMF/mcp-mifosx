@@ -24,10 +24,19 @@ public interface LlmClient {
      * @param messages  OpenAI-style chat messages (role/content/tool_calls/tool_call_id maps)
      * @param tools     OpenAI-style tool schemas the model may call (already role-filtered)
      * @param onToken   receives assistant text deltas for live streaming to the browser
+     * @param onReasoning receives the model's reasoning deltas, where it produces any, kept
+     *                  apart from the answer so the two are never shown as the same thing
      * @param cancelled polled between chunks; when true the turn is abandoned quietly
      * @return the assembled result: final text plus any tool calls the model requested
      * @throws LlmException when the provider is unreachable, times out, or rejects the request
      */
     LlmResult complete(List<Map<String, Object>> messages, List<Map<String, Object>> tools, Consumer<String> onToken,
-            BooleanSupplier cancelled) throws LlmException;
+            Consumer<String> onReasoning, BooleanSupplier cancelled) throws LlmException;
+
+    /** For callers with no use for the reasoning, such as tests. */
+    default LlmResult complete(List<Map<String, Object>> messages, List<Map<String, Object>> tools,
+            Consumer<String> onToken, BooleanSupplier cancelled) throws LlmException {
+        return complete(messages, tools, onToken, (ignored) -> {
+        }, cancelled);
+    }
 }

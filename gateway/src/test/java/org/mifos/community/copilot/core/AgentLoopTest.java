@@ -347,16 +347,27 @@ class AgentLoopTest {
 
         @Override
         public LlmResult complete(List<Map<String, Object>> messages, List<Map<String, Object>> tools,
-                java.util.function.Consumer<String> onToken, java.util.function.BooleanSupplier cancelled) {
+                java.util.function.Consumer<String> onToken, java.util.function.Consumer<String> onReasoning,
+                java.util.function.BooleanSupplier cancelled) {
             lastMessages = List.copyOf(messages);
             LlmResult result = queue.poll();
             if (result == null) {
                 return new LlmResult("(no scripted response)", List.of());
             }
+            if (reasoning != null) {
+                onReasoning.accept(reasoning);
+            }
             if (!result.text().isBlank()) {
                 onToken.accept(result.text());
             }
             return result;
+        }
+
+        /** Set to have the next turn produce working notes, as a reasoning model would. */
+        private String reasoning;
+
+        void thinks(String notes) {
+            this.reasoning = notes;
         }
     }
 

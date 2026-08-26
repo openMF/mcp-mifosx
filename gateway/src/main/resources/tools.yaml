@@ -34,6 +34,7 @@
 tools:
   # ── Reading ──────────────────────────────────────────────────────────────────
   - name: mifos_client_search
+    step: { running: Looking up the client, done: Looked up the client }
     description: Find clients by name. Matches part of a name, however it was typed.
     write: false
     # This used /search, which matches literally: "Victor" found the client and "victor"
@@ -58,6 +59,7 @@ tools:
       path: /clients?displayName={query}
 
   - name: mifos_client_details
+    step: { running: Reading the client record, done: Read the client record }
     description: Fetch one client's profile, including status, office and activation date.
     write: false
     params:
@@ -68,6 +70,7 @@ tools:
     redactFields: [mobileNo, dateOfBirth, externalId]
 
   - name: mifos_client_accounts
+    step: { running: Checking their accounts, done: Checked their accounts }
     description: List every loan and savings account belonging to a client, with balances and statuses.
     write: false
     params:
@@ -77,6 +80,7 @@ tools:
       path: /clients/{clientId}/accounts
 
   - name: mifos_loan_details
+    step: { running: Reading the loan account, done: Read the loan account }
     description: Fetch one loan account, including product, principal, outstanding balance and status.
     write: false
     params:
@@ -86,6 +90,7 @@ tools:
       path: /loans/{loanId}
 
   - name: mifos_loan_schedule
+    step: { running: Fetching the repayment schedule, done: Fetched the repayment schedule }
     description: Fetch a loan's repayment schedule with due dates and outstanding instalments.
     write: false
     params:
@@ -95,6 +100,7 @@ tools:
       path: /loans/{loanId}?associations=repaymentSchedule
 
   - name: mifos_savings_details
+    step: { running: Checking the savings balance, done: Checked the savings balance }
     description: Fetch one savings account, including balance, status and product.
     write: false
     params:
@@ -104,6 +110,7 @@ tools:
       path: /savingsaccounts/{accountId}
 
   - name: mifos_loan_products
+    step: { running: Listing the loan products, done: Listed the loan products }
     description: List the loan products this office offers. Use this before creating a loan.
     write: false
     params: []
@@ -113,6 +120,7 @@ tools:
 
   # ── Writing, every one pauses for the officer ────────────────────────────────
   - name: mifos_client_create
+    step: { running: Preparing the new client, done: Prepared the new client }
     description: Create and activate a new client in the officer's own office. Requires the officer's confirmation.
     summary: "Create client {firstname} {lastname}"
     write: true
@@ -144,6 +152,7 @@ tools:
     redactFields: [mobileNo, dateOfBirth, externalId]
 
   - name: mifos_loan_create
+    step: { running: Preparing the loan application, done: Prepared the loan application }
     description: Submit a new loan application for a client. Requires the officer's confirmation.
     summary: "New loan application for {clientName}"
     write: true
@@ -195,6 +204,7 @@ tools:
       body: '{"clientId":"${clientId}","productId":"${productId}","principal":"${principal}","loanTermFrequency":"${loanTermFrequency}","loanTermFrequencyType":"${loanTermFrequencyType}","numberOfRepayments":"${numberOfRepayments}","repaymentEvery":"${repaymentEvery}","repaymentFrequencyType":"${repaymentFrequencyType}","interestRatePerPeriod":"${interestRatePerPeriod}","amortizationType":"${amortizationType}","interestType":"${interestType}","interestCalculationPeriodType":"${interestCalculationPeriodType}","transactionProcessingStrategyCode":"${transactionProcessingStrategyCode}","expectedDisbursementDate":"${expectedDisbursementDate}","submittedOnDate":"${submittedOnDate}","loanType":"individual","locale":"en","dateFormat":"dd MMMM yyyy"}'
 
   - name: mifos_loan_approve
+    step: { running: Preparing the approval, done: Prepared the approval }
     description: Approve a loan application that is awaiting approval. Requires the officer's confirmation.
     summary: "Approve {productName} for {clientName}"
     write: true
@@ -216,6 +226,7 @@ tools:
       body: '{"approvedOnDate":"${approvedOnDate}","approvedLoanAmount":"${approvedLoanAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
 
   - name: mifos_loan_disburse
+    step: { running: Preparing the disbursement, done: Prepared the disbursement }
     description: Disburse an approved loan, paying the money out. Requires the officer's confirmation.
     summary: "Disburse {productName} for {clientName}"
     write: true
@@ -237,6 +248,7 @@ tools:
       body: '{"actualDisbursementDate":"${actualDisbursementDate}","transactionAmount":"${transactionAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
 
   - name: mifos_loan_repayment
+    step: { running: Preparing the repayment, done: Prepared the repayment }
     description: Record a repayment against an active loan. Requires the officer's confirmation.
     summary: "Record repayment on {productName} for {clientName}"
     write: true
