@@ -231,11 +231,17 @@ public final class AgentLoop {
         for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
             LlmResult result;
             try {
+                // Opened on the first real character rather than on stream open. A model with
+                // thinking turned off still emits an empty pair of markers, and a panel that
+                // appears empty on every turn reads as broken rather than as quiet.
+                ThinkingChannel thinking = new ThinkingChannel(sink);
                 result = llm.complete(
                         withSystemPrompt(screenContext, conversations.messages(fingerprint, conversationId), context),
                         manifest.openAiSchemas(),
                         (delta) -> sink.emit(StreamEvent.token(delta)),
+                        thinking::accept,
                         sink::isCancelled);
+                thinking.close();
             } catch (LlmException e) {
                 // A refusal is not an outage. Telling an officer to try again shortly, when the
                 // key is wrong or the request was malformed, sends them round a loop that cannot
@@ -350,7 +356,7 @@ public final class AgentLoop {
     private ExecStatus executeAndRecord(ToolDefinition tool, LlmToolCall call, CallContext context,
             String idempotencyKey, String conversationId, String fingerprint, EventSink sink,
             Map<String, String> rows) {
-        sink.emit(StreamEvent.toolCall(tool.name(), "started", !tool.write(), -1));
+        sink.emit(StreamEvent.toolCall(tool.name(), tool.stepLabel(false), "started", !tool.write(), -1));
         long startedAt = System.currentTimeMillis();
         String outcome;
         try {
@@ -362,7 +368,7 @@ public final class AgentLoop {
                 sink.emit(StreamEvent.done(conversationId));
                 return ExecStatus.AUTH_FAILED;
             } else if (e.isIndeterminate()) {
-                sink.emit(StreamEvent.toolCall(tool.name(), "finished", !tool.write(),
+                sink.emit(StreamEvent.toolCall(tool.name(), tool.stepLabel(true), "finished", !tool.write(),
                         System.currentTimeMillis() - startedAt));
                 return ExecStatus.UNKNOWN;
             } else if (e.isPermissionFailure()) {
@@ -377,7 +383,8 @@ public final class AgentLoop {
             outcome = "{\"error\":" + jsonQuote(e.getMessage() == null ? "The request could not be prepared."
                     : e.getMessage()) + "}";
         }
-        sink.emit(StreamEvent.toolCall(tool.name(), "finished", !tool.write(), System.currentTimeMillis() - startedAt));
+        sink.emit(StreamEvent.toolCall(tool.name(), tool.stepLabel(true), "finished", !tool.write(),
+                System.currentTimeMillis() - startedAt));
         conversations.append(fingerprint, conversationId, toolResultMessage(call, outcome));
         emitNavigationCard(tool, call, outcome, sink, rows);
         return isErrorOutcome(outcome) ? ExecStatus.APP_ERROR : ExecStatus.OK;
@@ -754,6 +761,44 @@ public final class AgentLoop {
             return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value == null ? "" : value);
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             return "\"tool failed\"";
+        }
+    }
+
+    /**
+     * The model's working notes for one round, opened only if any actually arrive.
+     *
+     * <p>Holds the start event back until there is something to show, and reports how long the
+     * thinking took when it closes. The elapsed time is what makes a slow turn legible: it is
+     * the difference between an officer seeing that the assistant is working and an officer
+     * wondering whether it has hung.
+     */
+    private static final class ThinkingChannel {
+
+        private final EventSink sink;
+        private long startedAt;
+        private boolean open;
+
+        private ThinkingChannel(EventSink sink) {
+            this.sink = sink;
+        }
+
+        private void accept(String delta) {
+            if (delta == null || delta.isBlank()) {
+                return; // Whitespace is not a thought worth opening a panel for.
+            }
+            if (!open) {
+                open = true;
+                startedAt = System.currentTimeMillis();
+                sink.emit(StreamEvent.thinkingStart());
+            }
+            sink.emit(StreamEvent.thinkingDelta(delta));
+        }
+
+        private void close() {
+            if (open) {
+                open = false;
+                sink.emit(StreamEvent.thinkingEnd(System.currentTimeMillis() - startedAt));
+            }
         }
     }
 }

@@ -30,7 +30,7 @@ public final class ScriptedLlmClient implements LlmClient {
 
     @Override
     public LlmResult complete(List<Map<String, Object>> messages, List<Map<String, Object>> tools,
-            Consumer<String> onToken, BooleanSupplier cancelled) {
+            Consumer<String> onToken, Consumer<String> onReasoning, BooleanSupplier cancelled) {
         Map<String, Object> last = messages.get(messages.size() - 1);
         String role = String.valueOf(last.get("role"));
 

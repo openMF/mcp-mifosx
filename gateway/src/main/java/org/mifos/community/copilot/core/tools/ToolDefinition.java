@@ -19,10 +19,40 @@ import java.util.Map;
  */
 public record ToolDefinition(String name, String description, boolean write, String summaryTemplate,
         List<Param> params, RestMapping rest, List<String> redactFields, List<Enrich> enrich, Defaults defaults,
-        Map<String, String> computed) {
+        Map<String, String> computed, Step step) {
 
     public ToolDefinition {
         computed = computed == null ? Map.of() : Map.copyOf(computed);
+    }
+
+    /** A tool that has not been given step wording yet; the log falls back to its name. */
+    public ToolDefinition(String name, String description, boolean write, String summaryTemplate, List<Param> params,
+            RestMapping rest, List<String> redactFields, List<Enrich> enrich, Defaults defaults,
+            Map<String, String> computed) {
+        this(name, description, write, summaryTemplate, params, rest, redactFields, enrich, defaults, computed, null);
+    }
+
+    /**
+     * What this tool is called in the step log the officer reads.
+     *
+     * <p>Declared here rather than generated, for two reasons. A step log is part of the record
+     * of what was done on a client's account, and a record whose wording changes between runs is
+     * not much of a record. And a model asked to name its own steps will happily write something
+     * flattering; the manifest cannot.
+     *
+     * @param running present participle, shown while the call is in flight
+     * @param done past tense, shown once it has returned, which is how the officer knows it did
+     */
+    public record Step(String running, String done) {
+    }
+
+    /** The step wording, falling back to the tool's own name where the manifest gave none. */
+    public String stepLabel(boolean finished) {
+        if (step == null) {
+            return name;
+        }
+        String label = finished ? step.done() : step.running();
+        return label == null || label.isBlank() ? name : label;
     }
 
     /**

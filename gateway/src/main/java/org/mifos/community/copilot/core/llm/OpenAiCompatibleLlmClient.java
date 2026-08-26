@@ -59,7 +59,8 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
 
     @Override
     public LlmResult complete(List<Map<String, Object>> messages, List<Map<String, Object>> tools,
-            Consumer<String> onToken, BooleanSupplier cancelled) throws LlmException {
+            Consumer<String> onToken, Consumer<String> onReasoning, BooleanSupplier cancelled)
+            throws LlmException {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", model);
         body.put("messages", messages);
@@ -105,13 +106,30 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
             throw new LlmException("LLM provider returned HTTP " + response.statusCode(), null, false, refused);
         }
 
-        return consumeStream(response.body(), onToken, cancelled);
+        return consumeStream(response.body(), onToken, onReasoning, cancelled);
     }
 
+    /**
+     * The reasoning field names in use across OpenAI-compatible providers, in probe order.
+     *
+     * <p>Not one name, because there is no agreement on one. DeepSeek and the engines that
+     * followed it use {@code reasoning_content}; Ollama, current vLLM and OpenRouter use
+     * {@code reasoning}. A given deployment may answer to either depending on its version, so
+     * every chunk is checked against all of them rather than the first one that ever worked.
+     */
+    private static final String[] REASONING_FIELDS = { "reasoning_content", "reasoning", "thinking" };
+
     /** Assemble content deltas and fragmented tool_calls from the SSE line stream. */
-    private LlmResult consumeStream(Stream<String> lines, Consumer<String> onToken, BooleanSupplier cancelled)
-            throws LlmException {
+    private LlmResult consumeStream(Stream<String> lines, Consumer<String> onToken, Consumer<String> onReasoning,
+            BooleanSupplier cancelled) throws LlmException {
         StringBuilder text = new StringBuilder();
+        // Only used by providers that leave <think> markers in the content. Anything that sends
+        // reasoning in a field of its own never reaches it.
+        ReasoningSplitter inlineThinking = new ReasoningSplitter((answer) -> {
+            text.append(answer);
+            onToken.accept(answer);
+        }, onReasoning);
+        boolean reasoningFieldSeen = false;
         // OpenAI streams tool calls as fragments keyed by index: name arrives once,
         // the JSON `arguments` string arrives in pieces that must be concatenated.
         Map<Integer, PartialToolCall> partial = new TreeMap<>();
@@ -128,10 +146,28 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
                     continue;
                 }
                 JsonNode delta = mapper.readTree(payload).path("choices").path(0).path("delta");
+
+                // Checked by key presence, not by truthiness: Ollama omits the key when there is
+                // no reasoning, DeepSeek sends an explicit null, and an empty string is a real
+                // value that neither means "absent".
+                for (String field : REASONING_FIELDS) {
+                    if (delta.hasNonNull(field) && !delta.get(field).asText().isEmpty()) {
+                        reasoningFieldSeen = true;
+                        onReasoning.accept(delta.get(field).asText());
+                    }
+                }
+
                 JsonNode content = delta.path("content");
                 if (content.isTextual() && !content.asText().isEmpty()) {
-                    text.append(content.asText());
-                    onToken.accept(content.asText());
+                    if (reasoningFieldSeen) {
+                        // The provider is separating the two itself, so the content channel is
+                        // the answer and nothing else. Running the splitter over it as well
+                        // would only risk swallowing a client whose name contains a bracket.
+                        text.append(content.asText());
+                        onToken.accept(content.asText());
+                    } else {
+                        inlineThinking.accept(content.asText());
+                    }
                 }
                 for (JsonNode fragment : delta.path("tool_calls")) {
                     int index = fragment.path("index").asInt(0);
@@ -148,6 +184,8 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
                     }
                 }
             }
+            // Nothing more is coming, so a tail held back as a possible marker is simply text.
+            inlineThinking.finish();
         } catch (IOException e) {
             throw new LlmException("Failed to read the LLM stream", e);
         }
