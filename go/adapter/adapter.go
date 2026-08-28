@@ -38,14 +38,20 @@ func New() *FineractClient {
 	username := os.Getenv("MIFOSX_USERNAME")
 	password := os.Getenv("MIFOSX_PASSWORD")
 
+	// Primary instance is mifos-bank-2 everywhere (user directive 2026-08-01): the companion
+	// defaults to the live mifos-bank-2 Fineract with no env needed. MIFOSX_* env still overrides
+	// (e.g. sandbox tenant `default` as the fallback instance).
 	if baseURL == "" {
-		baseURL = "https://localhost:8443/fineract-provider/api/v1"
+		baseURL = "https://mifos-bank-2.mifos.community/fineract-provider/api/v1"
 	}
 	if tenantID == "" {
-		tenantID = "default"
+		tenantID = "mifos-bank-2"
 	}
 	if username == "" {
 		username = "mifos"
+	}
+	if password == "" {
+		password = "password"
 	}
 
 	return &FineractClient{
@@ -55,8 +61,17 @@ func New() *FineractClient {
 		Password: password,
 		HTTP: &http.Client{
 			Timeout: 45 * time.Second,
+			// Connection reuse + HTTP/2 is the single biggest latency win against mifos-bank-2:
+			// each fresh TLS handshake costs ~1.2s, and composite endpoints fan out to many calls.
+			// Setting TLSClientConfig manually otherwise DISABLES Go's automatic HTTP/2, so we must
+			// ForceAttemptHTTP2 (mifos-bank-2 speaks h2) and keep a warm idle-connection pool so
+			// every call after the first reuses the handshake (~0.5s vs ~1.3s per call).
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+				TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+				ForceAttemptHTTP2:   true,
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 16,
+				IdleConnTimeout:     120 * time.Second,
 			},
 		},
 	}
@@ -67,59 +82,86 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 	endpoint = strings.TrimPrefix(endpoint, "/")
 	url := fmt.Sprintf("%s/%s", c.BaseURL, endpoint)
 
-	var reqBody io.Reader
+	var jsonBody []byte
 	if body != nil {
-		jsonBody, err := json.Marshal(body)
+		b, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		reqBody = bytes.NewBuffer(jsonBody)
+		jsonBody = b
 	}
 
-	req, err := http.NewRequest(method, url, reqBody)
-	if err != nil {
-		return nil, err
-	}
-
-	req.SetBasicAuth(c.Username, c.Password)
-	req.Header.Set("fineract-platform-tenantid", c.TenantID)
-	req.Header.Set("Content-Type", "application/json")
-
-	if isAttachment {
-		req.Header.Set("Accept", "*/*")
-	} else {
-		req.Header.Set("Accept", "application/json")
-	}
-
-	if queryParams != nil {
-		q := req.URL.Query()
-		for k, v := range queryParams {
-			q.Add(k, v)
+	// Retry transient upstream failures so a flaky-backend blip never surfaces to the app.
+	// The live Fineract instance intermittently returns 502 under load; retry a bounded number
+	// of times with a short linear backoff. SAFETY: a transport error (connection never
+	// completed) is retried for ANY method; a gateway 5xx (502/503/504) is retried only for
+	// idempotent reads (GET/HEAD) so a write is never double-submitted.
+	idempotent := method == http.MethodGet || method == http.MethodHead
+	const maxAttempts = 3
+	var respBody []byte
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		var reqBody io.Reader
+		if jsonBody != nil {
+			reqBody = bytes.NewReader(jsonBody)
 		}
-		req.URL.RawQuery = q.Encode()
-	}
+		req, err := http.NewRequest(method, url, reqBody)
+		if err != nil {
+			return nil, err
+		}
+		req.SetBasicAuth(c.Username, c.Password)
+		req.Header.Set("fineract-platform-tenantid", c.TenantID)
+		req.Header.Set("Content-Type", "application/json")
+		if isAttachment {
+			req.Header.Set("Accept", "*/*")
+		} else {
+			req.Header.Set("Accept", "application/json")
+		}
+		if queryParams != nil {
+			q := req.URL.Query()
+			for k, v := range queryParams {
+				q.Add(k, v)
+			}
+			req.URL.RawQuery = q.Encode()
+		}
 
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
+		resp, err := c.HTTP.Do(req)
+		if err != nil {
+			lastErr = err
+			if attempt < maxAttempts {
+				time.Sleep(time.Duration(attempt) * 400 * time.Millisecond)
+				continue
+			}
+			return nil, err
+		}
+		respBody, err = io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			return nil, err
+		}
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
+		// transient gateway 5xx on an idempotent read → retry
+		if idempotent && (resp.StatusCode == http.StatusBadGateway ||
+			resp.StatusCode == http.StatusServiceUnavailable ||
+			resp.StatusCode == http.StatusGatewayTimeout) && attempt < maxAttempts {
+			lastErr = fmt.Errorf("API Error %d", resp.StatusCode)
+			time.Sleep(time.Duration(attempt) * 400 * time.Millisecond)
+			continue
+		}
 
-	if resp.StatusCode >= 400 {
-		return respBody, fmt.Errorf("API Error %d", resp.StatusCode)
+		if resp.StatusCode >= 400 {
+			return respBody, fmt.Errorf("API Error %d", resp.StatusCode)
+		}
+		// If it's a binary/attachment response, return a descriptive string instead of a huge blob
+		contentType := resp.Header.Get("Content-Type")
+		if isAttachment && !strings.Contains(contentType, "json") {
+			return []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))), nil
+		}
+		return respBody, nil
 	}
-
-	// If it's a binary/attachment response, return a descriptive string instead of a huge blob
-	contentType := resp.Header.Get("Content-Type")
-	if isAttachment && !strings.Contains(contentType, "json") {
-		return []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))), nil
+	if lastErr != nil {
+		return respBody, lastErr
 	}
-
 	return respBody, nil
 }
 

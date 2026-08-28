@@ -97,7 +97,7 @@ def close_client(client_id: int, closure_reason_id: int = 17):
     return fineract_client.execute_post(f"clients/{client_id}?command=close", payload)
 
 
-# --- GROUP & CENTER OPERATIONS ---
+# --- GROUP OPERATIONS ---
 
 @tool
 def create_group(name: str, office_id: int = 1, client_members: list = None):

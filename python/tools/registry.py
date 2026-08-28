@@ -26,7 +26,7 @@ from tools.domains.clients import (
     update_client_mobile,
 )
 from tools.domains.codetables import get_code_values, list_codes, list_datatables
-from tools.domains.groups import activate_group, add_group_member, create_center, get_center, list_centers, list_groups
+from tools.domains.groups import activate_group, add_group_member, list_groups
 from tools.domains.loans import (
     apply_late_fee,
     approve_and_disburse_loan,
@@ -57,6 +57,47 @@ from tools.domains.savings import (
     withdraw_savings,
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
+from tools.domains.self_service import (
+    authenticate,
+    get_self_client,
+    list_self_loans,
+    list_self_savings,
+    self_authenticate,
+)
+from tools.domains.batch import send_batch
+from tools.domains.group_banking import (
+    add_loan_guarantor,
+    advance_cycle,
+    assign_member_role,
+    create_invitation,
+    get_group_config,
+    get_group_corpus,
+    get_loan_policy,
+    get_loan_vote,
+    get_member_ceiling,
+    get_member_role,
+    get_social_fund,
+    get_sync_state,
+    list_attendance,
+    list_invitations,
+    list_loan_guarantors,
+    list_loan_requests,
+    list_meetings,
+    list_notifications,
+    list_share_outs,
+    push_notification,
+    record_attendance,
+    record_loan_vote,
+    record_meeting,
+    record_share_out,
+    set_loan_policy,
+    set_member_ceiling,
+    submit_loan_request,
+    update_group_corpus,
+    update_social_fund,
+    update_sync_state,
+    upsert_group_config,
+)
 
 
 class DomainRegistry:
@@ -74,7 +115,7 @@ class DomainRegistry:
 
     Full domain map:
         router.domain_map["clients"]    - 16 client & KYC tools
-        router.domain_map["groups"]     - 6 group & center tools
+        router.domain_map["groups"]     - 3 group tools
         router.domain_map["loans"]      - 14 loan tools
         router.domain_map["savings"]    - 9 savings tools
         router.domain_map["staff"]      - 4 staff & office tools
@@ -95,8 +136,7 @@ class DomainRegistry:
                 apply_client_charge, get_client_transactions, get_client_addresses
             ],
             "groups": [
-                list_groups, activate_group, add_group_member,
-                list_centers, get_center, create_center
+                list_groups, activate_group, add_group_member
             ],
             "loans": [
                 get_loan_details, get_repayment_schedule, create_loan,
@@ -128,6 +168,30 @@ class DomainRegistry:
             ],
             "codetables": [
                 list_codes, get_code_values, list_datatables
+            ],
+            "self_service": [
+                authenticate, self_authenticate, get_self_client,
+                list_self_savings, list_self_loans
+            ],
+            "batch": [
+                send_batch
+            ],
+            "group_banking": [
+                get_group_config, upsert_group_config, advance_cycle,
+                list_meetings, record_meeting,
+                list_attendance, record_attendance,
+                get_member_role, assign_member_role,
+                list_share_outs, record_share_out,
+                get_social_fund, update_social_fund,
+                get_loan_vote, record_loan_vote,
+                get_sync_state, update_sync_state,
+                list_loan_requests, submit_loan_request,
+                get_group_corpus, update_group_corpus,
+                get_loan_policy, set_loan_policy,
+                get_member_ceiling, set_member_ceiling,
+                list_loan_guarantors, add_loan_guarantor,
+                list_notifications, push_notification,
+                list_invitations, create_invitation,
             ]
         }
 
@@ -181,8 +245,8 @@ class DomainRegistry:
         if matches_keyword(["client", "person", "search", "activate", "mobile", "kyc", "identifier", "address", "charge", "fee", "document"]):
             active_domains.add("clients")
 
-        # Groups & Centers
-        if matches_keyword(["group", "center", "centre", "member", "lending group"]):
+        # Groups
+        if matches_keyword(["group", "member", "lending group"]):
             active_domains.add("groups")
 
         # Savings
@@ -212,6 +276,22 @@ class DomainRegistry:
         # Code Tables
         if matches_keyword(["code", "dropdown", "code value", "gender", "id type", "datatable", "custom field"]):
             active_domains.add("codetables")
+
+        # Self-service / End-user auth
+        if matches_keyword(["self", "self-service", "my profile", "my savings", "my loans",
+                            "authenticate", "login", "sign in"]):
+            active_domains.add("self_service")
+
+        # Batch
+        if matches_keyword(["batch", "bulk", "outbox", "drain", "queue"]):
+            active_domains.add("batch")
+
+        # Group banking / VSLA
+        if matches_keyword(["meeting", "attendance", "share-out", "share out", "cycle",
+                            "corpus", "social fund", "guarantor", "ceiling", "policy",
+                            "invitation", "stewardship", "notification", "vote",
+                            "vsla", "rosca", "group banking"]):
+            active_domains.add("group_banking")
 
         # Default: return clients for basic lookup if nothing matched
         if not active_domains:

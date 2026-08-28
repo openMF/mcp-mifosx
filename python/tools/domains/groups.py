@@ -56,32 +56,3 @@ def add_group_member(group_id: int, client_id: int):
     print(f"[Tool] Adding Client #{client_id} to Group #{group_id}...")
     payload = {"clientMembers": [client_id]}
     return fineract_client.execute_post(f"groups/{group_id}?command=associateClients", payload)
-
-# --- CENTER OPERATIONS ---
-
-@tool
-def list_centers(office_id: int = None):
-    """Answers: 'List all centers'"""
-    endpoint = "centers"
-    if office_id:
-        endpoint += f"?officeId={office_id}"
-    print("[Tool] Fetching Centers...")
-    return fineract_client.execute_get(endpoint)
-
-@tool
-def get_center(center_id: int):
-    """Answers: 'Show me details for center #5'"""
-    print(f"[Tool] Fetching details for Center #{center_id}...")
-    return fineract_client.execute_get(f"centers/{center_id}?associations=groupMembers,collectionSheet")
-
-@tool
-def create_center(name: str, office_id: int, external_id: str = None):
-    """Answers: 'Create a new center named "Main Center" in office 1'"""
-    print(f"[Tool] Creating Center '{name}'...")
-    payload = {
-        "name": name,
-        "officeId": office_id,
-        "active": False,
-        "externalId": external_id
-    }
-    return fineract_client.execute_post("centers", payload)
