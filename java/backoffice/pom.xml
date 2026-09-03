@@ -16,7 +16,7 @@
         <quarkus.mcp.version>1.13.2</quarkus.mcp.version>
         <lombok.version>1.18.48</lombok.version>
         <skipITs>true</skipITs>
-        <surefire-plugin.version>3.5.6</surefire-plugin.version>
+        <surefire-plugin.version>3.6.0</surefire-plugin.version>
     </properties>
 
     <dependencyManagement>
