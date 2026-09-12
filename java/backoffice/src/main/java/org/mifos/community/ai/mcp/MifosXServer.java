@@ -890,4 +890,37 @@ public class MifosXServer {
         }
         return null;
     }
+    
+        @Tool(description = "Get detailed information about a specific loan account, including outstanding balance, " +
+            "repayment schedule, current status, and next due date. " +
+            "ALWAYS call this tool before processing a repayment, modification, or waiver to ensure the AI has the latest state.")
+    JsonNode getLoanAccountDetails(@ToolArg(description = "Loan account ID (e.g. 1)", required = true) Integer loanId) {
+        return mifosXClient.getLoanAccountDetails(loanId);
+    }
+
+    @Tool(description = "Get the complete transaction history of a specific loan account, including past disbursements, " +
+            "repayments, waivers, and penalties applied.")
+    JsonNode getLoanTransactions(@ToolArg(description = "Loan account ID (e.g. 1)", required = true) Integer loanId) {
+        return mifosXClient.getLoanTransactions(loanId);
+    }
+
+    @Tool(description = "Get detailed information about a specific savings account, including current balance, " +
+            "interest earned, account status, and linked client details.")
+    JsonNode getSavingsAccountDetails(@ToolArg(description = "Savings account ID (e.g. 1)", required = true) Integer savingsId) {
+        return mifosXClient.getSavingsAccountDetails(savingsId);
+    }
+
+    @Tool(description = "List staff members (e.g., loan officers, branch managers) in the system. " +
+            "Use this to find the correct staff ID when assigning a loan officer to a new client or loan application. " +
+            "Optionally filter by office ID to find staff at a specific branch.")
+    JsonNode listStaff(@ToolArg(description = "Optional Office ID to filter staff (e.g. 1). Leave null to list all staff.", required = false) Integer officeId) {
+        return mifosXClient.listStaff(officeId);
+    }
+
+    @Tool(description = "List all offices (branches) in the Mifos X system. " +
+            "Use this to retrieve valid office IDs and names, which are required when creating new clients, " +
+            "opening accounts, or filtering staff and portfolio data by branch.")
+    JsonNode listOffices() {
+        return mifosXClient.listOffices();
+    }
 }
