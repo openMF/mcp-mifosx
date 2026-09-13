@@ -1,0 +1,11 @@
+target/
+.git/
+.gitignore
+.env
+.idea/
+.vscode/
+*.swp
+*.swo
+README.md
+LICENSE
+benches/
