@@ -22,7 +22,7 @@
     <lombok.version>1.18.48</lombok.version>
     <spotless.version>3.10.2</spotless.version>
     <swagger.version>2.2.55</swagger.version>
-    <testcontainers.version>1.21.4</testcontainers.version>
+    <testcontainers.version>2.0.5</testcontainers.version>
     <mockito.version>5.17.0</mockito.version>
     <mapstruct.version>1.6.3</mapstruct.version>
   </properties>
