@@ -118,6 +118,12 @@ public interface MifosXClient {
     @Produces(MediaType.APPLICATION_JSON)
     @Path("/fineract-provider/api/v1/savingsaccounts")
     JsonNode getSavingsAccountByExternalId(@QueryParam("externalId") String externalId);
+    
+     // --- Savings Account Details ---
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/savingsaccounts/{accountId}")
+    JsonNode getSavingsAccountDetails(@PathParam("accountId") Integer savingsId);
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
@@ -215,6 +221,17 @@ public interface MifosXClient {
     JsonNode loanRepayment(@PathParam("accountNo") Integer accountNo,
                            @QueryParam("command") String command,
                            String loanRepayment);
+    
+    // --- Loan Account Details & History ---
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/loans/{accountNo}")
+    JsonNode getLoanAccountDetails(@PathParam("accountNo") Integer loanId);
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/loans/{accountNo}/transactions")
+    JsonNode getLoanTransactions(@PathParam("accountNo") Integer loanId);
 
     @POST
     @Consumes(MediaType.APPLICATION_JSON)
@@ -268,4 +285,15 @@ public interface MifosXClient {
     @Produces(MediaType.APPLICATION_JSON)
     @Path("fineract-provider/api/v1/charges/{chargeId}")
     JsonNode updateCharge(@PathParam("chargeId") Integer chargeId, String charge);
+    
+    // --- Organizational Context (Staff & Offices) ---
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/staff")
+    JsonNode listStaff(@QueryParam("officeId") Integer officeId);
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v1/offices")
+    JsonNode listOffices();
 }

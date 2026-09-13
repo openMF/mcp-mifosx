@@ -1,0 +1,271 @@
+# Copyright since 2026 Mifos Initiative
+# This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+#
+# Reviewed, version-controlled tool manifest, the ENFORCEMENT AUTHORITY for what the model
+# may touch (ADR-001). Default-deny: a tool not listed here does not exist for the model.
+# Tools marked `write: true` always pause for an officer's confirmation before executing.
+#
+# Every parameter carries a `label`, which is what the officer reads on the confirmation
+# card. Identifiers are marked `show: false`, because an account number and a product name
+# mean something to a person while a database id does not. Write tools declare `enrich`, a
+# list of reads performed with the officer's own credential so the card can name the account,
+# the product and the client instead of echoing numbers back. A block's `currency` points at
+# the code the record is denominated in, so amounts on the card read "USD 28,000.00".
+#
+# `redactFields` are masked before results can reach a cloud model.
+#
+# A tool's `path` names a resource and nothing else. Where that resource lives is a
+# property of the installation rather than of the tool: a bare Fineract serves them
+# under /fineract-provider/api/v1, and one behind an API manager does not. That root
+# is configuration (FINERACT_API_PATH) and is deliberately absent from this file.
+#
+# Two things a body may read besides the officer's own arguments:
+# `pattern`, `min` and `max` are copied from the validators the Mifos X web app already
+# applies to the same field, and `mustBe` finishes the sentence "First name must ...". They
+# are deliberately no stricter than the form: the Copilot sits beside that app, so it must
+# not refuse work an officer could do in the UI, and must not become a way round it either.
+#
+#   ${session.x}  a fact the logged-in session owns, such as which office the officer works
+#                 in. The model cannot supply one, which is the point.
+#   defaults:     values read from the record that owns them before the request is built, so a
+#                 loan takes its rate and its schedule from its product rather than from a
+#                 literal written here. Anything the officer named is left alone.
+
+tools:
+  # ── Reading ──────────────────────────────────────────────────────────────────
+  - name: mifos_client_search
+    step: { running: Looking up the client, done: Looked up the client }
+    description: Find clients by name. Matches part of a name, however it was typed.
+    write: false
+    # This used /search, which matches literally: "Victor" found the client and "victor"
+    # found nothing, so an officer typing normally was told their client did not exist.
+    #
+    # displayName is the filter the clients resource actually binds, and it matches on part
+    # of a name. There is no bound filter called name: passing one is silently dropped and
+    # every client in the office comes back, which is worse than the problem being fixed.
+    # The casing is handled on our side, by format: name below: a name typed in one case is
+    # capitalised, and a name typed with capitals inside it is left exactly as written, since
+    # McDonald and de la Cruz do not survive a general rule. A name whose internal capitals
+    # are typed flat still needs a case-insensitive collation on the Fineract side.
+    #
+    # A search returns whole matched clients. The name has to survive for the result to be any
+    # use to the officer; the phone number and the national id do not.
+    redactFields: [externalId, mobileNo]
+    params:
+      - { name: query, type: string, required: true, label: Search, format: name,
+          description: A name, or any part of one }
+    rest:
+      method: GET
+      path: /clients?displayName={query}
+
+  - name: mifos_client_details
+    step: { running: Reading the client record, done: Read the client record }
+    description: Fetch one client's profile, including status, office and activation date.
+    write: false
+    params:
+      - { name: clientId, type: integer, required: true, label: Client, description: The client's system id }
+    rest:
+      method: GET
+      path: /clients/{clientId}
+    redactFields: [mobileNo, dateOfBirth, externalId]
+
+  - name: mifos_client_accounts
+    step: { running: Checking their accounts, done: Checked their accounts }
+    description: List every loan and savings account belonging to a client, with balances and statuses.
+    write: false
+    params:
+      - { name: clientId, type: integer, required: true, label: Client, description: The client's system id }
+    rest:
+      method: GET
+      path: /clients/{clientId}/accounts
+
+  - name: mifos_loan_details
+    step: { running: Reading the loan account, done: Read the loan account }
+    description: Fetch one loan account, including product, principal, outstanding balance and status.
+    write: false
+    params:
+      - { name: loanId, type: integer, required: true, label: Loan account, description: The loan's system id }
+    rest:
+      method: GET
+      path: /loans/{loanId}
+
+  - name: mifos_loan_schedule
+    step: { running: Fetching the repayment schedule, done: Fetched the repayment schedule }
+    description: Fetch a loan's repayment schedule with due dates and outstanding instalments.
+    write: false
+    params:
+      - { name: loanId, type: integer, required: true, label: Loan account, description: The loan's system id }
+    rest:
+      method: GET
+      path: /loans/{loanId}?associations=repaymentSchedule
+
+  - name: mifos_savings_details
+    step: { running: Checking the savings balance, done: Checked the savings balance }
+    description: Fetch one savings account, including balance, status and product.
+    write: false
+    params:
+      - { name: accountId, type: integer, required: true, label: Savings account, description: The savings account's system id }
+    rest:
+      method: GET
+      path: /savingsaccounts/{accountId}
+
+  - name: mifos_loan_products
+    step: { running: Listing the loan products, done: Listed the loan products }
+    description: List the loan products this office offers. Use this before creating a loan.
+    write: false
+    params: []
+    rest:
+      method: GET
+      path: /loanproducts
+
+  # ── Writing, every one pauses for the officer ────────────────────────────────
+  - name: mifos_client_create
+    step: { running: Preparing the new client, done: Prepared the new client }
+    description: Create and activate a new client in the officer's own office. Requires the officer's confirmation.
+    summary: "Create client {firstname} {lastname}"
+    write: true
+    params:
+      # client-general-step.component.ts requires Validators.pattern('(^[A-Za-z]).*') on both.
+      # The pattern is the web app's. The lengths are Fineract's own columns, which the form
+      # does not mention at all, so a long name only failed once the officer had confirmed it.
+      - { name: firstname, type: string, required: true, label: First name, pattern: '^[A-Za-z].*', mustBe: start with a letter, maxLength: '50' }
+      - { name: lastname, type: string, required: true, label: Last name, pattern: '^[A-Za-z].*', mustBe: start with a letter, maxLength: '50' }
+      - { name: activationDate, type: string, required: true, label: Activation date, format: date, description: "Date as yyyy-MM-dd, or the word today" }
+      - { name: mobileNo, type: string, required: false, label: Mobile number, maxLength: '50' }
+      - { name: dateOfBirth, type: string, required: false, label: Date of birth, format: date, description: "Date as yyyy-MM-dd" }
+      # No format rule: the web app's external-id regex is deployment-configured and empty by
+      # default, so it enforces none, and inventing one here would refuse legitimate references.
+      - { name: externalId, type: string, required: false, label: External id, maxLength: '100', description: "The institution's own reference for this client, such as a national id" }
+      # Filled from the officer's own credential when only one office is reachable.
+      - { name: officeId, type: integer, required: false, label: Office, description: "Only needed when the officer works in more than one office" }
+    rest:
+      method: POST
+      path: /clients
+      # officeId is established from the officer's own credential, never sent by the browser
+      # and never invented by the model. It was a literal 1, which put every client created
+      # through the Copilot into head office whatever branch the officer worked in.
+      body: '{"officeId":"${officeId}","firstname":"${firstname}","lastname":"${lastname}","mobileNo":"${mobileNo}","dateOfBirth":"${dateOfBirth}","externalId":"${externalId}","legalFormId":1,"active":true,"activationDate":"${activationDate}","dateFormat":"dd MMMM yyyy","locale":"en"}'
+    # A rejected creation comes back echoing what was sent, and that answer is fed to the
+    # model. Fineract puts the value in the message text, not under a key of that name, so
+    # these are masked by value as well as by key. externalId is here because this manifest
+    # describes it as a national id, and the read tool masks the same three.
+    redactFields: [mobileNo, dateOfBirth, externalId]
+
+  - name: mifos_loan_create
+    step: { running: Preparing the loan application, done: Prepared the loan application }
+    description: Submit a new loan application for a client. Requires the officer's confirmation.
+    summary: "New loan application for {clientName}"
+    write: true
+    params:
+      - { name: clientId, type: integer, required: true, label: Client, show: false }
+      - { name: productId, type: integer, required: true, label: Product, show: false, description: "Loan product id, from mifos_loan_products" }
+      # amountValueValidator() in the web app, which is where this pattern comes from.
+      - { name: principal, type: number, required: true, label: Principal, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', min: '0.000001', mustBe: 'be an amount, and not a negative one' }
+      # One place the form is looser than the server: the web app allows Validators.min(0), and
+      # Fineract requires strictly more than zero. A loan of no instalments is not a loan.
+      - { name: numberOfRepayments, type: integer, required: true, label: Repayments, min: '1', description: Number of monthly instalments }
+      - { name: submittedOnDate, type: string, required: true, label: Submitted on, format: date, description: "Date as yyyy-MM-dd, or today" }
+      # The one date that is meant to be in the future. Clamping it to the business date
+      # rewrites every instalment on the schedule Fineract derives from it.
+      - { name: expectedDisbursementDate, type: string, required: true, label: Expected disbursement, format: date, futureAllowed: true, description: "Date as yyyy-MM-dd, or today" }
+    enrich:
+      - path: /clients/{clientId}
+        fields:
+          Client: displayName
+          Client account: accountNo
+          Office: officeName
+      - path: /loanproducts/{productId}
+        currency: currency.code
+        fields:
+          Product: name
+    # Fineract requires all of these on every application and refuses the request without
+    # them, so they cannot be left out. They belong to the loan product, and they were written
+    # here as literals: every loan carried 12 percent and a monthly schedule whatever the
+    # product said, which for a weekly microfinance product is simply the wrong loan.
+    defaults:
+      path: /loanproducts/{productId}
+      fields:
+        interestRatePerPeriod: interestRatePerPeriod
+        numberOfRepayments: numberOfRepayments
+        repaymentEvery: repaymentEvery
+        repaymentFrequencyType: repaymentFrequencyType.id
+        loanTermFrequencyType: repaymentFrequencyType.id
+        amortizationType: amortizationType.id
+        interestType: interestType.id
+        interestCalculationPeriodType: interestCalculationPeriodType.id
+        transactionProcessingStrategyCode: transactionProcessingStrategyCode
+    # The term is the repayment count times how often the loan repays. Writing it as the
+    # repayment count alone was right only while repaymentEvery was pinned to 1.
+    computed:
+      loanTermFrequency: numberOfRepayments * repaymentEvery
+    rest:
+      method: POST
+      path: /loans
+      body: '{"clientId":"${clientId}","productId":"${productId}","principal":"${principal}","loanTermFrequency":"${loanTermFrequency}","loanTermFrequencyType":"${loanTermFrequencyType}","numberOfRepayments":"${numberOfRepayments}","repaymentEvery":"${repaymentEvery}","repaymentFrequencyType":"${repaymentFrequencyType}","interestRatePerPeriod":"${interestRatePerPeriod}","amortizationType":"${amortizationType}","interestType":"${interestType}","interestCalculationPeriodType":"${interestCalculationPeriodType}","transactionProcessingStrategyCode":"${transactionProcessingStrategyCode}","expectedDisbursementDate":"${expectedDisbursementDate}","submittedOnDate":"${submittedOnDate}","loanType":"individual","locale":"en","dateFormat":"dd MMMM yyyy"}'
+
+  - name: mifos_loan_approve
+    step: { running: Preparing the approval, done: Prepared the approval }
+    description: Approve a loan application that is awaiting approval. Requires the officer's confirmation.
+    summary: "Approve {productName} for {clientName}"
+    write: true
+    params:
+      - { name: loanId, type: integer, required: true, label: Loan account, show: false }
+      - { name: approvedOnDate, type: string, required: true, label: Approval date, format: date, description: "Date as yyyy-MM-dd, or today" }
+      - { name: approvedLoanAmount, type: number, required: false, label: Approved amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', mustBe: 'be an amount, and not a negative one', description: Approved principal if different from the amount applied for }
+    enrich:
+      - path: /loans/{loanId}
+        currency: currency.code
+        fields:
+          Client: clientName
+          Loan account: accountNo
+          Product: loanProductName
+          Applied for: "#money:principal"
+    rest:
+      method: POST
+      path: /loans/{loanId}?command=approve
+      body: '{"approvedOnDate":"${approvedOnDate}","approvedLoanAmount":"${approvedLoanAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
+
+  - name: mifos_loan_disburse
+    step: { running: Preparing the disbursement, done: Prepared the disbursement }
+    description: Disburse an approved loan, paying the money out. Requires the officer's confirmation.
+    summary: "Disburse {productName} for {clientName}"
+    write: true
+    params:
+      - { name: loanId, type: integer, required: true, label: Loan account, show: false }
+      - { name: actualDisbursementDate, type: string, required: true, label: Disbursement date, format: date, description: "Date as yyyy-MM-dd, or today" }
+      - { name: transactionAmount, type: number, required: false, label: Amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', mustBe: 'be an amount, and not a negative one', description: Amount to disburse if different from the approved principal }
+    enrich:
+      - path: /loans/{loanId}
+        currency: currency.code
+        fields:
+          Client: clientName
+          Loan account: accountNo
+          Product: loanProductName
+          Approved amount: "#money:approvedPrincipal"
+    rest:
+      method: POST
+      path: /loans/{loanId}?command=disburse
+      body: '{"actualDisbursementDate":"${actualDisbursementDate}","transactionAmount":"${transactionAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
+
+  - name: mifos_loan_repayment
+    step: { running: Preparing the repayment, done: Prepared the repayment }
+    description: Record a repayment against an active loan. Requires the officer's confirmation.
+    summary: "Record repayment on {productName} for {clientName}"
+    write: true
+    params:
+      - { name: loanId, type: integer, required: true, label: Loan account, show: false }
+      # The web app blocks a zero repayment with Validators.min(0.001); so does this.
+      - { name: transactionAmount, type: number, required: true, label: Repayment amount, format: money, pattern: '^\d{1,13}(\.\d{1,6})?$', min: '0.001', mustBe: 'be an amount, and not a negative one' }
+      - { name: transactionDate, type: string, required: true, label: Transaction date, format: date, description: "Date as yyyy-MM-dd, or today" }
+    enrich:
+      - path: /loans/{loanId}
+        currency: currency.code
+        fields:
+          Client: clientName
+          Loan account: accountNo
+          Product: loanProductName
+          Outstanding: "#money:summary.principalOutstanding"
+    rest:
+      method: POST
+      path: /loans/{loanId}/transactions?command=repayment
+      body: '{"transactionDate":"${transactionDate}","transactionAmount":"${transactionAmount}","locale":"en","dateFormat":"dd MMMM yyyy"}'
