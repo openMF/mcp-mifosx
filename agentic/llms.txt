@@ -1,0 +1,30 @@
+# Mifos Self Service Plugin
+
+This repository contains the Spring Boot plugin for Apache Fineract that provides self-service banking capabilities to end users.
+
+## Quick Start
+
+This is a plugin that extends Apache Fineract with self-service features. Users can manage their accounts, view transactions, and perform banking operations independently.
+
+## Documentation
+
+- [AGENTS.md](./AGENTS.md) - Comprehensive development guide for AI agents and developers
+- [skills.md](./skills.md) - Java/Spring Boot coding patterns and backend guidelines
+- [README.md](./README.md) - Installation and usage instructions
+- [TODO.md](./TODO.md) - Development roadmap and known issues
+
+## Key Features
+
+- Self-service user registration and authentication
+- Savings and loan account management
+- Product browsing and discovery
+- Secure multi-tenant operations
+- RESTful API endpoints
+
+## Architecture
+
+Built with Spring Boot 3 and Java 21, integrating seamlessly with Apache Fineract 1.15.0-SNAPSHOT.
+
+## Getting Help
+
+See [AGENTS.md](./AGENTS.md) for detailed development guidance and architectural information.

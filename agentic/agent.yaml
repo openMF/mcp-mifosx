@@ -1,0 +1,150 @@
+# Self Service Plugin Agent Configuration
+name: "Mifos Self Service Plugin Agent"
+version: "1.15.0-SNAPSHOT"
+description: "AI agent specialized in Mifos Self Service Plugin for Apache Fineract - providing self-service banking capabilities to end users"
+
+# Core agent metadata
+type: "domain-specific"
+domain: "banking-fintech"
+framework: "spring-ai-agent-skills"
+
+# Agent identification
+agent_id: "mifos-savings-plugin"
+namespace: "org.apache.fineract.savings"
+
+# Runtime configuration
+runtime:
+  java_version: "21"
+  spring_boot_version: "3"
+  fineract_version: "1.15.0-SNAPSHOT"
+
+# Security and permissions
+security:
+  authentication_required: true
+  public_endpoints:
+    - "/v1/self/authentication"
+    - "/v1/self/registration"
+    - "/v1/self/registration/user"
+  permissions:
+    - "READ_SAVINGSPRODUCT"
+    - "READ_LOANPRODUCT" 
+    - "READ_SAVINGSACCOUNT"
+    - "READ_LOAN"
+    - "SELF_SERVICE_USER"
+
+# API endpoints served
+endpoints:
+  base_path: "/v1/self"
+  authentication: "/v1/self/authentication"
+  registration: "/v1/self/registration"
+  user_details: "/v1/self/userdetails"
+  savings: "/v1/self/savingsaccounts"
+  loans: "/v1/self/loans"
+  products:
+    savings: "/v1/self/savingsproducts"
+    loans: "/v1/self/loanproducts"
+    shares: "/v1/self/products/share"
+
+# Integration points
+integrations:
+  apache_fineract:
+    version: "1.15.0-SNAPSHOT"
+    modules:
+      - "fineract-provider"
+      - "fineract-core"
+      - "fineract-security"
+      - "fineract-client"
+      - "fineract-savings"
+      - "fineract-loan"
+  databases:
+    - "postgresql"
+    - "mysql"
+  security:
+    - "spring-security"
+    - "basic-auth"
+    - "oauth2"
+
+# Agent capabilities
+features:
+  - "user_registration"
+  - "authentication"
+  - "savings_account_management"
+  - "loan_account_management"
+  - "product_browsing"
+  - "survey_participation"
+  - "report_generation"
+  - "client_data_access"
+
+# Development metadata
+repository:
+  url: "https://github.com/openMF/savings-plugin"
+  license: "MPL-2.0"
+  organization: "Mifos Initiative"
+
+# Build and deployment
+build:
+  tool: "maven"
+  packaging: "jar"
+  deployment:
+    - "docker"
+    - "tomcat"
+
+# Optional tool schemas for agent/tooling interoperability
+tools:
+  - name: "get_loan_details"
+    description: "Fetch loan details for a given loan id"
+    input_schema:
+      type: "object"
+      properties:
+        loanId:
+          type: "integer"
+      required: ["loanId"]
+    output_schema:
+      type: "object"
+      properties:
+        loanId:
+          type: "integer"
+        status:
+          type: "string"
+        outstandingBalance:
+          type: "number"
+
+  - name: "get_savings_account"
+    description: "Fetch savings account details for a given account id"
+    input_schema:
+      type: "object"
+      properties:
+        accountId:
+          type: "integer"
+      required: ["accountId"]
+    output_schema:
+      type: "object"
+      properties:
+        accountId:
+          type: "integer"
+        status:
+          type: "string"
+        balance:
+          type: "number"
+
+  - name: "self_register_user"
+    description: "Create a self-service user registration request"
+    input_schema:
+      type: "object"
+      properties:
+        username:
+          type: "string"
+        email:
+          type: "string"
+        password:
+          type: "string"
+      required: ["username", "email", "password"]
+    output_schema:
+      type: "object"
+      properties:
+        userId:
+          type: "integer"
+        status:
+          type: "string"
+        message:
+          type: "string"
