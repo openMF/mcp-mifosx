@@ -68,20 +68,31 @@ public class MifosXServer {
         return mifosXClient.getClientDetailsById(clientId);
     }
 
-    @Tool(description = "List out " +
-            "clients")
-    JsonNode listClients(@ToolArg(description = "Optional search text (e.g. John)", required = false) String searchText) throws JsonProcessingException{
+    @Tool(description = "Search for clients by name, account number, external ID, or other attributes. " +
+            "Returns a paginated list of matching clients with id, displayName, accountNumber, " +
+            "office, mobile number, status, and activation date. " +
+            "Use this when you need to find a client before performing other operations.")
+    JsonNode searchClient(
+            @ToolArg(description = "Search text to match against client name, account number, external ID, etc. (e.g. VILMA)", required = true) String text,
+            @ToolArg(description = "Page number (0-based). Defaults to 0.", required = false) Integer page,
+            @ToolArg(description = "Page size. Defaults to 50.", required = false) Integer size) throws JsonProcessingException {
 
         Request request = new Request();
-        request.setText(searchText != null ? searchText : "");
+        request.setText(text != null ? text : "");
 
         ClientSearch clientSearch = new ClientSearch();
         clientSearch.setRequest(request);
-        clientSearch.setPage(0);
-        clientSearch.setSize(50);
+        clientSearch.setPage(page != null ? page : 0);
+        clientSearch.setSize(size != null ? size : 50);
+
         ObjectWriter ow = new ObjectMapper().writer().withDefaultPrettyPrinter();
         String jsonClientSearch = ow.writeValueAsString(clientSearch);
-        return mifosXClient.listClients(jsonClientSearch);
+        return mifosXClient.searchClient(jsonClientSearch);
+    }
+
+    @Tool(description = "List clients with optional search text. Prefer searchClient for name-based lookups.")
+    JsonNode listClients(@ToolArg(description = "Optional search text (e.g. John)", required = false) String searchText) throws JsonProcessingException {
+        return searchClient(searchText != null ? searchText : "", 0, 50);
     }
 
     @Tool(description = "List accounts for a client by client ID")

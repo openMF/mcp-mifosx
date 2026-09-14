@@ -44,7 +44,13 @@ public interface MifosXClient {
       final String tenant = config.getConfigValue("mifos.tenantid").getValue();
       return tenant;
     }
-
+    
+    @POST
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Path("/fineract-provider/api/v2/clients/search")
+    JsonNode searchClient(String searchRequest);
+    
     @GET
     @Path("/fineract-provider/api/v1/search")
     JsonNode getClientByAccount(@BeanParam SearchParameters filterParams);
