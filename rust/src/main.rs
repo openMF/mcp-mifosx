@@ -94,13 +94,22 @@ async fn run_http(adapter: FineractAdapter) -> Result<()> {
         path
     );
 
+    // FIX: Configure allowed hosts to prevent DNS rebinding protection 
+    // from blocking valid requests from DeepChat.
+    let config = StreamableHttpServerConfig::default().with_allowed_hosts(vec![
+        host.clone(),
+        "localhost".to_string(),
+        "127.0.0.1".to_string(),
+        "::1".to_string(),
+        "0.0.0.0".to_string(),
+    ]);
+
     // Factory: one server instance per session / request context.
-    // FineractAdapter is cheap to clone (reqwest::Client is Arc-based).
     let adapter_for_factory = adapter.clone();
     let mcp_service = StreamableHttpService::new(
         move || Ok(MifosMcpServer::new(adapter_for_factory.clone())),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default(),
+        config, // <-- Use the updated config here instead of default()
     );
 
     let cors = CorsLayer::new()
