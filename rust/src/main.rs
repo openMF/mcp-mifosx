@@ -94,22 +94,32 @@ async fn run_http(adapter: FineractAdapter) -> Result<()> {
         path
     );
 
-    // FIX: Configure allowed hosts to prevent DNS rebinding protection 
-    // from blocking valid requests from DeepChat.
-    let config = StreamableHttpServerConfig::default().with_allowed_hosts(vec![
-        host.clone(),
-        "localhost".to_string(),
-        "127.0.0.1".to_string(),
-        "::1".to_string(),
-        "0.0.0.0".to_string(),
-    ]);
+    // 1. Read ALLOWED_HOSTS from environment (comma-separated).
+    // Defaults to a safe local list that includes 0.0.0.0 for Docker.
+    let allowed_hosts_env = std::env::var("ALLOWED_HOSTS").unwrap_or_else(|_| {
+        "localhost,127.0.0.1,::1,0.0.0.0".to_string()
+    });
 
-    // Factory: one server instance per session / request context.
+    // 2. Parse into a Vec<String>, trimming whitespace
+    let allowed_hosts: Vec<String> = allowed_hosts_env
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // 3. Apply configuration (support "*" to disable validation entirely for local dev)
+    let config = if allowed_hosts.contains(&"*".to_string()) {
+        tracing::warn!("ALLOWED_HOSTS contains '*', disabling Host header validation. Not recommended for public deployments.");
+        StreamableHttpServerConfig::default().disable_allowed_hosts()
+    } else {
+        StreamableHttpServerConfig::default().with_allowed_hosts(allowed_hosts.clone())
+    };
+
     let adapter_for_factory = adapter.clone();
     let mcp_service = StreamableHttpService::new(
         move || Ok(MifosMcpServer::new(adapter_for_factory.clone())),
         LocalSessionManager::default().into(),
-        config, // <-- Use the updated config here instead of default()
+        config,
     );
 
     let cors = CorsLayer::new()
@@ -128,6 +138,7 @@ async fn run_http(adapter: FineractAdapter) -> Result<()> {
 
     tracing::info!("MCP Streamable HTTP endpoint ready at http://{}{}", bind_addr, path);
     tracing::info!("Health check: http://{}/health", bind_addr);
+    tracing::info!("Allowed Hosts: {:?}", allowed_hosts); // <-- Helpful debug log
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
