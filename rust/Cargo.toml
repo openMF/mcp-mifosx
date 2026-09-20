@@ -23,7 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 futures = "0.3"
 axum = "0.8"
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors"] }
+tower-http = { version = "0.7", features = ["cors"] }
 
 # Semantic Route Intent — CPU-only ML for context window pruning
 candle-core = "0.11"
