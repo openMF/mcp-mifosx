@@ -7,7 +7,7 @@ version: "3.9"
 
 services:
   temporal:
-    image: temporalio/auto-setup:1.25.2
+    image: temporalio/auto-setup:1.29.7
     ports:
       - "7233:7233"
     environment:
