@@ -6,7 +6,7 @@ spring:
     name: agentic-banking-temporal
   temporal:
     connection:
-      target: ${TEMPORAL_ADDRESS:192.168.80.111:7233}
+      target: ${TEMPORAL_ADDRESS:localhost:7233}
     namespace: ${TEMPORAL_NAMESPACE:default}
     workers:
       - task-queue: ${TEMPORAL_TASK_QUEUE:loan-underwriter-queue}
@@ -20,7 +20,7 @@ spring:
 
 loan:
   ollama:
-    base-url: ${OLLAMA_URL:http://192.168.80.134:11434}
+    base-url: ${OLLAMA_URL:http://localhost:11434}
     model: ${OLLAMA_MODEL:nemotron-3.5-lightning:latest}
     temperature: 0.1
     timeout-seconds: 120
