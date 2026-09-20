@@ -20,7 +20,7 @@ public interface LoanActivities {
     Map<String, Object> fetchCreditReportExperian(String applicantId);
 
     @ActivityMethod
-    Map<String, Object> processDocument(String path, String applicantId);
+    Map<String, Object> processDocument(String path, String applicantId, String expectedDisplayName);
 
     @ActivityMethod
     AssessmentResult incomeAssessment(LoanApplication app, Map<String, Object> bank, Map<String, Object> credit);

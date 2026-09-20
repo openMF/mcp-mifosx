@@ -120,7 +120,7 @@ public class SupervisorWorkflowImpl implements SupervisorWorkflow {
         if (!documentPaths.isEmpty()) {
             List<Promise<Map<String, Object>>> docPromises = new ArrayList<>();
             for (String path : documentPaths) {
-                docPromises.add(Async.function(loanActivities::processDocument, path, application.getApplicantId()));
+                docPromises.add(Async.function(loanActivities::processDocument, path, application.getApplicantId(), application.getFullName()));
             }
             for (Promise<Map<String, Object>> p : docPromises) {
                 try {
@@ -171,7 +171,7 @@ public class SupervisorWorkflowImpl implements SupervisorWorkflow {
             aiDecision.setFinalStatus("APPROVED");
             // Create the actual loan in Apache Fineract
             try {
-                Map<String, Object> fineractLoan = fineractActivities.createAndApproveLoan(application, aiDecision);
+                Map<String, Object> fineractLoan = fineractActivities.createAndApproveLoan(application, aiDecision, docResults);
                 aiDecision.setFineractLoan(fineractLoan);
             } catch (Exception e) {
                 log.error("Fineract loan creation failed – decision still recorded: {}", e.getMessage());

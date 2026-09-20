@@ -13,7 +13,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import java.io.File;
 import java.math.BigDecimal;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -203,7 +206,8 @@ public class FineractClient {
     // ── Create client + loan + approve ──────────────────────────────────
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> submitAndApproveLoan(LoanApplication app, LoanDecision decision) {
+    public Map<String, Object> submitAndApproveLoan(LoanApplication app, LoanDecision decision,
+                                                   List<Map<String, Object>> documentResults) {
         Map<String, Object> result = new HashMap<>();
         try {
             LoanProductTemplate template = getLoanProductTemplate(defaultProductId);
@@ -211,9 +215,16 @@ public class FineractClient {
             result.put("product", template.toSummaryMap());
             result.put("adaptations", adapted.getAdjustments());
 
-            Long clientId = createClient(app);
+            String curpClave = extractValidCurpClave(documentResults);
+            List<String> validCurpPaths = extractValidCurpPaths(documentResults);
+            if (curpClave != null) {
+                result.put("curpClave", curpClave);
+                log.info("Valid CURP will be used as client externalId={}", curpClave);
+            }
+
+            Long clientId = createClient(app, curpClave);
             result.put("clientId", clientId);
-            log.info("Fineract client created clientId={}", clientId);
+            log.info("Fineract client created clientId={} externalId={}", clientId, curpClave);
 
             Map<String, Object> loanPayload = buildLoanPayload(app, clientId, template, adapted);
             log.debug("Fineract loan submit payload: {}", loanPayload);
@@ -265,6 +276,22 @@ public class FineractClient {
                 result.put("decisionNoteAttached", false);
                 result.put("decisionNoteError", noteEx.getMessage());
             }
+
+            // Valid CURP files → Fineract loan documents
+            List<Map<String, Object>> uploadedDocs = new ArrayList<>();
+            for (String docPath : validCurpPaths) {
+                try {
+                    Map<String, Object> up = uploadLoanDocument(loanId, docPath, "CURP",
+                            "CURP identity document" + (curpClave != null ? " " + curpClave : ""));
+                    uploadedDocs.add(up);
+                } catch (Exception docEx) {
+                    log.warn("Loan document upload failed for {}: {}", docPath, docEx.getMessage());
+                    uploadedDocs.add(Map.of("path", docPath, "error", docEx.getMessage()));
+                }
+            }
+            if (!uploadedDocs.isEmpty()) {
+                result.put("loanDocuments", uploadedDocs);
+            }
             return result;
 
         } catch (WebClientResponseException e) {
@@ -282,7 +309,7 @@ public class FineractClient {
     }
 
     @SuppressWarnings("unchecked")
-    private Long createClient(LoanApplication app) {
+    private Long createClient(LoanApplication app, String curpClave) {
         String activationDate = formatDate(LocalDate.now());
 
         Map<String, Object> body = new HashMap<>();
@@ -294,6 +321,12 @@ public class FineractClient {
         body.put("activationDate", activationDate);
         body.put("locale", "en");
         body.put("dateFormat", "dd MMMM yyyy");
+        // Prefer validated CURP clave as client externalId (traceability to identity doc)
+        if (curpClave != null && !curpClave.isBlank()) {
+            body.put("externalId", curpClave);
+        } else if (app.getWorkflowId() != null && !app.getWorkflowId().isBlank()) {
+            body.put("externalId", app.getWorkflowId() + "-client");
+        }
         if (app.getEmail() != null && !app.getEmail().isBlank()) {
             body.put("emailAddress", app.getEmail());
         }
@@ -514,6 +547,94 @@ public class FineractClient {
             }
         }
         return sb.toString();
+    }
+
+
+    @SuppressWarnings("unchecked")
+    private String extractValidCurpClave(List<Map<String, Object>> documentResults) {
+        if (documentResults == null) return null;
+        for (Map<String, Object> doc : documentResults) {
+            if (!Boolean.TRUE.equals(doc.get("valid"))) continue;
+            Object extracted = doc.get("extracted");
+            if (extracted instanceof Map<?, ?> m) {
+                Object type = m.get("type");
+                Object clave = m.get("curpClave");
+                if (clave != null && (type == null || "CURP".equalsIgnoreCase(type.toString()))) {
+                    return clave.toString().trim().toUpperCase(Locale.ROOT);
+                }
+            }
+        }
+        return null;
+    }
+
+    private List<String> extractValidCurpPaths(List<Map<String, Object>> documentResults) {
+        List<String> paths = new ArrayList<>();
+        if (documentResults == null) return paths;
+        for (Map<String, Object> doc : documentResults) {
+            if (!Boolean.TRUE.equals(doc.get("valid"))) continue;
+            Object extracted = doc.get("extracted");
+            boolean isCurp = false;
+            if (extracted instanceof Map<?, ?> m) {
+                Object type = m.get("type");
+                isCurp = type != null && "CURP".equalsIgnoreCase(type.toString());
+            }
+            Object path = doc.get("path");
+            if (isCurp && path != null && !path.toString().isBlank()) {
+                paths.add(path.toString());
+            }
+        }
+        return paths;
+    }
+
+    /**
+     * Upload a file as a Fineract loan document (multipart).
+     * POST /loans/{loanId}/documents
+     */
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> uploadLoanDocument(Long loanId, String filePath, String name, String description) {
+        Path path = Path.of(filePath);
+        if (!Files.isRegularFile(path)) {
+            throw new IllegalArgumentException("Document file not found: " + filePath);
+        }
+        String filename = path.getFileName().toString();
+        String contentType = guessContentType(filename);
+
+        log.info("Uploading loan document loanId={} file={} name={}", loanId, filename, name);
+
+        // Fineract expects multipart form fields: name, description, file
+        org.springframework.http.client.MultipartBodyBuilder mb =
+                new org.springframework.http.client.MultipartBodyBuilder();
+        mb.part("name", name != null ? name : filename);
+        mb.part("description", description != null ? description : "");
+        mb.part("file", new org.springframework.core.io.FileSystemResource(path.toFile()))
+                .filename(filename)
+                .contentType(MediaType.parseMediaType(contentType));
+
+        Map<String, Object> resp = webClient.post()
+                .uri("/loans/{loanId}/documents", loanId)
+                .contentType(MediaType.MULTIPART_FORM_DATA)
+                .bodyValue(mb.build())
+                .retrieve()
+                .bodyToMono(Map.class)
+                .block();
+
+        Map<String, Object> out = new HashMap<>();
+        out.put("path", filePath);
+        out.put("name", name);
+        out.put("response", resp);
+        if (resp != null && resp.get("resourceId") != null) {
+            out.put("documentId", resp.get("resourceId"));
+        }
+        log.info("Loan document uploaded loanId={} response={}", loanId, resp);
+        return out;
+    }
+
+    private static String guessContentType(String filename) {
+        String f = filename.toLowerCase(Locale.ROOT);
+        if (f.endsWith(".pdf")) return "application/pdf";
+        if (f.endsWith(".png")) return "image/png";
+        if (f.endsWith(".jpg") || f.endsWith(".jpeg")) return "image/jpeg";
+        return "application/octet-stream";
     }
 
     private String firstName(String full) {

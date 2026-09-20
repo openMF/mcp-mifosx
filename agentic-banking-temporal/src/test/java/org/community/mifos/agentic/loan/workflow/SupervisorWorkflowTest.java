@@ -64,7 +64,7 @@ class SupervisorWorkflowTest {
                 .finalStatus("PENDING_REVIEW")
                 .build());
 
-        when(fineractActs.createAndApproveLoan(any(), any())).thenReturn(Map.of(
+        when(fineractActs.createAndApproveLoan(any(), any(), any())).thenReturn(Map.of(
                 "loanId", 12345L, "status", "APPROVED_IN_FINERACT"));
 
         worker.registerActivitiesImplementations(loanActs, ollamaActs, fineractActs);

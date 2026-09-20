@@ -1,6 +1,8 @@
 package org.community.mifos.agentic.loan.activity;
 
 import org.community.mifos.agentic.loan.model.AssessmentResult;
+import org.community.mifos.agentic.loan.agent.CurpDocumentAgent;
+import org.community.mifos.agentic.loan.document.CurpDocument;
 import org.community.mifos.agentic.loan.model.LoanApplication;
 import io.temporal.spring.boot.ActivityImpl;
 import org.slf4j.Logger;
@@ -24,11 +26,15 @@ public class LoanActivitiesImpl implements LoanActivities {
     private final WebClient webClient;
     private final boolean mockEnabled;
 
+    private final CurpDocumentAgent curpDocumentAgent;
+
     public LoanActivitiesImpl(
             WebClient.Builder webClientBuilder,
+            CurpDocumentAgent curpDocumentAgent,
             @Value("${loan.mock-data.enabled:true}") boolean mockEnabled,
             @Value("${loan.mock-data.bank-base-url:http://localhost:3233}") String bankBaseUrl) {
         this.webClient = webClientBuilder.baseUrl(bankBaseUrl).build();
+        this.curpDocumentAgent = curpDocumentAgent;
         this.mockEnabled = mockEnabled;
     }
 
@@ -67,18 +73,33 @@ public class LoanActivitiesImpl implements LoanActivities {
     }
 
     @Override
-    public Map<String, Object> processDocument(String path, String applicantId) {
-        log.info("Processing document {} for {}", path, applicantId);
-        // On-premise: replace Bedrock Nova with local structured extraction stub.
-        // In production plug in a local OCR (e.g. Tesseract + Ollama vision model) here.
+    public Map<String, Object> processDocument(String path, String applicantId, String expectedDisplayName) {
+        log.info("Processing document {} for applicant={} expectedName={}", path, applicantId, expectedDisplayName);
         Map<String, Object> result = new HashMap<>();
         result.put("path", path);
         result.put("applicantId", applicantId);
+        result.put("expectedDisplayName", expectedDisplayName);
+
+        String docType = inferDocType(path);
+        result.put("docType", docType);
+
+        if ("CURP".equals(docType) || path.toLowerCase().contains("curp")) {
+            CurpDocument curp = curpDocumentAgent.review(path, expectedDisplayName);
+            result.put("extracted", curp.toMap());
+            result.put("valid", curp.isOverallValid());
+            result.put("validationMessages", curp.getValidationMessages());
+            log.info("CURP review overallValid={} clave={} name={}",
+                    curp.isOverallValid(), curp.getCurpClave(), curp.getFullName());
+            return result;
+        }
+
+        // Generic local stub for non-CURP docs
         result.put("extracted", Map.of(
-                "type", inferDocType(path),
-                "confidence", 0.92,
-                "fields", Map.of("status", "extracted-locally")
+                "type", docType,
+                "confidence", 0.5,
+                "fields", Map.of("status", "generic-extraction-not-implemented")
         ));
+        result.put("valid", false);
         return result;
     }
 
@@ -151,9 +172,10 @@ public class LoanActivitiesImpl implements LoanActivities {
     }
 
     private String inferDocType(String path) {
-        String lower = path.toLowerCase();
+        String lower = path == null ? "" : path.toLowerCase();
+        if (lower.contains("curp")) return "CURP";
         if (lower.contains("bank") || lower.contains("statement")) return "BANK_STATEMENT";
-        if (lower.contains("id") || lower.contains("license") || lower.contains("passport")) return "ID";
+        if (lower.contains("id") || lower.contains("license") || lower.contains("passport") || lower.contains("ine")) return "ID";
         if (lower.contains("salary") || lower.contains("payslip") || lower.contains("income")) return "INCOME";
         return "OTHER";
     }

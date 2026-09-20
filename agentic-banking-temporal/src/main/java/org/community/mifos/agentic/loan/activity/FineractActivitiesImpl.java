@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 
 @Component("fineractActivities")
@@ -23,8 +24,13 @@ public class FineractActivitiesImpl implements FineractActivities {
     }
 
     @Override
-    public Map<String, Object> createAndApproveLoan(LoanApplication application, LoanDecision decision) {
-        log.info("Creating loan in Apache Fineract for applicant={}", application.getApplicantId());
-        return fineractClient.submitAndApproveLoan(application, decision);
+    public Map<String, Object> createAndApproveLoan(
+            LoanApplication application,
+            LoanDecision decision,
+            List<Map<String, Object>> documentResults) {
+        log.info("Creating loan in Apache Fineract for applicant={} docs={}",
+                application.getApplicantId(),
+                documentResults != null ? documentResults.size() : 0);
+        return fineractClient.submitAndApproveLoan(application, decision, documentResults);
     }
 }
