@@ -22,7 +22,7 @@ loan:
   ollama:
     base-url: ${OLLAMA_URL:http://localhost:11434}
     model: ${OLLAMA_MODEL:nemotron-3.5-lightning:latest}
-    vision-model: ${OLLAMA_VISION_MODEL:llava:13b}
+    vision-model: ${OLLAMA_VISION_MODEL:qwen3-vl:8b}
     temperature: 0.1
     timeout-seconds: 120
   fineract:
@@ -32,14 +32,6 @@ loan:
     tenant-id: ${FINERACT_TENANT:default}
     default-product-id: 1
     default-office-id: 1
-  ocr:
-    tesseract-bin: ${TESSERACT_BIN:tesseract}
-    pdftoppm-bin: ${PDFTOPPM_BIN:pdftoppm}
-  curp:
-    max-issue-age-days: 30
-  mock-data:
-    enabled: true
-    bank-base-url: http://localhost:3233
 
 management:
   endpoints:

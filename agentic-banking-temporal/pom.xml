@@ -40,6 +40,13 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        
+        <!-- PDF image for CURP vision -->
+        <dependency>
+        <groupId>org.apache.pdfbox</groupId>
+        <artifactId>pdfbox</artifactId>
+        <version>3.0.3</version>
+        </dependency>
 
         <!-- Temporal Spring Boot Starter (supports Spring Boot 4.x) -->
         <dependency>
