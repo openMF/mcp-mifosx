@@ -1,0 +1,40 @@
+version: "3.9"
+
+# Infrastructure for Agentic Loan Origination
+#
+# - Postgres: process DB for the Spring Boot embedded Flowable 7.1 engine
+# - Ollama: local LLM
+#
+# Do NOT run flowable-rest against the same DB while the Spring app embeds
+# the engine — schema versions will conflict.
+#
+#   docker compose down -v   # wipe old 8.0 schema if present
+#   docker compose up -d
+
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: flowable
+      POSTGRES_USER: flowable
+      POSTGRES_PASSWORD: flowable
+    ports:
+      - "5432:5432"
+    volumes:
+      - data_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U flowable -d flowable"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - data_ollama:/root/.ollama
+
+volumes:
+  data_db:
+  data_ollama:

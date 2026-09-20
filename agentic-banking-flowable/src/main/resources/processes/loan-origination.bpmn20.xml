@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL"
+             xmlns:flowable="http://flowable.org/bpmn"
+             targetNamespace="http://com.temporal.loan">
+
+  <process id="loanOrigination" name="Agentic Loan Origination" isExecutable="true">
+
+    <startEvent id="start" name="Submit Application"/>
+
+    <!-- Phase 1: Data acquisition -->
+    <sequenceFlow sourceRef="start" targetRef="fetchBank"/>
+    <serviceTask id="fetchBank" name="Fetch Bank Account"
+                 flowable:delegateExpression="${fetchBankDelegate}"/>
+    <sequenceFlow sourceRef="fetchBank" targetRef="fetchCredit"/>
+
+    <serviceTask id="fetchCredit" name="Fetch Credit Report (with fallback)"
+                 flowable:delegateExpression="${fetchCreditDelegate}"/>
+    <sequenceFlow sourceRef="fetchCredit" targetRef="runAssessments"/>
+
+    <!-- Phase 2: Specialist assessments -->
+    <serviceTask id="runAssessments" name="Income / Expense / Credit Assessments"
+                 flowable:delegateExpression="${assessmentDelegate}"/>
+    <sequenceFlow sourceRef="runAssessments" targetRef="llmDecision"/>
+
+    <!-- Phase 3: Local Ollama decision -->
+    <serviceTask id="llmDecision" name="Ollama Aggregate Decision"
+                 flowable:delegateExpression="${ollamaDecisionDelegate}"/>
+    <sequenceFlow sourceRef="llmDecision" targetRef="humanReview"/>
+
+    <!-- Phase 4: Human-in-the-loop -->
+    <userTask id="humanReview" name="Underwriter Review"
+              flowable:assignee="underwriter"/>
+    <sequenceFlow sourceRef="humanReview" targetRef="gateway"/>
+
+    <exclusiveGateway id="gateway" name="Approved?"/>
+    <sequenceFlow sourceRef="gateway" targetRef="createFineractLoan">
+      <conditionExpression xsi:type="tFormalExpression"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+        <![CDATA[${humanAction == 'APPROVE'}]]>
+      </conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow sourceRef="gateway" targetRef="rejectedEnd">
+      <conditionExpression xsi:type="tFormalExpression"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+        <![CDATA[${humanAction != 'APPROVE'}]]>
+      </conditionExpression>
+    </sequenceFlow>
+
+    <serviceTask id="createFineractLoan" name="Create &amp; Approve Loan in Fineract"
+                 flowable:delegateExpression="${fineractDelegate}"/>
+    <sequenceFlow sourceRef="createFineractLoan" targetRef="approvedEnd"/>
+
+    <endEvent id="approvedEnd" name="Approved"/>
+    <endEvent id="rejectedEnd" name="Rejected"/>
+
+  </process>
+</definitions>

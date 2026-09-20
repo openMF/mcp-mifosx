@@ -1,0 +1,53 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: agentic-loan-origination
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/flowable}
+    username: ${SPRING_DATASOURCE_USERNAME:flowable}
+    password: ${SPRING_DATASOURCE_PASSWORD:flowable}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    open-in-view: false
+  autoconfigure:
+    exclude:
+      - org.flowable.spring.boot.eventregistry.EventRegistryAutoConfiguration
+
+flowable:
+  database-schema-update: true
+  async-executor-activate: true
+  check-process-definitions: true
+  process-definition-location-prefix: classpath*:/processes/
+  idm:
+    enabled: false
+  eventregistry:
+    enabled: false
+
+loan:
+  ollama:
+    base-url: ${OLLAMA_URL:http://localhost:11434}
+    model: ${OLLAMA_MODEL:nemotron-3.5-lightning:latest}
+  fineract:
+    base-url: ${FINERACT_BASE_URL:https://sandbox.mifos.community/fineract-provider/api/v1}
+    username: ${FINERACT_USER:mifos}
+    password: ${FINERACT_PASSWORD:password}
+    tenant-id: ${FINERACT_TENANT:default}
+    default-product-id: 1
+    default-office-id: 1
+  mock-data:
+    enabled: true
+    bank-base-url: http://localhost:3233
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+
+logging:
+  level:
+    com.temporal.loan: INFO
+    com.temporal.loan.fineract: DEBUG
+    org.flowable: INFO
