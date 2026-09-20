@@ -1,0 +1,51 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: agentic-banking-temporal
+  temporal:
+    connection:
+      target: ${TEMPORAL_ADDRESS:192.168.80.111:7233}
+    namespace: ${TEMPORAL_NAMESPACE:default}
+    workers:
+      - task-queue: ${TEMPORAL_TASK_QUEUE:loan-underwriter-queue}
+        name: loan-worker
+        workflow-classes:
+          - com.temporal.loan.workflow.SupervisorWorkflowImpl
+        activity-beans:
+          - loanActivities
+          - fineractActivities
+          - ollamaAgentActivities
+
+loan:
+  ollama:
+    base-url: ${OLLAMA_URL:http://192.168.80.134:11434}
+    model: ${OLLAMA_MODEL:nemotron-3.5-lightning:latest}
+    temperature: 0.1
+    timeout-seconds: 120
+  fineract:
+    base-url: ${FINERACT_BASE_URL:https://sandbox.mifos.community/fineract-provider/api/v1}
+    username: ${FINERACT_USER:mifos}
+    password: ${FINERACT_PASSWORD:password}
+    tenant-id: ${FINERACT_TENANT:default}
+    default-product-id: 1
+    default-office-id: 1
+  mock-data:
+    enabled: true
+    bank-base-url: http://localhost:3233
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: always
+
+logging:
+  level:
+    com.temporal.loan: INFO
+    com.temporal.loan.fineract: DEBUG
+    io.temporal: INFO
