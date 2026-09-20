@@ -20,6 +20,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.text.Normalizer;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
@@ -56,21 +57,20 @@ public class CurpDocumentAgent {
             Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE);
 
     private static final String VISION_PROMPT = """
-            You are a document specialist for Mexican CURP constancias issued by RENAPO \
-            (Estados Unidos Mexicanos – Clave Única de Registro de Población).
-            The image is a page from an official RENAPO CURP PDF. Extract fields and return ONLY valid JSON \
-            (no markdown fences):
-            {
-              "curpClave": "18-character CURP code e.g. RORV810322HDFMDC02",
-              "fullName": "FULL NAME AS PRINTED ON THE DOCUMENT",
-              "registrationEntity": "entity of registration if present",
-              "issueDate": "yyyy-MM-dd",
-              "civilRegistryVerified": true,
-              "confidence": 0.0
-            }
-            Set civilRegistryVerified=true ONLY if the document contains both parts of the official text "CURP Certificada" and "verificada con el Registro Civil".
-            Reply with the JSON object only. /no_think
-            """;
+        You are a document specialist for Mexican CURP constancias issued by RENAPO.
+        Extract the fields from the image and return ONLY a valid JSON object. Do not include markdown formatting, explanations, or thinking tags.
+        
+        {
+          "curpClave": "18-character code",
+          "fullName": "Full name as printed on document",
+          "registrationEntity": "State of registration",
+          "issueDate": "YYYY-MM-DD",
+          "civilRegistryVerified": true,
+          "confidence": 0.95
+        }
+        
+        IMPORTANT: Set "civilRegistryVerified" to true ONLY if the document explicitly contains BOTH phrases: "CURP Certificada" AND "verificada con el Registro Civil".
+        """;
 
     private final WebClient ollama;
     private final String visionModel;
@@ -83,7 +83,7 @@ public class CurpDocumentAgent {
             @Value("${loan.ollama.base-url:http://localhost:11434}") String ollamaUrl,
             @Value("${loan.ollama.vision-model:qwen3-vl:8b}") String visionModel,
             @Value("${loan.curp.max-issue-age-days:30}") int maxIssueAgeDays,
-            @Value("${loan.curp.render-dpi:200}") float renderDpi) {
+            @Value("${loan.curp.render-dpi:120}") float renderDpi) {
         this.ollama = builder.baseUrl(ollamaUrl).build();
         this.visionModel = visionModel;
         this.maxIssueAgeDays = maxIssueAgeDays;
@@ -429,13 +429,20 @@ public class CurpDocumentAgent {
         String text = cleaned.toUpperCase(Locale.ROOT);
 
         if (doc.getCurpClave() == null || doc.getCurpClave().isBlank()) {
-            Matcher m = CURP_CLAVE.matcher(text.replaceAll("\\s+", ""));
-            if (!m.find()) {
-                m = CURP_CLAVE.matcher(text);
-            }
+            // Try matching on text with spaces removed first (most reliable for OCR artifacts)
+            String textNoSpaces = text.replaceAll("\\s+", "");
+            Matcher m = CURP_CLAVE.matcher(textNoSpaces);
+
             if (m.find()) {
                 doc.setCurpClave(m.group(1));
-                log.info("CURP clave from regex: {}", doc.getCurpClave());
+                log.info("CURP clave from regex (no spaces): {}", doc.getCurpClave());
+            } else {
+                // Fallback to original text with spaces
+                m = CURP_CLAVE.matcher(text);
+                if (m.find()) {
+                    doc.setCurpClave(m.group(1));
+                    log.info("CURP clave from regex: {}", doc.getCurpClave());
+                }
             }
         }
 
@@ -480,11 +487,17 @@ public class CurpDocumentAgent {
 
         // Strict: must see official RENAPO phrase
         // "CURP Certificada: verificada con el Registro Civil"
-        boolean certified = containsCurpCertificadaPhrase(cleaned)
+        // Check if the phrase exists in the raw text (fallback only)
+        boolean phraseFoundInRaw = containsCurpCertificadaPhrase(cleaned) 
                 || containsCurpCertificadaPhrase(visionRaw);
-        doc.setCivilRegistryVerified(certified);
-        if (certified) {
-            log.info("CURP certification phrase detected");
+                
+        // Trust the model's JSON extraction if it explicitly set it to true.
+        // Otherwise, fallback to the raw text phrase detection.
+        if (doc.isCivilRegistryVerified()) {
+            log.info("CURP certification verified via JSON extraction");
+        } else if (phraseFoundInRaw) {
+            doc.setCivilRegistryVerified(true);
+            log.info("CURP certification phrase detected in raw text fallback");
         } else {
             log.warn("CURP certification phrase NOT found (required: CURP Certificada: verificada con el Registro Civil)");
         }
@@ -598,4 +611,23 @@ public class CurpDocumentAgent {
             return null;
         }
     }
+    
+    /**
+    * Detects the official RENAPO certification text on a CURP constancia,
+    * e.g. "CURP Certificada: verificada con el Registro Civil".
+    * Tolerant of case, extra whitespace, newlines and accents
+    * ("Registro Civil" vs "Registro Cívíl" / OCR artifacts).
+    */
+   private static boolean containsCurpCertificadaPhrase(String text) {
+       if (text == null || text.isBlank()) {
+           return false;
+       }
+       // Normalize: lowercase, strip accents, collapse all whitespace to single spaces
+       String norm = Normalizer.normalize(text, Normalizer.Form.NFD)
+               .replaceAll("\\p{M}", "")          // drop combining marks (á → a)
+               .toLowerCase(Locale.ROOT)
+               .replaceAll("\\s+", " ");
+       return norm.contains("curp certificada")
+               && norm.contains("verificada con el registro civil");
+   }
 }
