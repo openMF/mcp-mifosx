@@ -63,7 +63,10 @@ public class OllamaAgentActivitiesImpl implements OllamaAgentActivities {
 
             String text = response != null ? String.valueOf(response.getOrDefault("response", "")) : "";
             log.debug("Ollama raw response: {}", text);
-            return parseDecision(text);
+            LoanDecision decision = parseDecision(text);
+            decision.setLlmThinking(text);
+            decision.setLlmModel(model);
+            return decision;
         } catch (Exception e) {
             log.error("Ollama call failed – falling back to heuristic decision: {}", e.getMessage());
             return heuristicFallback();
@@ -127,6 +130,8 @@ public class OllamaAgentActivitiesImpl implements OllamaAgentActivities {
                 .summary("Local LLM unavailable – referred for manual underwriting.")
                 .riskLevel("MEDIUM")
                 .finalStatus("PENDING_REVIEW")
+                .llmThinking("LLM call failed or timed out; heuristic REFER applied.")
+                .llmModel(model)
                 .build();
     }
 

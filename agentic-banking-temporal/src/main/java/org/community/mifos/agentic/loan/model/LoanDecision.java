@@ -14,6 +14,9 @@ public class LoanDecision {
     private Map<String, Object> fineractLoan;
     private String humanDecision;
     private String finalStatus;
+    /** Full LLM response text for audit / Fineract loan note. */
+    private String llmThinking;
+    private String llmModel;
 
     public LoanDecision() {}
 
@@ -42,6 +45,12 @@ public class LoanDecision {
     public String getFinalStatus() { return finalStatus; }
     public void setFinalStatus(String finalStatus) { this.finalStatus = finalStatus; }
 
+    public String getLlmThinking() { return llmThinking; }
+    public void setLlmThinking(String llmThinking) { this.llmThinking = llmThinking; }
+
+    public String getLlmModel() { return llmModel; }
+    public void setLlmModel(String llmModel) { this.llmModel = llmModel; }
+
     public static final class Builder {
         private final LoanDecision target = new LoanDecision();
 
@@ -52,6 +61,8 @@ public class LoanDecision {
         public Builder fineractLoan(Map<String, Object> v) { target.fineractLoan = v; return this; }
         public Builder humanDecision(String v) { target.humanDecision = v; return this; }
         public Builder finalStatus(String v) { target.finalStatus = v; return this; }
+        public Builder llmThinking(String v) { target.llmThinking = v; return this; }
+        public Builder llmModel(String v) { target.llmModel = v; return this; }
         public LoanDecision build() { return target; }
     }
 }
