@@ -10,6 +10,8 @@ import org.community.mifos.agentic.loan.model.AdaptedLoanRequest;
 import org.community.mifos.agentic.loan.model.LoanApplication;
 import org.community.mifos.agentic.loan.model.LoanDecision;
 import org.community.mifos.agentic.loan.model.LoanProductTemplate;
+import org.community.mifos.agentic.loan.model.VisionAnalysis;
+import org.community.mifos.agentic.loan.model.VisionAnalysisNote;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -283,9 +285,11 @@ public class FineractClient {
                 result.put("decisionNoteError", noteEx.getMessage());
             }
 
-            // Note 2 (independent): vision-model document analysis from OLLAMA_VISION_MODEL
+            // Note 2 (independent): vision-model analysis from domain VisionAnalysis (OLLAMA_VISION_MODEL)
             try {
-                String visionNoteText = buildVisionNote(app, documentResults);
+                String workflowId = app != null ? app.getWorkflowId() : null;
+                String visionNoteText = VisionAnalysisNote.build(
+                        workflowId, VisionAnalysis.fromProcessResults(documentResults));
                 if (visionNoteText != null && !visionNoteText.isBlank()) {
                     String visionNoteId = addLoanNote(loanId, visionNoteText);
                     result.put("visionNoteId", visionNoteId);
@@ -582,88 +586,6 @@ public class FineractClient {
             if (adapted.getAdjustments() != null) {
                 adapted.getAdjustments().forEach(adj -> sb.append("  * ").append(adj).append("\n"));
             }
-        }
-        return sb.toString();
-    }
-
-    /**
-     * Loan note #2 – document analysis produced by the vision model (OLLAMA_VISION_MODEL).
-     * Completely independent of the underwriting decision note.
-     * Returns null/blank when there is no vision output to attach.
-     */
-    @SuppressWarnings("unchecked")
-    private String buildVisionNote(LoanApplication app, List<Map<String, Object>> documentResults) {
-        if (documentResults == null || documentResults.isEmpty()) {
-            return null;
-        }
-        boolean anyVision = false;
-        for (Map<String, Object> doc : documentResults) {
-            Object extracted = doc.get("extracted");
-            if (extracted instanceof Map<?, ?> em) {
-                Object vj = em.get("visionJson");
-                if (vj != null && !vj.toString().isBlank()) {
-                    anyVision = true;
-                    break;
-                }
-            }
-            // Also treat structured CURP extraction as vision-driven content
-            if (doc.get("docType") != null || extracted != null) {
-                anyVision = true;
-                break;
-            }
-        }
-        if (!anyVision) {
-            return null;
-        }
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("=== Vision model document analysis (OLLAMA_VISION_MODEL) ===\n");
-        if (app != null && app.getWorkflowId() != null) {
-            sb.append("Workflow ID (loan externalId): ").append(app.getWorkflowId()).append("\n");
-        }
-        sb.append("Source: CurpDocumentAgent (PDF → PNG → Ollama vision)\n");
-        sb.append("This note is independent of the underwriting (OLLAMA_MODEL) decision note.\n\n");
-
-        int idx = 0;
-        for (Map<String, Object> doc : documentResults) {
-            idx++;
-            Object path = doc.get("path");
-            Object docType = doc.get("docType");
-            Object valid = doc.get("valid");
-            sb.append(String.format("--- Document #%d ---%n", idx));
-            if (path != null) sb.append("Path: ").append(path).append("\n");
-            if (docType != null) sb.append("Type: ").append(docType).append("\n");
-            if (valid != null) sb.append("Overall valid: ").append(valid).append("\n");
-            Object msgs = doc.get("validationMessages");
-            if (msgs instanceof List<?> list && !list.isEmpty()) {
-                sb.append("Validation messages:\n");
-                for (Object m : list) {
-                    sb.append("  - ").append(m).append("\n");
-                }
-            }
-            Object extracted = doc.get("extracted");
-            if (extracted instanceof Map<?, ?> em) {
-                Object clave = em.get("curpClave");
-                Object name = em.get("fullName");
-                Object issue = em.get("issueDate");
-                Object conf = em.get("confidence");
-                Object reg = em.get("registrationEntity");
-                if (clave != null) sb.append("CURP clave: ").append(clave).append("\n");
-                if (name != null) sb.append("Extracted name: ").append(name).append("\n");
-                if (issue != null) sb.append("Issue date: ").append(issue).append("\n");
-                if (reg != null) sb.append("Registration entity: ").append(reg).append("\n");
-                if (conf != null) sb.append("Confidence: ").append(conf).append("\n");
-                Object visionJson = em.get("visionJson");
-                if (visionJson != null && !visionJson.toString().isBlank()) {
-                    sb.append("\n--- Vision model raw analysis output ---\n");
-                    String vj = visionJson.toString();
-                    if (vj.length() > 3000) {
-                        vj = vj.substring(0, 2997) + "...";
-                    }
-                    sb.append(vj).append("\n");
-                }
-            }
-            sb.append("\n");
         }
         return sb.toString();
     }

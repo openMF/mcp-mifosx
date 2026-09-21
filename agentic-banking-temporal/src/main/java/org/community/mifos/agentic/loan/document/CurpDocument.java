@@ -25,6 +25,8 @@ public class CurpDocument implements Serializable {
     private boolean civilRegistryVerified;
     private String ocrText;
     private String visionJson;
+    /** OLLAMA_VISION_MODEL id that produced {@link #visionJson}. */
+    private String visionModel;
     private double confidence;
     private final List<String> validationMessages = new ArrayList<>();
     private boolean nameMatches;
@@ -46,6 +48,8 @@ public class CurpDocument implements Serializable {
     public void setOcrText(String ocrText) { this.ocrText = ocrText; }
     public String getVisionJson() { return visionJson; }
     public void setVisionJson(String visionJson) { this.visionJson = visionJson; }
+    public String getVisionModel() { return visionModel; }
+    public void setVisionModel(String visionModel) { this.visionModel = visionModel; }
     public double getConfidence() { return confidence; }
     public void setConfidence(double confidence) { this.confidence = confidence; }
     public List<String> getValidationMessages() { return validationMessages; }
@@ -76,6 +80,9 @@ public class CurpDocument implements Serializable {
         // Include raw vision-model analysis so it can be persisted as a Fineract loan note
         if (visionJson != null && !visionJson.isBlank()) {
             m.put("visionJson", visionJson);
+        }
+        if (visionModel != null && !visionModel.isBlank()) {
+            m.put("visionModel", visionModel);
         }
         if (ocrText != null && !ocrText.isBlank()) {
             m.put("ocrText", ocrText);
