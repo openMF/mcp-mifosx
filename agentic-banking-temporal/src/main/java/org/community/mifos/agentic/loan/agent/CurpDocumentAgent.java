@@ -119,6 +119,7 @@ public class CurpDocumentAgent {
 
             String visionJson = runOllamaChatVisionPng(pngBytes);
             doc.setVisionJson(visionJson);
+            doc.setVisionModel(visionModel);
             if (visionJson != null && !visionJson.isBlank()) {
                 String preview = visionJson.length() > 500 ? visionJson.substring(0, 500) + "..." : visionJson;
                 log.info("Vision raw response preview: {}", preview.replace("\n", " "));
