@@ -1,3 +1,9 @@
+/**
+ * Copyright since 2026 Mifos Initiative
+ *
+ * <p>This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy
+ * of the MPL was not distributed with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
 package org.community.mifos.agentic.loan.fineract;
 
 import org.community.mifos.agentic.loan.model.AdaptedLoanRequest;
@@ -266,15 +272,32 @@ public class FineractClient {
             result.put("status", "APPROVED_IN_FINERACT");
             log.info("Fineract loan {} approved successfully", loanId);
 
-            // Traceability: persist LLM thinking + decision on the loan as a note
+            // Note 1 (independent): underwriting decision from OLLAMA_MODEL (text LLM)
             try {
-                String noteId = addLoanNote(loanId, buildDecisionNote(app, decision, adapted));
-                result.put("decisionNoteId", noteId);
+                String decisionNoteId = addLoanNote(loanId, buildDecisionNote(app, decision, adapted));
+                result.put("decisionNoteId", decisionNoteId);
                 result.put("decisionNoteAttached", true);
             } catch (Exception noteEx) {
                 log.warn("Could not attach decision note to loan {}: {}", loanId, noteEx.getMessage());
                 result.put("decisionNoteAttached", false);
                 result.put("decisionNoteError", noteEx.getMessage());
+            }
+
+            // Note 2 (independent): vision-model document analysis from OLLAMA_VISION_MODEL
+            try {
+                String visionNoteText = buildVisionNote(app, documentResults);
+                if (visionNoteText != null && !visionNoteText.isBlank()) {
+                    String visionNoteId = addLoanNote(loanId, visionNoteText);
+                    result.put("visionNoteId", visionNoteId);
+                    result.put("visionNoteAttached", true);
+                } else {
+                    result.put("visionNoteAttached", false);
+                    result.put("visionNoteSkipped", "no vision analysis available");
+                }
+            } catch (Exception visionNoteEx) {
+                log.warn("Could not attach vision note to loan {}: {}", loanId, visionNoteEx.getMessage());
+                result.put("visionNoteAttached", false);
+                result.put("visionNoteError", visionNoteEx.getMessage());
             }
 
             // Valid CURP files → Fineract loan documents
@@ -513,15 +536,19 @@ public class FineractClient {
         return resourceId != null ? resourceId.toString() : null;
     }
 
+    /**
+     * Loan note #1 – underwriting decision produced by the text LLM (OLLAMA_MODEL).
+     * Independent from the vision-model note.
+     */
     private String buildDecisionNote(LoanApplication app, LoanDecision decision, AdaptedLoanRequest adapted) {
         StringBuilder sb = new StringBuilder();
-        sb.append("=== Agentic underwriting decision (Temporal + Ollama) ===\n");
+        sb.append("=== Agentic underwriting decision (OLLAMA_MODEL / Temporal) ===\n");
         if (app != null && app.getWorkflowId() != null) {
             sb.append("Workflow ID (loan externalId): ").append(app.getWorkflowId()).append("\n");
         }
         if (decision != null) {
             if (decision.getLlmModel() != null) {
-                sb.append("LLM model: ").append(decision.getLlmModel()).append("\n");
+                sb.append("LLM model (OLLAMA_MODEL): ").append(decision.getLlmModel()).append("\n");
             }
             if (decision.getRecommendation() != null) {
                 sb.append("AI recommendation: ").append(decision.getRecommendation()).append("\n");
@@ -559,6 +586,87 @@ public class FineractClient {
         return sb.toString();
     }
 
+    /**
+     * Loan note #2 – document analysis produced by the vision model (OLLAMA_VISION_MODEL).
+     * Completely independent of the underwriting decision note.
+     * Returns null/blank when there is no vision output to attach.
+     */
+    @SuppressWarnings("unchecked")
+    private String buildVisionNote(LoanApplication app, List<Map<String, Object>> documentResults) {
+        if (documentResults == null || documentResults.isEmpty()) {
+            return null;
+        }
+        boolean anyVision = false;
+        for (Map<String, Object> doc : documentResults) {
+            Object extracted = doc.get("extracted");
+            if (extracted instanceof Map<?, ?> em) {
+                Object vj = em.get("visionJson");
+                if (vj != null && !vj.toString().isBlank()) {
+                    anyVision = true;
+                    break;
+                }
+            }
+            // Also treat structured CURP extraction as vision-driven content
+            if (doc.get("docType") != null || extracted != null) {
+                anyVision = true;
+                break;
+            }
+        }
+        if (!anyVision) {
+            return null;
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("=== Vision model document analysis (OLLAMA_VISION_MODEL) ===\n");
+        if (app != null && app.getWorkflowId() != null) {
+            sb.append("Workflow ID (loan externalId): ").append(app.getWorkflowId()).append("\n");
+        }
+        sb.append("Source: CurpDocumentAgent (PDF → PNG → Ollama vision)\n");
+        sb.append("This note is independent of the underwriting (OLLAMA_MODEL) decision note.\n\n");
+
+        int idx = 0;
+        for (Map<String, Object> doc : documentResults) {
+            idx++;
+            Object path = doc.get("path");
+            Object docType = doc.get("docType");
+            Object valid = doc.get("valid");
+            sb.append(String.format("--- Document #%d ---%n", idx));
+            if (path != null) sb.append("Path: ").append(path).append("\n");
+            if (docType != null) sb.append("Type: ").append(docType).append("\n");
+            if (valid != null) sb.append("Overall valid: ").append(valid).append("\n");
+            Object msgs = doc.get("validationMessages");
+            if (msgs instanceof List<?> list && !list.isEmpty()) {
+                sb.append("Validation messages:\n");
+                for (Object m : list) {
+                    sb.append("  - ").append(m).append("\n");
+                }
+            }
+            Object extracted = doc.get("extracted");
+            if (extracted instanceof Map<?, ?> em) {
+                Object clave = em.get("curpClave");
+                Object name = em.get("fullName");
+                Object issue = em.get("issueDate");
+                Object conf = em.get("confidence");
+                Object reg = em.get("registrationEntity");
+                if (clave != null) sb.append("CURP clave: ").append(clave).append("\n");
+                if (name != null) sb.append("Extracted name: ").append(name).append("\n");
+                if (issue != null) sb.append("Issue date: ").append(issue).append("\n");
+                if (reg != null) sb.append("Registration entity: ").append(reg).append("\n");
+                if (conf != null) sb.append("Confidence: ").append(conf).append("\n");
+                Object visionJson = em.get("visionJson");
+                if (visionJson != null && !visionJson.toString().isBlank()) {
+                    sb.append("\n--- Vision model raw analysis output ---\n");
+                    String vj = visionJson.toString();
+                    if (vj.length() > 3000) {
+                        vj = vj.substring(0, 2997) + "...";
+                    }
+                    sb.append(vj).append("\n");
+                }
+            }
+            sb.append("\n");
+        }
+        return sb.toString();
+    }
 
     @SuppressWarnings("unchecked")
     private String extractValidCurpClave(List<Map<String, Object>> documentResults) {

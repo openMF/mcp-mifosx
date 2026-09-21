@@ -1,3 +1,9 @@
+/**
+ * Copyright since 2026 Mifos Initiative
+ *
+ * <p>This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy
+ * of the MPL was not distributed with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+ */
 package org.community.mifos.agentic.loan.document;
 
 import java.io.Serializable;
@@ -67,6 +73,13 @@ public class CurpDocument implements Serializable {
         m.put("issueDateOk", issueDateOk);
         m.put("overallValid", overallValid);
         m.put("validationMessages", new ArrayList<>(validationMessages));
+        // Include raw vision-model analysis so it can be persisted as a Fineract loan note
+        if (visionJson != null && !visionJson.isBlank()) {
+            m.put("visionJson", visionJson);
+        }
+        if (ocrText != null && !ocrText.isBlank()) {
+            m.put("ocrText", ocrText);
+        }
         return m;
     }
 }
