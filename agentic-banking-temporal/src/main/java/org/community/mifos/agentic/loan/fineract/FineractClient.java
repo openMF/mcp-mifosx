@@ -278,11 +278,21 @@ public class FineractClient {
             }
 
             // Valid CURP files → Fineract loan documents
+            // Multipart form (Mifos UI): name=filename, description=clave,
+            // dateFormat=yyyy-MM-dd, locale=es, issuanceDate=yyyy-MM-dd
+            String curpIssueDate = extractValidCurpIssueDate(documentResults);
+            if (curpIssueDate != null) {
+                result.put("curpIssueDate", curpIssueDate);
+            }
             List<Map<String, Object>> uploadedDocs = new ArrayList<>();
             for (String docPath : validCurpPaths) {
                 try {
-                    Map<String, Object> up = uploadLoanDocument(loanId, docPath, "CURP",
-                            "CURP identity document" + (curpClave != null ? " " + curpClave : ""));
+                    Map<String, Object> up = uploadLoanDocument(
+                            loanId,
+                            docPath,
+                            null,            // name → original filename
+                            curpClave,       // description → CURP clave
+                            curpIssueDate);  // issuanceDate from vision
                     uploadedDocs.add(up);
                 } catch (Exception docEx) {
                     log.warn("Loan document upload failed for {}: {}", docPath, docEx.getMessage());
@@ -589,26 +599,45 @@ public class FineractClient {
     /**
      * Upload a file as a Fineract loan document (multipart).
      * POST /loans/{loanId}/documents
+     * <p>
+     * Expected form fields (Mifos UI / WebKit boundary):
+     * <ul>
+     *   <li>{@code name} – original filename (e.g. curp_VMRR.pdf)</li>
+     *   <li>{@code file} – binary PDF</li>
+     *   <li>{@code description} – CURP clave (e.g. RORV810322HDFMDC02)</li>
+     *   <li>{@code dateFormat} – {@code yyyy-MM-dd}</li>
+     *   <li>{@code locale} – {@code es}</li>
+     *   <li>{@code issuanceDate} – CURP issue date from vision (yyyy-MM-dd)</li>
+     * </ul>
      */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> uploadLoanDocument(Long loanId, String filePath, String name, String description) {
+    public Map<String, Object> uploadLoanDocument(Long loanId, String filePath,
+                                                 String name, String description,
+                                                 String issuanceDate) {
         Path path = Path.of(filePath);
         if (!Files.isRegularFile(path)) {
             throw new IllegalArgumentException("Document file not found: " + filePath);
         }
         String filename = path.getFileName().toString();
         String contentType = guessContentType(filename);
+        String formName = (name != null && !name.isBlank()) ? name : filename;
+        String formDescription = description != null ? description : "";
 
-        log.info("Uploading loan document loanId={} file={} name={}", loanId, filename, name);
+        log.info("Uploading loan document loanId={} file={} name={} description={} dateFormat=yyyy-MM-dd locale=es issuanceDate={}",
+                loanId, filename, formName, formDescription, issuanceDate);
 
-        // Fineract expects multipart form fields: name, description, file
         org.springframework.http.client.MultipartBodyBuilder mb =
                 new org.springframework.http.client.MultipartBodyBuilder();
-        mb.part("name", name != null ? name : filename);
-        mb.part("description", description != null ? description : "");
+        mb.part("name", formName);
         mb.part("file", new org.springframework.core.io.FileSystemResource(path.toFile()))
                 .filename(filename)
                 .contentType(MediaType.parseMediaType(contentType));
+        mb.part("description", formDescription);
+        mb.part("dateFormat", "yyyy-MM-dd");
+        mb.part("locale", "es");
+        if (issuanceDate != null && !issuanceDate.isBlank()) {
+            mb.part("issuanceDate", issuanceDate.trim());
+        }
 
         Map<String, Object> resp = webClient.post()
                 .uri("/loans/{loanId}/documents", loanId)
@@ -620,13 +649,24 @@ public class FineractClient {
 
         Map<String, Object> out = new HashMap<>();
         out.put("path", filePath);
-        out.put("name", name);
+        out.put("name", formName);
+        out.put("description", formDescription);
+        out.put("dateFormat", "yyyy-MM-dd");
+        out.put("locale", "es");
+        if (issuanceDate != null) {
+            out.put("issuanceDate", issuanceDate);
+        }
         out.put("response", resp);
         if (resp != null && resp.get("resourceId") != null) {
             out.put("documentId", resp.get("resourceId"));
         }
         log.info("Loan document uploaded loanId={} response={}", loanId, resp);
         return out;
+    }
+
+    /** Backwards-compatible overload without issuanceDate. */
+    public Map<String, Object> uploadLoanDocument(Long loanId, String filePath, String name, String description) {
+        return uploadLoanDocument(loanId, filePath, name, description, null);
     }
 
     private static String guessContentType(String filename) {
@@ -650,4 +690,23 @@ public class FineractClient {
     }
 
     public int getDefaultProductId() { return defaultProductId; }
+    
+    /** Issue date (yyyy-MM-dd) from vision model on a valid CURP document. */
+    private String extractValidCurpIssueDate(List<Map<String, Object>> documentResults) {
+        if (documentResults == null) return null;
+        for (Map<String, Object> doc : documentResults) {
+            Object top = doc.get("issueDate");
+            if (top != null && !top.toString().isBlank()) {
+                return top.toString().trim();
+            }
+            Object extracted = doc.get("extracted");
+            if (extracted instanceof Map<?, ?> m) {
+                Object issue = m.get("issueDate");
+                if (issue != null && !issue.toString().isBlank()) {
+                    return issue.toString().trim();
+                }
+            }
+        }
+        return null;
+    }
 }
