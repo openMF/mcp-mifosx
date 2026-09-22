@@ -2,11 +2,11 @@
 
 This architecture integrates the existing Mifos/Fineract stack with agentic AI capabilities, drawing from:
 
-- **Apache Fineract** — core banking engine (CQRS, multi-tenant, REST API)
-- **openMF/web-app** — Angular SPA back-office UI
-- **openMF/mcp-mifosx** — Model Context Protocol servers (Go/Java/Python/Rust) that expose Fineract as typed tools
-- **agentic-banking-temporal** — durable loan-origination workflows (Spring Boot + Temporal + Ollama + Fineract write-back)
-- **Prime Agent architecture patterns** — supervisor/worker separation, session runtime, tool calling, durable state
+- **Apache Fineract** - core banking engine (CQRS, multi-tenant, REST API)
+- **openMF/web-app** - Angular SPA back-office UI
+- **openMF/mcp-mifosx** - Model Context Protocol servers (Go/Java/Python/Rust) that expose Fineract as typed tools
+- **agentic-banking-temporal** - durable loan-origination workflows (Spring Boot + Temporal + Ollama + Fineract write-back)
+- **Prime Agent architecture patterns** - supervisor/worker separation, session runtime, tool calling, durable state
 
 **References**
 - https://github.com/openMF/web-app
@@ -116,7 +116,7 @@ Any Agent / LLM Client
 | **Python (FastMCP)** | ~49 | Modular domain-driven design |
 | **Java (Quarkus)** | ~38 | Backoffice + Recommendations |
 
-### D. Core Banking – Apache Fineract
+### D. Core Banking - Apache Fineract
 
 - Multi-tenant, CQRS-based financial services engine
 - Modules: Loan, Savings, Accounting, Portfolio, COB, Reports, Security
@@ -143,13 +143,13 @@ Client → Spring Boot REST → Temporal WorkflowClient
 
 **Features:**
 
-1. **Strict JSON agent contract** – Ollama is prompted to return only a machine-parseable decision object; parsing failures degrade gracefully to REFER.
-2. **Temporal-orchestrated provider fallback** – Credit bureau providers with independent retry policies.
-3. **Parallel fan-out** – Bank fetch, document processing and specialist assessments run concurrently.
-4. **Durable human review** – Workflow pauses indefinitely until a signal; status and summary are queryable at any time.
-5. **Fineract write-back** – On human APPROVE the workflow creates a real client and loan in Fineract and approves it.
-6. **Heuristic fallback** – If Ollama is down the workflow still completes with a safe REFER decision.
-7. **Observability** – Actuator + Prometheus ready for on-prem monitoring.
+1. **Strict JSON agent contract** - Ollama is prompted to return only a machine-parseable decision object; parsing failures degrade gracefully to REFER.
+2. **Temporal-orchestrated provider fallback** - Credit bureau providers with independent retry policies.
+3. **Parallel fan-out** - Bank fetch, document processing and specialist assessments run concurrently.
+4. **Durable human review** - Workflow pauses indefinitely until a signal; status and summary are queryable at any time.
+5. **Fineract write-back** - On human APPROVE the workflow creates a real client and loan in Fineract and approves it.
+6. **Heuristic fallback** - If Ollama is down the workflow still completes with a safe REFER decision.
+7. **Observability** - Actuator + Prometheus ready for on-prem monitoring.
 
 ---
 
@@ -170,11 +170,11 @@ Client → Spring Boot REST → Temporal WorkflowClient
 
 Aligned with agentic banking reference architectures (five horizontal layers + vertical concerns):
 
-1. **Infrastructure** — Compute, storage, networking, identity, LLM serving (Ollama or managed)
-2. **Common Services** — Agent control plane, guardrails, prompt/policy registry, authz, logging, model routing
+1. **Infrastructure** - Compute, storage, networking, identity, LLM serving (Ollama or managed)
+2. **Common Services** - Agent control plane, guardrails, prompt/policy registry, authz, logging, model routing
 3. **Data** — Fineract ledger (golden source) + vector store for RAG + document store
-4. **Business Logic in Agents** — Loan origination, collections, CX, PLD monitoring as durable agentic workflows
-5. **Customer / Staff Agents** — Conversational interfaces that call MCP tools and Temporal workflows
+4. **Business Logic in Agents** - Loan origination, collections, CX, PLD monitoring as durable agentic workflows
+5. **Customer / Staff Agents** - Conversational interfaces that call MCP tools and Temporal workflows
 
 This mirrors the agentic banking reference architecture (horizontal layers + vertical development/observability agents) while remaining grounded in the concrete open-source components already available in the Mifos ecosystem.
 
