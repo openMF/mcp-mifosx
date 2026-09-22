@@ -172,7 +172,7 @@ Aligned with agentic banking reference architectures (five horizontal layers + v
 
 1. **Infrastructure** - Compute, storage, networking, identity, LLM serving (Ollama or managed)
 2. **Common Services** - Agent control plane, guardrails, prompt/policy registry, authz, logging, model routing
-3. **Data** — Fineract ledger (golden source) + vector store for RAG + document store
+3. **Data** - Fineract ledger (golden source) + vector store for RAG + document store
 4. **Business Logic in Agents** - Loan origination, collections, CX, PLD monitoring as durable agentic workflows
 5. **Customer / Staff Agents** - Conversational interfaces that call MCP tools and Temporal workflows
 
@@ -194,13 +194,13 @@ This mirrors the agentic banking reference architecture (horizontal layers + ver
 
 ## 6. Design Principles
 
-1. **Fineract as the immutable core ledger** — All state-changing operations must ultimately be recorded in Apache Fineract.
-2. **MCP as the standardized tool interface** — Agents never talk to Fineract REST directly when possible; they use typed MCP tools for consistency, safety, and discoverability.
-3. **Temporal for durable agentic workflows** — Long-running, recoverable, human-in-the-loop processes (loan origination, collections, compliance).
-4. **Prime Agent-style separation of concerns** — Client (UI) / Supervisor (routing, health) / Worker (session runtime) / AgentSession (tools, memory, providers).
-5. **Stateless tool tier** — MCP servers hold no PII or session state; they are pure integration bridges.
-6. **Human-in-the-loop by design** — High-impact decisions (credit approval, large disbursements, compliance escalations) pause for human signal.
-7. **On-prem first, hybrid ready** — Local Ollama + Temporal + Fineract for sovereignty; cloud LLM providers as optional upgrade path.
+1. **Fineract as the immutable core ledger** - All state-changing operations must ultimately be recorded in Apache Fineract.
+2. **MCP as the standardized tool interface** - Agents never talk to Fineract REST directly when possible; they use typed MCP tools for consistency, safety, and discoverability.
+3. **Temporal for durable agentic workflows** - Long-running, recoverable, human-in-the-loop processes (loan origination, collections, compliance).
+4. **Prime Agent-style separation of concerns** - Client (UI) / Supervisor (routing, health) / Worker (session runtime) / AgentSession (tools, memory, providers).
+5. **Stateless tool tier** - MCP servers hold no PII or session state; they are pure integration bridges.
+6. **Human-in-the-loop by design** - High-impact decisions (credit approval, large disbursements, compliance escalations) pause for human signal.
+7. **On-prem first, hybrid ready** - Local Ollama + Temporal + Fineract for sovereignty; cloud LLM providers as optional upgrade path.
 
 ---
 
@@ -209,11 +209,11 @@ This mirrors the agentic banking reference architecture (horizontal layers + ver
 | Domain | Agentic Capability |
 |--------|--------------------|
 | **Enrollment / Onboarding** | OCR + KYC + Fineract client creation via MCP tools |
-| **Originación** | Parallel credit assessment → LLM decision → human review → Fineract loan create/approve |
-| **PLD/FT** | Continuous monitoring agents + alert generation + case summarization |
-| **Cobranza** | Segmented outreach agents + negotiation within policy + escalation |
-| **CX / Soporte** | 24/7 conversational agents with MCP tools for balance, transactions, product info |
-| **Analítica** | Narrative report generation, regulatory report assistance, scenario simulation |
+| **Origination** | Parallel credit assessment → LLM decision → human review → Fineract loan create/approve |
+| **AML/CTF** | Continuous monitoring agents + alert generation + case summarization |
+| **Collections** | Segmented outreach agents + negotiation within policy + escalation |
+| **CX / Support** | 24/7 conversational agents with MCP tools for balance, transactions, product info |
+| **Analytics** | Narrative report generation, regulatory report assistance, scenario simulation |
 
 ---
 
