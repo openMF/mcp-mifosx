@@ -208,7 +208,7 @@ This mirrors the agentic banking reference architecture (horizontal layers + ver
 
 | Domain | Agentic Capability |
 |--------|--------------------|
-| **Enrolamiento / Onboarding** | OCR + KYC + Fineract client creation via MCP tools |
+| **Enrollment / Onboarding** | OCR + KYC + Fineract client creation via MCP tools |
 | **Originación** | Parallel credit assessment → LLM decision → human review → Fineract loan create/approve |
 | **PLD/FT** | Continuous monitoring agents + alert generation + case summarization |
 | **Cobranza** | Segmented outreach agents + negotiation within policy + escalation |
@@ -217,4 +217,4 @@ This mirrors the agentic banking reference architecture (horizontal layers + ver
 
 ---
 
-*Document generated for Mifos Agentic Banking architecture discussion. Based on open-source components from the Mifos Initiative and Apache Fineract communities.*
+
