@@ -37,7 +37,7 @@ This architecture integrates the existing Mifos/Fineract stack with agentic AI c
                 ▼                       ▼                     ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         TOOL & INTEGRATION LAYER                            │
-│              MCP Servers (mcp-mifosx)  –  Go / Java / Python / Rust          │
+│              MCP Servers (mcp-mifosx)  –  Go / Java / Python / Rust         │
 │  Clients · Loans · Savings · Groups · Accounting · Bulk · Documents         │
 │  + External tools (Credit Bureaus, OCR, KYC, Notifications, RAG stores)     │
 └───────────────┬─────────────────────────────────────────────────────────────┘
@@ -46,13 +46,13 @@ This architecture integrates the existing Mifos/Fineract stack with agentic AI c
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                    CORE BANKING PLATFORM (Apache Fineract)                  │
 │  CQRS Command/Query  │  Multi-tenant  │  Loan / Savings / Accounting        │
-│  Portfolio  │  COB  │  Reports  │  Security (OAuth2 / Basic / 2FA)           │
+│  Portfolio  │  COB  │  Reports  │  Security (OAuth2 / Basic / 2FA)          │
 └───────────────┬─────────────────────────────────────────────────────────────┘
                 │
                 ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │                         DATA & INFRASTRUCTURE                               │
-│  MariaDB / PostgreSQL  │  Vector Store (RAG)  │  Object Storage (docs)       │
+│  MariaDB / PostgreSQL  │  Vector Store (RAG)  │  Object Storage (docs)      │
 │  Temporal Persistence  │  Observability (Prometheus / OpenTelemetry)        │
 │  LLM Runtime (Ollama / cloud providers)                                     │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -89,11 +89,11 @@ The **mcp-mifosx** servers act as a stateless, typed bridge:
 Any Agent / LLM Client
         │  MCP (stdio or SSE)
         ▼
-┌──────────────────────────────┐
-│  mcp-mifosx (Go / Java /     │
+┌─────────────────────────────────┐
+│  mcp-mifosx (Go / Java /        │
 │  Python / Rust implementations) │
-│  38–102 typed tools          │
-└──────────────┬───────────────┘
+│  38–102 typed tools             │
+└──────────────┬──────────────────┘
                │  Fineract REST API
                ▼
         Apache Fineract
