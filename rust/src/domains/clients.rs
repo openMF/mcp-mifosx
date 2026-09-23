@@ -5,11 +5,11 @@
 
 use crate::adapter::FineractAdapter;
 use rmcp::schemars;
-use rmcp::{ErrorData as McpError, model::{CallToolResult, Content}};
+use rmcp::{ErrorData as McpError, model::{CallToolResult, ContentBlock}};
 use serde_json::json;
 use chrono::Local;
 
-pub fn to_result(val: serde_json::Value) -> Result<CallToolResult, McpError> { Ok(CallToolResult::success(vec![Content::text(serde_json::to_string_pretty(&val).unwrap_or_default())])) }
+pub fn to_result(val: serde_json::Value) -> Result<CallToolResult, McpError> { Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::to_string_pretty(&val).unwrap_or_default())])) }
 pub fn to_err(err: anyhow::Error) -> McpError { McpError::internal_error(err.to_string(), None) }
 pub fn today() -> String { Local::now().format("%d %B %Y").to_string() }
 
@@ -162,7 +162,7 @@ pub async fn get_client_charges(adapter: &FineractAdapter, req: ClientIdReq) -> 
 
 pub async fn apply_client_charge(adapter: &FineractAdapter, req: ApplyClientChargeReq) -> Result<CallToolResult, McpError> {
     if req.amount <= 0.0 {
-        return Ok(CallToolResult::error(vec![Content::text("ERROR: amount was 0 which is invalid. You MUST re-read the user's ORIGINAL message to find the dollar amount they specified. Pass that exact number as the amount parameter. DO NOT use any amount from a previous API response.")]));
+        return Ok(CallToolResult::error(vec![ContentBlock::text("ERROR: amount was 0 which is invalid. You MUST re-read the user's ORIGINAL message to find the dollar amount they specified. Pass that exact number as the amount parameter. DO NOT use any amount from a previous API response.")]));
     }
     let charge_id = match req.charge_id {
         Some(id) => id,
@@ -193,7 +193,7 @@ pub async fn apply_client_charge(adapter: &FineractAdapter, req: ApplyClientChar
 
 pub async fn pay_client_charge(adapter: &FineractAdapter, req: PayClientChargeReq) -> Result<CallToolResult, McpError> {
     if req.amount <= 0.0 {
-        return Ok(CallToolResult::error(vec![Content::text("ERROR: amount was 0 which is invalid. You MUST re-read the user's ORIGINAL message to find the dollar amount they specified. Pass that exact number as the amount parameter. DO NOT use any amount from a previous API response.")]));
+        return Ok(CallToolResult::error(vec![ContentBlock::text("ERROR: amount was 0 which is invalid. You MUST re-read the user's ORIGINAL message to find the dollar amount they specified. Pass that exact number as the amount parameter. DO NOT use any amount from a previous API response.")]));
     }
     let payload = json!({ "amount": req.amount, "transactionDate": today(), "dateFormat": "dd MMMM yyyy", "locale": "en" });
     let res = adapter.execute_post(&format!("clients/{}/charges/{}?command=paycharge", req.client_id, req.client_charge_id), &payload).await.map_err(to_err)?;

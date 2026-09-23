@@ -218,7 +218,7 @@ impl MifosMcpServer {
     async fn get_relevant_tools(&self, Parameters(req): Parameters<IntentRouterReq>) -> Result<CallToolResult, McpError> {
         let tools = self.registry.route_intent_hybrid(&req.query, INTENT_ROUTE_THRESHOLD).await;
         
-        Ok(CallToolResult::success(vec![rmcp::model::Content::text(
+        Ok(CallToolResult::success(vec![rmcp::model::ContentBlock::text(
             serde_json::to_string_pretty(&tools).unwrap_or_else(|_| "[]".to_string())
         )]))
     }
