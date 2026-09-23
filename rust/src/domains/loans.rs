@@ -5,11 +5,11 @@
 
 use crate::adapter::FineractAdapter;
 use rmcp::schemars;
-use rmcp::{ErrorData as McpError, model::{CallToolResult, Content}};
+use rmcp::{ErrorData as McpError, model::{CallToolResult, ContentBlock}};
 use serde_json::json;
 use chrono::Local;
 
-pub fn to_result(val: serde_json::Value) -> Result<CallToolResult, McpError> { Ok(CallToolResult::success(vec![Content::text(serde_json::to_string_pretty(&val).unwrap_or_default())])) }
+pub fn to_result(val: serde_json::Value) -> Result<CallToolResult, McpError> { Ok(CallToolResult::success(vec![ContentBlock::text(serde_json::to_string_pretty(&val).unwrap_or_default())])) }
 pub fn to_err(err: anyhow::Error) -> McpError { McpError::internal_error(err.to_string(), None) }
 pub fn today() -> String { Local::now().format("%d %B %Y").to_string() }
 
