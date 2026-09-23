@@ -30,7 +30,7 @@ services:
       - temporal
 
   postgresql:
-    image: postgres:16
+    image: postgres:18
     environment:
       POSTGRES_USER: temporal
       POSTGRES_PASSWORD: temporal
