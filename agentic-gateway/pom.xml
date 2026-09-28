@@ -13,10 +13,10 @@
     </parent>
 
     <groupId>org.community.mifos</groupId>
-    <artifactId>agentic</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
-    <name>agentic</name>
-    <description>Mifos Agentic with Hermes / Spring AI</description>
+    <artifactId>agentic-gateway</artifactId>
+    <version>1.16.0-SNAPSHOT</version>
+    <name>agentic-gateway</name>
+    <description>Mifos Agentic Gateway</description>
 
     <properties>
         <java.version>21</java.version>   <!-- 17+ required; 21/25 recommended -->
