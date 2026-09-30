@@ -1,0 +1,47 @@
+# Infrastructure for Agentic Loan Origination with OpenFn Lightning
+# (replaces Temporal + Ollama stack from agentic-banking-temporal)
+services:
+  # ---------------------------------------------------------------------------
+  # OpenFn Lightning (workflow automation platform)
+  # See https://github.com/OpenFn/lightning and docs.openfn.org
+  # For production, follow official deployment docs (encryption keys, workers).
+  # ---------------------------------------------------------------------------
+  # lightning:
+  #   image: openfn/lightning:latest
+  #   ports:
+  #     - "4000:4000"
+  #   environment:
+  #     DATABASE_URL: ecto://postgres:postgres@db:5432/lightning
+  #     PRIMARY_ENCRYPTION_KEY: <generate with mix lightning.gen_encryption_key>
+  #     SECRET_KEY_BASE: <long random string>
+  #     WORKER_RUNS_PRIVATE_KEY: ...
+  #     WORKER_LIGHTNING_PUBLIC_KEY: ...
+  #     WORKER_SECRET: ...
+  #   depends_on:
+  #     - db
+  #     - worker
+
+  # ---------------------------------------------------------------------------
+  # Local Ollama for agent decisions
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  # Optional: local Postgres if you self-host Lightning
+  # db:
+  #   image: postgres:16
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: lightning
+  #   volumes:
+  #     - pgdata:/var/lib/postgresql/data
+
+volumes:
+  ollama_data:
+  # pgdata:

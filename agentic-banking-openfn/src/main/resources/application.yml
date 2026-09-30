@@ -1,0 +1,60 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: agentic-banking-openfn
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+# ---------------------------------------------------------------------------
+# OpenFn Lightning (replaces Temporal)
+# ---------------------------------------------------------------------------
+openfn:
+  # Base URL of your Lightning instance (self-hosted or cloud)
+  base-url: ${OPENFN_BASE_URL:http://localhost:4000}
+  # API token generated in Lightning (User Settings → API Tokens)
+  api-token: ${OPENFN_API_TOKEN:}
+  # Webhook trigger URLs (copy from Lightning UI after deploying project.yaml)
+  webhooks:
+    # Starts auto underwriting (bank, credit, assessments, Ollama)
+    loan-submit: ${OPENFN_WEBHOOK_LOAN_SUBMIT:http://localhost:4000/i/loan-submit}
+    # Continues after human APPROVE/REJECT → Fineract write-back
+    loan-review: ${OPENFN_WEBHOOK_LOAN_REVIEW:http://localhost:4000/i/loan-review}
+  # Optional: poll run status via Lightning API
+  project-id: ${OPENFN_PROJECT_ID:}
+  # Shared secret so OpenFn jobs can callback into this gateway securely
+  callback-secret: ${OPENFN_CALLBACK_SECRET:change-me-in-prod}
+
+# Local Ollama (used both by gateway fallback and by OpenFn HTTP jobs)
+ollama:
+  url: ${OLLAMA_URL:http://localhost:11434}
+  model: ${OLLAMA_MODEL:llama3.2:latest}
+
+# Apache Fineract (used by OpenFn jobs and optional gateway fallback)
+fineract:
+  base-url: ${FINERACT_BASE_URL:https://sandbox.mifos.community/fineract-provider/api/v1}
+  username: ${FINERACT_USER:mifos}
+  password: ${FINERACT_PASSWORD:password}
+  tenant-id: ${FINERACT_TENANT:default}
+  default-office-id: ${FINERACT_OFFICE_ID:1}
+  default-product-id: ${FINERACT_PRODUCT_ID:1}
+
+# Gateway behaviour
+loan:
+  # When true, gateway runs underwriting steps locally if OpenFn is unreachable
+  local-fallback-enabled: ${LOAN_LOCAL_FALLBACK:true}
+  # How long to keep in-memory loan state (hours)
+  state-ttl-hours: 72
+
+logging:
+  level:
+    org.community.mifos.agentic: INFO
+    org.springframework.web: INFO

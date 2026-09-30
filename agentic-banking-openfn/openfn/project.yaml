@@ -1,0 +1,359 @@
+# OpenFn Lightning project specification – Agentic Loan Origination
+# Deploy with: openfn deploy -p project.yaml  (or push via Lightning GitHub sync)
+#
+# Docs: https://docs.openfn.org/documentation/legacy/portability
+name: agentic-loan-origination
+description: >
+  Durable multi-step loan underwriting for Mifos/Fineract.
+  Replaces Temporal SupervisorWorkflow with OpenFn Lightning jobs.
+  Spring Boot Agentic Gateway owns HITL + status queries; OpenFn owns step execution.
+
+workflows:
+  # -------------------------------------------------------------------------
+  # Workflow 1: Auto underwriting (triggered by gateway POST /api/loans/submit)
+  # -------------------------------------------------------------------------
+  loan-submit:
+    name: Loan Submit – Auto Underwriting
+    jobs:
+      normalize-application:
+        name: Normalize Application
+        adaptor: "@openfn/language-common@latest"
+        enabled: true
+        body: |
+          // state.data is the webhook body from the Agentic Gateway
+          fn(state => {
+            const app = state.data || {};
+            console.log('normalize-application', app.workflowId);
+            return {
+              ...state,
+              application: {
+                workflowId: app.workflowId,
+                applicantId: app.applicantId,
+                fullName: app.fullName,
+                email: app.email,
+                phone: app.phone,
+                requestedAmount: Number(app.requestedAmount),
+                termMonths: Number(app.termMonths || 12),
+                purpose: app.purpose || 'GENERAL',
+                applicationDate: app.applicationDate,
+                documentPaths: app.documentPaths || [],
+                metadata: app.metadata || {}
+              },
+              gatewayBaseUrl: app.gatewayBaseUrl || 'http://host.docker.internal:8080',
+              callbackSecret: app.callbackSecret || ''
+            };
+          });
+
+      notify-gathering:
+        name: Notify Gateway – GATHERING_DATA
+        adaptor: "@openfn/language-http@latest"
+        enabled: true
+        body: |
+          post(
+            `${$.gatewayBaseUrl}/api/openfn/callback/status`,
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'X-OpenFn-Secret': $.callbackSecret
+              },
+              body: {
+                workflowId: $.application.workflowId,
+                phase: 'GATHERING_DATA'
+              }
+            }
+          );
+
+      fetch-bank-and-credit:
+        name: Fetch Bank + Credit (parallel simulation)
+        adaptor: "@openfn/language-common@latest"
+        enabled: true
+        body: |
+          // In production: use language-http against real bank / CIBIL / Experian APIs
+          // with independent retries. Here we simulate durable data gathering.
+          fn(state => {
+            const amount = state.application.requestedAmount;
+            const bankData = {
+              provider: 'mock-bank',
+              averageBalance: amount * 1.8,
+              salaryCreditsLast3Months: 3,
+              bouncedCheques: 0
+            };
+            // CIBIL → Experian fallback pattern (same idea as Temporal retry policy)
+            let creditReport = {
+              bureau: 'CIBIL',
+              score: 720,
+              accounts: 4,
+              delinquencies: 0
+            };
+            if (creditReport.score < 0) {
+              creditReport = { bureau: 'Experian', score: 705, accounts: 3, delinquencies: 0 };
+            }
+            console.log('bank+credit fetched for', state.application.workflowId);
+            return { ...state, bankData, creditReport };
+          });
+
+      process-documents:
+        name: Process Documents (OCR stub)
+        adaptor: "@openfn/language-common@latest"
+        enabled: true
+        body: |
+          fn(state => {
+            const paths = state.application.documentPaths || [];
+            const docResults = paths.length
+              ? paths.map(p => ({ path: p, extracted: true, type: 'ID', confidence: 0.9 }))
+              : [{ path: 'stub', extracted: true, type: 'NONE', confidence: 1.0 }];
+            return { ...state, docResults };
+          });
+
+      specialist-assessments:
+        name: Specialist Assessments (Income / Expense / Credit)
+        adaptor: "@openfn/language-common@latest"
+        enabled: true
+        body: |
+          fn(state => {
+            const { application, bankData, creditReport } = state;
+            const amount = application.requestedAmount;
+
+            const income = {
+              type: 'INCOME',
+              verdict: bankData.salaryCreditsLast3Months >= 2 ? 'PASS' : 'REFER',
+              score: bankData.salaryCreditsLast3Months >= 2 ? 0.85 : 0.5,
+              rationale: `Salary credits last 3 months: ${bankData.salaryCreditsLast3Months}`
+            };
+            const expense = {
+              type: 'EXPENSE',
+              verdict: bankData.bouncedCheques === 0 ? 'PASS' : 'FAIL',
+              score: bankData.bouncedCheques === 0 ? 0.8 : 0.3,
+              rationale: `Bounced cheques: ${bankData.bouncedCheques}`
+            };
+            const credit = {
+              type: 'CREDIT',
+              verdict: creditReport.score >= 650 ? 'PASS' : creditReport.score >= 550 ? 'REFER' : 'FAIL',
+              score: Math.min(1, creditReport.score / 900),
+              rationale: `${creditReport.bureau} score ${creditReport.score}`
+            };
+
+            // High ticket → force REFER
+            if (amount > 50000 && credit.verdict === 'PASS') {
+              credit.verdict = 'REFER';
+              credit.rationale += ' (high amount – human review required)';
+            }
+
+            return {
+              ...state,
+              assessments: [income, expense, credit]
+            };
+          });
+
+      ollama-decide:
+        name: Ollama Aggregate Decision
+        adaptor: "@openfn/language-http@latest"
+        enabled: true
+        body: |
+          // Call local Ollama. If down, heuristic fallback (same as Temporal design).
+          fn(state => {
+            const fails = state.assessments.filter(a => a.verdict === 'FAIL').length;
+            const refers = state.assessments.filter(a => a.verdict === 'REFER').length;
+            let recommendation, confidence, rationale;
+            if (fails > 0) {
+              recommendation = 'REJECT';
+              confidence = 0.8;
+              rationale = 'One or more specialist assessments failed.';
+            } else if (refers > 0) {
+              recommendation = 'REFER';
+              confidence = 0.65;
+              rationale = 'Borderline assessments – human review required.';
+            } else {
+              recommendation = 'APPROVE';
+              confidence = 0.78;
+              rationale = 'All specialist assessments passed.';
+            }
+            return {
+              ...state,
+              aiDecision: { recommendation, confidence, rationale }
+            };
+          });
+          // Optional live Ollama call (uncomment when Ollama is reachable from worker):
+          // post('http://host.docker.internal:11434/api/generate', {
+          //   body: {
+          //     model: 'llama3.2:latest',
+          //     prompt: `Return ONLY JSON {"recommendation":"APPROVE|REJECT|REFER","confidence":0-1,"rationale":"..."} for loan ${JSON.stringify($.application)} assessments ${JSON.stringify($.assessments)}`,
+          //     stream: false,
+          //     format: 'json'
+          //   }
+          // });
+
+      callback-gateway:
+        name: Callback Gateway – PENDING_HUMAN_REVIEW
+        adaptor: "@openfn/language-http@latest"
+        enabled: true
+        body: |
+          post(
+            `${$.gatewayBaseUrl}/api/openfn/callback/underwriting-complete`,
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'X-OpenFn-Secret': $.callbackSecret
+              },
+              body: {
+                workflowId: $.application.workflowId,
+                recommendation: $.aiDecision.recommendation,
+                confidence: $.aiDecision.confidence,
+                rationale: $.aiDecision.rationale,
+                assessments: $.assessments,
+                context: {
+                  bank: $.bankData,
+                  credit: $.creditReport,
+                  documents: $.docResults
+                }
+              }
+            }
+          );
+
+    triggers:
+      webhook-loan-submit:
+        type: webhook
+        enabled: true
+        # After deploy, copy the generated URL into OPENFN_WEBHOOK_LOAN_SUBMIT
+
+    edges:
+      webhook-loan-submit->normalize-application:
+        condition_type: always
+        enabled: true
+      normalize-application->notify-gathering:
+        condition_type: on_job_success
+        source_job: normalize-application
+        target_job: notify-gathering
+        enabled: true
+      notify-gathering->fetch-bank-and-credit:
+        condition_type: on_job_success
+        source_job: notify-gathering
+        target_job: fetch-bank-and-credit
+        enabled: true
+      fetch-bank-and-credit->process-documents:
+        condition_type: on_job_success
+        source_job: fetch-bank-and-credit
+        target_job: process-documents
+        enabled: true
+      process-documents->specialist-assessments:
+        condition_type: on_job_success
+        source_job: process-documents
+        target_job: specialist-assessments
+        enabled: true
+      specialist-assessments->ollama-decide:
+        condition_type: on_job_success
+        source_job: specialist-assessments
+        target_job: ollama-decide
+        enabled: true
+      ollama-decide->callback-gateway:
+        condition_type: on_job_success
+        source_job: ollama-decide
+        target_job: callback-gateway
+        enabled: true
+
+  # -------------------------------------------------------------------------
+  # Workflow 2: Human review continuation → Fineract write-back
+  # -------------------------------------------------------------------------
+  loan-review:
+    name: Loan Review – Fineract Write-back
+    jobs:
+      prepare-review:
+        name: Prepare Review Context
+        adaptor: "@openfn/language-common@latest"
+        enabled: true
+        body: |
+          fn(state => {
+            const d = state.data || {};
+            console.log('prepare-review', d.workflowId, d.action);
+            return {
+              ...state,
+              workflowId: d.workflowId,
+              action: (d.action || '').toUpperCase(),
+              comments: d.comments || '',
+              application: d.application || {},
+              summary: d.summary || {},
+              gatewayBaseUrl: d.gatewayBaseUrl || 'http://host.docker.internal:8080',
+              callbackSecret: d.callbackSecret || ''
+            };
+          });
+
+      create-fineract-loan:
+        name: Create + Approve Loan in Fineract
+        adaptor: "@openfn/language-http@latest"
+        enabled: true
+        body: |
+          // Production: use a dedicated Fineract credential + language-http
+          // against /fineract-provider/api/v1/clients and /loans.
+          // This job demonstrates the structure; credential body is injected by Lightning.
+          fn(state => {
+            if (state.action !== 'APPROVE') {
+              return {
+                ...state,
+                fineractLoan: { skipped: true, reason: 'not approved' }
+              };
+            }
+            // Simulated successful write-back (replace with real POST chain)
+            const loanId = Math.floor(Math.random() * 90000) + 10000;
+            const clientId = Math.floor(Math.random() * 90000) + 10000;
+            console.log('Fineract loan created', loanId);
+            return {
+              ...state,
+              fineractLoan: {
+                clientId,
+                loanId,
+                status: 'APPROVED',
+                note: 'Replace this job body with real Fineract HTTP operations'
+              }
+            };
+          });
+          // Example real operations (requires Fineract credential configured in Lightning):
+          // post('/clients', {
+          //   body: {
+          //     officeId: 1,
+          //     firstname: $.application.fullName?.split(' ')[0],
+          //     lastname: $.application.fullName?.split(' ').slice(1).join(' ') || 'NA',
+          //     active: true,
+          //     activationDate: new Date().toISOString().slice(0, 10),
+          //     dateFormat: 'yyyy-MM-dd',
+          //     locale: 'en'
+          //   }
+          // });
+
+      callback-fineract-done:
+        name: Callback Gateway – COMPLETED
+        adaptor: "@openfn/language-http@latest"
+        enabled: true
+        body: |
+          post(
+            `${$.gatewayBaseUrl}/api/openfn/callback/fineract-complete`,
+            {
+              headers: {
+                'Content-Type': 'application/json',
+                'X-OpenFn-Secret': $.callbackSecret
+              },
+              body: {
+                workflowId: $.workflowId,
+                fineractLoan: $.fineractLoan
+              }
+            }
+          );
+
+    triggers:
+      webhook-loan-review:
+        type: webhook
+        enabled: true
+
+    edges:
+      webhook-loan-review->prepare-review:
+        condition_type: always
+        enabled: true
+      prepare-review->create-fineract-loan:
+        condition_type: on_job_success
+        source_job: prepare-review
+        target_job: create-fineract-loan
+        enabled: true
+      create-fineract-loan->callback-fineract-done:
+        condition_type: on_job_success
+        source_job: create-fineract-loan
+        target_job: callback-fineract-done
+        enabled: true
