@@ -10,7 +10,6 @@ not exercised by test_registry.py.
 
 from tools.registry import DomainRegistry
 
-
 # ── Groups domain ────────────────────────────────────────────────────
 
 def test_route_intent_groups():
@@ -88,6 +87,38 @@ def test_route_intent_code_tables():
     tool_names = [t.name for t in tools]
     assert any("code" in n for n in tool_names), (
         f"Expected a code-table tool, got {tool_names}"
+    )
+
+
+# ── Plural keyword matching ──────────────────────────────────────────
+
+def test_route_intent_plural_loans():
+    # A plural-only query must reach the loans domain, not the clients fallback
+    registry = DomainRegistry()
+    tools = registry.route_intent("Show me all loans")
+    tool_names = [t.name for t in tools]
+    assert {"get_loan_details", "create_loan", "make_loan_repayment"} & set(tool_names), (
+        f"Expected a loan-related tool, got {tool_names}"
+    )
+
+
+def test_route_intent_plural_fees():
+    # "fees" (plural) must activate the charges domain explicitly
+    registry = DomainRegistry()
+    tools = registry.route_intent("List all fees")
+    tool_names = [t.name for t in tools]
+    assert any("charge" in n for n in tool_names), (
+        f"Expected a charges-domain tool, got {tool_names}"
+    )
+
+
+def test_route_intent_plural_officers():
+    # "officers" (plural) must activate the staff domain alongside loans
+    registry = DomainRegistry()
+    tools = registry.route_intent("Who are the loan officers?")
+    tool_names = [t.name for t in tools]
+    assert "list_staff" in tool_names, (
+        f"Expected list_staff, got {tool_names}"
     )
 
 

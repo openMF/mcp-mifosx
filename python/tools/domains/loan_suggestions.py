@@ -1,5 +1,6 @@
 from typing import Any, List
 
+
 def generate_loan_suggestions(intent: str, data: Any) -> List[str]:
     suggestions: List[str] = []
 

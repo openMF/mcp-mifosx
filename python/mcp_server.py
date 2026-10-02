@@ -13,16 +13,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [M
 logger = logging.getLogger(__name__)
 
 # 2. Import all the available domain functions from the existing codebase
+from functools import wraps
+from inspect import signature
+from typing import Any, Callable, Dict
+
+from core.suggestion_engine import generate_suggestions
+from core.validation_engine import ValidationError, validate_input
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge as create_charge_domain
 from tools.domains.charges import get_charge as get_charge_domain
 from tools.domains.charges import list_charges as list_charges_domain
 from tools.domains.charges import update_charge as update_charge_domain
-from functools import wraps
-from typing import Any, Callable, Dict
-from inspect import signature
-from core.validation_engine import validate_input, ValidationError
-from core.suggestion_engine import generate_suggestions
 from tools.domains.clients import (
     activate_client,
     apply_client_charge,
@@ -468,7 +469,7 @@ def get_overdue_loans_for_client(clientId: int) -> dict:
 
     # 🔹 Step 2: Generate suggestions
     # suggestions = generate_suggestions("get_overdue_loans", result)
-    
+
     payload = result if isinstance(result, dict) else {"overdueLoans": result or []}
     suggestions = generate_suggestions("get_overdue_loans", payload)
     return {
