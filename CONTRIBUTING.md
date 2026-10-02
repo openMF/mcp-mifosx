@@ -36,7 +36,7 @@ LLM Processing → User Response
    - Name, description, type hints for parameters
    - Returned to LLM as a function signature
 
-2. **Parameter Validation** (`validate_tool_params()` wrapper)
+2. **Parameter Validation** (`validate_input()` in `core/validation_engine.py`)
    - Centralized pre-validation of all inputs
    - Consistent error structure returned early if invalid
 
@@ -187,26 +187,18 @@ from tools.domains.loans import my_new_tool
 
 ### Step 3: Add to Validation Rules (if needed)
 
-Edit `python/tools/validation.py` to extend `validate_tool_params()` if your parameters follow non-standard patterns:
+Edit `python/core/validation_engine.py` to extend `validate_input()` if your parameters follow non-standard patterns:
 
 ```python
-def validate_tool_params(params: dict[str, Any]) -> dict | None:
+def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
     # Existing rules handle:
-    # - *Id / *_id fields (positive integers)
-    # - amount/principal/rate fields (positive numbers)
-    # - date fields (non-empty strings)
-    
-    # Add custom rules for your tool parameters here if needed:
-    if "customField" in params:
-        if not isinstance(params["customField"], str):
-            return validation_error_response(
-                message="customField must be a string",
-                field="customField",
-                value=params["customField"],
-                expected="string"
-            )
-    
-    return None
+    # - get_loan: loanId must be a positive integer
+    # - make_repayment: loanId (positive int), amount (positive number)
+    # Helpers available: _require_positive_int(), _require_positive_number()
+
+    # Add a branch for your tool here if needed:
+    if tool_name == "my_new_tool":
+        _require_positive_int(params, "customField")
 ```
 
 ### Step 4: Add Tests
@@ -290,7 +282,7 @@ OUTPUT:
 
 ### Validation
 
-- **Input validation is centralized** in `validate_tool_params()`
+- **Input validation is centralized** in `core/validation_engine.py` (`validate_input()`)
 - **No hard-coded checks** in individual domain functions
 - **Consistent error structure**:
   ```json
@@ -347,8 +339,9 @@ git checkout -b feature/AI-206-add-new-tool
 ### 3. Implement & test
 ```bash
 # Make code changes
-python -m pytest python/tests/ -v
-python -m pylint python/tools/ --disable=C0111  # basic linting
+cd python
+pytest tests/ -v
+ruff check .  # lint (same check as Python CI)
 ```
 
 ### 4. Commit with ticket reference
@@ -398,7 +391,7 @@ When updating existing tools:
 ## Questions?
 
 - **Tool behavior**: Check `python/tools/domains/` for similar examples
-- **Validation rules**: See `python/tools/validation.py`
+- **Validation rules**: See `python/core/validation_engine.py`
 - **Fineract API**: Refer to [Apache Fineract REST API docs](https://fineract.apache.org/en/docs/current/deployment/deploy_docker.html)
 - **PR reviews**: Tag maintainers in GitHub for guidance
 

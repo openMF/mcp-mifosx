@@ -35,7 +35,7 @@ This is the **Server**, not a client or agent. It does one thing well: translate
 
 ```bash
 git clone https://github.com/openMF/mcp-mifosx.git
-cd mcp-mifosx/Python/MCP-Server-Python-Implementation
+cd mcp-mifosx/python
 pip install -r requirements.txt
 ```
 
@@ -83,7 +83,7 @@ Add the following to your `claude_desktop_config.json`:
   "mcpServers": {
     "mifos": {
       "command": "python",
-      "args": ["/path/to/MCP-Server-Python-Implementation/mcp_server.py"],
+      "args": ["/path/to/mcp-mifosx/python/mcp_server.py"],
       "env": {
         "MIFOSX_BASE_URL": "https://your-fineract-instance/api/v1",
         "MIFOSX_TENANT_ID": "default",
@@ -216,7 +216,7 @@ All tools are registered in `mcp_server.py` with `@mcp.tool()` and are discovera
 ## Project Structure
 
 ```
-MCP-Server-Python-Implementation/
+python/
 ├── mcp_server.py          # Main server - registers all MCP tools
 ├── requirements.txt       # Minimal dependencies (no LLM frameworks)
 ├── Dockerfile             # Container image for the MCP server
@@ -267,10 +267,10 @@ The [MCP Inspector](https://github.com/modelcontextprotocol/inspector) is the of
 
 ### Step 1 — Launch the Inspector
 
-Run this command from inside the `MCP-Server-Python-Implementation/` directory:
+Run this command from inside the `python/` directory:
 
 ```bash
-cd Python/MCP-Server-Python-Implementation
+cd python
 DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector python mcp_server.py
 ```
 
@@ -299,13 +299,13 @@ After connecting, click the **"Tools"** tab in the left sidebar. You will see al
 - **Fill in parameters** and click **"Call Tool"** to invoke it live against Fineract
 - **Inspect the raw JSON response** returned by the tool
 
-### Programmatic Smoke Test
+### Programmatic Tests
 
-To quickly verify registration and API connectivity without the browser:
+To run the unit test suite without the browser:
 
 ```bash
-cd Python/MCP-Server-Python-Implementation
-python test_tools.py
+cd python
+pytest tests/ -v
 ```
 
 Expected output:
