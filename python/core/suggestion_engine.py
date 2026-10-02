@@ -44,7 +44,7 @@ def generate_suggestions(intent: str, data: Union[Dict[str, Any], List[Any], Non
 
         status = (data.get("status") or "").lower()
 
-        actions = get_actions_for_status(status)
+        actions = get_actions_for_status("loan", status)
 
         if "repay" in actions:
             suggestions.append(f"Make a repayment for loan {loan_id}")
@@ -62,7 +62,7 @@ def generate_suggestions(intent: str, data: Union[Dict[str, Any], List[Any], Non
         client_id = data.get("clientId")
         status = (data.get("status") or "").lower()
 
-        actions = get_actions_for_status(status)
+        actions = get_actions_for_status("client", status)
 
         if "activate" in actions:
             suggestions.append(f"Activate client {client_id}")
