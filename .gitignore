@@ -76,3 +76,12 @@ java/target/
 ollama_context_eval.py
 /plugin/target/
 /agentic-banking-temporal/target/
+
+# Agent Skill
+agent-skill/__pycache__/
+agent-skill/**/__pycache__/
+agent-skill/*.egg-info/
+!agent-skill/README.md
+!agent-skill/SKILL.md
+!agent-skill/references/*.md
+
