@@ -42,3 +42,6 @@ jobs:
       - name: Security scan with bandit
         run: bandit -r tools/ -ll -q --skip B501,B113
 
+      - name: Test with pytest
+        run: pytest tests/ -v
+
