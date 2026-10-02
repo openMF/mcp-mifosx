@@ -22,7 +22,7 @@ class FineractAdapter:
         self.tenant_id = os.getenv("MIFOSX_TENANT_ID", "default")
         self.username = os.getenv("MIFOSX_USERNAME")
         self.password = os.getenv("MIFOSX_PASSWORD")
-        
+
         # Default to False (secure) - SSL verification enabled by default
         # Set MIFOSX_SKIP_TLS_VERIFY=true only for local dev with self-signed certs
         self.verify_ssl = os.getenv("MIFOSX_SKIP_TLS_VERIFY", "false").lower() != "true"
