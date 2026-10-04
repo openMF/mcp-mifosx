@@ -30,12 +30,28 @@ ACTIONS_BY_DOMAIN_STATUS = {
 }
 
 
-def get_actions_for_status(status: str) -> List[str]:
+def get_actions_for_status(domain: str, status: str) -> List[str]:
     """
-    Returns allowed actions based on normalized status.
+    Returns allowed actions for a status within a domain.
+
+    Parameters:
+        domain: Action-map key ("loan", "savings", or "client").
+        status: Fineract status value, e.g. "Active" or "Pending Approval".
+
+    Returns:
+        The allowed actions, or an empty list when nothing matches.
     """
-    if not status:
+    if not domain or not status:
         return []
 
+    actions_by_status = ACTIONS_BY_DOMAIN_STATUS.get(domain.lower(), {})
     status = status.lower()
-    return ACTIONS_BY_DOMAIN_STATUS.get(status, [])
+    if status in actions_by_status:
+        return actions_by_status[status]
+
+    # Fineract value strings may carry suffixes (e.g. "Pending Approval")
+    for key, actions in actions_by_status.items():
+        if status.startswith(key):
+            return actions
+
+    return []
