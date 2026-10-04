@@ -42,6 +42,22 @@ This repository is **framework-agnostic**. The client (LLM brain, UI, memory) li
 
 ---
 
+## Agentic Platform Architecture
+
+The [Agentic Gateway](agentic-gateway) builds on these MCP servers to replace the plain LLM gateway behind the Mifos X WebApp copilot with an agent harness running a swarm of specialized agents.
+
+![Mifos Agentic Platform Architecture](docs/images/agentic-platform-architecture.png)
+
+- **User channels** — Mifos WebApp (Chat / Copilot UI), Mifos Pay, Mifos Mobile, Mifos Field Officer and Mifos Web Banking. The **Agent CLI** is an optional entry point for developers and power users.
+- **Agentic Gateway** — reuses the existing Mifos AI Gateway endpoint, but routes requests to an agent harness instead of directly to an LLM.
+- **Agent Harness** (runtime for Pi / Prime / Hermes) — wraps every agent with the LLM model provider, an LLM firewall (safety & security), observability (logging / monitoring) and session management (tool orchestration).
+- **Specialized Agents** — Enrollment Agent, KYC/FT Reviewer, Loan Reviewer, Scoring Reviewer, Document Reviewer and others. Their Fineract tool calls use the calling officer's credentials and permissions; agents do not have separate Fineract roles.
+- **MCP Tools / AG-UI compatible tools** — Fineract, loan, client, product, workflow, reporting and custom tools, invoked as needed by the agents.
+- **Apache Fineract + Grants / RBAC** — the core banking backend. Fineract enforces grants for the authenticated officer: if the officer's role has the required grant, the call (including write APIs) succeeds; otherwise, it is denied.
+- **External Systems** (via tools) — Scoring, Black List, Sanction List, National ID, Identity Verification and Biometrics systems.
+
+---
+
 ## Implementation Synchronization
 
 While this repository hosts two different programming languages, they are kept in **functional parity** where possible to ensure a consistent experience.
