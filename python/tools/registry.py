@@ -5,6 +5,8 @@
 import re
 from typing import Any, List
 
+# ✅ AI Suggestion Engine
+from core.suggestion_engine import generate_suggestions
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge, get_charge, list_charges, update_charge
 from tools.domains.clients import (
@@ -69,9 +71,6 @@ from tools.domains.savings import (
     withdraw_savings,
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
-
-# ✅ AI Suggestion Engine
-from core.suggestion_engine import generate_suggestions
 
 
 class DomainRegistry:
@@ -153,7 +152,8 @@ class DomainRegistry:
                     if k in query:
                         return True
                 else:
-                    if re.search(rf"\b{re.escape(k)}\b", query):
+                    # Accept simple plurals too ("groups", "officers", "fees")
+                    if re.search(rf"\b{re.escape(k)}(?:s|es)?\b", query):
                         return True
             return False
 
