@@ -4,7 +4,7 @@
 # Two-stage build: Maven build -> slim JRE runtime.
 #   docker build -t openmf/mifos-copilot-gateway ./gateway
 
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3.10-eclipse-temurin-21 AS build
 WORKDIR /build
 COPY pom.xml .
 RUN mvn -q -B dependency:go-offline
