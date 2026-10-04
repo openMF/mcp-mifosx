@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fineract-agent-skill"
+version = "0.1.0"
+description = "Reusable Agent Skill for Apache Fineract — compatible with Pi Agent, Hermes Agent, and Prime-Agent."
+readme = "README.md"
+license = "MPL-2.0"
+requires-python = ">=3.10"
+authors = [
+    { name = "Mifos Initiative", email = "dev@fineract.apache.org" },
+]
+keywords = ["fineract", "mcp", "mifos", "agent", "skill", "banking"]
+
+dependencies = [
+    "httpx>=0.27,<1.0",
+    "pydantic>=2.0,<3.0",
+    "python-dotenv>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "respx>=0.22",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["fineract_skill"]
