@@ -218,6 +218,8 @@ workflows:
 
     edges:
       webhook-loan-submit->normalize-application:
+        source_trigger: webhook-loan-submit
+        target_job: normalize-application
         condition_type: always
         enabled: true
       normalize-application->notify-gathering:
@@ -345,6 +347,8 @@ workflows:
 
     edges:
       webhook-loan-review->prepare-review:
+        source_trigger: webhook-loan-review
+        target_job: prepare-review
         condition_type: always
         enabled: true
       prepare-review->create-fineract-loan:
