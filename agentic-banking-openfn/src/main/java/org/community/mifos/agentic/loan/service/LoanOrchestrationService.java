@@ -301,7 +301,7 @@ public class LoanOrchestrationService {
         p.put("documentPaths", app.getDocumentPaths());
         p.put("metadata", app.getMetadata());
         // Callback target for OpenFn jobs
-        p.put("gatewayBaseUrl", "http://host.docker.internal:8080"); // override via env in real deploy
+        p.put("gatewayBaseUrl", openFnProps.getGatewayBaseUrl());
         p.put("callbackSecret", openFnProps.getCallbackSecret());
         return p;
     }
@@ -313,7 +313,7 @@ public class LoanOrchestrationService {
         p.put("comments", comments);
         p.put("application", state.getApplication());
         p.put("summary", state.getSummary());
-        p.put("gatewayBaseUrl", "http://host.docker.internal:8080");
+        p.put("gatewayBaseUrl", openFnProps.getGatewayBaseUrl());
         p.put("callbackSecret", openFnProps.getCallbackSecret());
         return p;
     }

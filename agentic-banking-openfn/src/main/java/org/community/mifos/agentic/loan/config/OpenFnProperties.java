@@ -12,6 +12,7 @@ public class OpenFnProperties {
     private String apiToken = "";
     private String projectId = "";
     private String callbackSecret = "change-me-in-prod";
+    private String gatewayBaseUrl = "http://host.docker.internal:8080";
     private Webhooks webhooks = new Webhooks();
 
     public String getBaseUrl() { return baseUrl; }
@@ -25,6 +26,9 @@ public class OpenFnProperties {
 
     public String getCallbackSecret() { return callbackSecret; }
     public void setCallbackSecret(String callbackSecret) { this.callbackSecret = callbackSecret; }
+
+    public String getGatewayBaseUrl() { return gatewayBaseUrl; }
+    public void setGatewayBaseUrl(String gatewayBaseUrl) { this.gatewayBaseUrl = gatewayBaseUrl; }
 
     public Webhooks getWebhooks() { return webhooks; }
     public void setWebhooks(Webhooks webhooks) { this.webhooks = webhooks; }
