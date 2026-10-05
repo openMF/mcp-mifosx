@@ -8,6 +8,14 @@ description: >
   Replaces Temporal SupervisorWorkflow with OpenFn Lightning jobs.
   Spring Boot Agentic Gateway owns HITL + status queries; OpenFn owns step execution.
 
+# Lightning credential used by the Fineract write-back job. It must exist before deploying:
+# a raw JSON credential named "fineract", owned by the Lightning user below
+# (change owner to your Lightning user's email).
+credentials:
+  super@openfn.org-fineract:
+    name: fineract
+    owner: super@openfn.org
+
 workflows:
   # -------------------------------------------------------------------------
   # Workflow 1: Auto underwriting (triggered by gateway POST /api/loans/submit)
@@ -280,44 +288,100 @@ workflows:
       create-fineract-loan:
         name: Create + Approve Loan in Fineract
         adaptor: "@openfn/language-http@latest"
+        credential: super@openfn.org-fineract
         enabled: true
         body: |
-          // Production: use a dedicated Fineract credential + language-http
-          // against /fineract-provider/api/v1/clients and /loans.
-          // This job demonstrates the structure; credential body is injected by Lightning.
-          fn(state => {
+          // Same chain as agentic-banking-temporal FineractClient:
+          // create client -> submit loan (externalId = workflowId) -> approve.
+          // Uses the "fineract" credential (raw JSON):
+          //   { baseUrl, username, password, tenantId, productId, officeId, tls }
+          // e.g. baseUrl https://host.docker.internal:8443/fineract-provider/api/v1
+          fn(async state => {
             if (state.action !== 'APPROVE') {
-              return {
-                ...state,
-                fineractLoan: { skipped: true, reason: 'not approved' }
-              };
+              return { ...state, fineractLoan: { skipped: true, reason: 'not approved' } };
             }
-            // Simulated successful write-back (replace with real POST chain)
-            const loanId = Math.floor(Math.random() * 90000) + 10000;
-            const clientId = Math.floor(Math.random() * 90000) + 10000;
-            console.log('Fineract loan created', loanId);
-            return {
-              ...state,
-              fineractLoan: {
-                clientId,
-                loanId,
-                status: 'APPROVED',
-                note: 'Replace this job body with real Fineract HTTP operations'
-              }
-            };
+
+            const cfg = state.configuration || {};
+            const app = state.application || {};
+            const productId = Number(cfg.productId || 1);
+            const opts = { headers: { 'Fineract-Platform-TenantId': cfg.tenantId || 'default' } };
+
+            const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+              'August', 'September', 'October', 'November', 'December'];
+            const fmt = d => `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+            const today = fmt(new Date());
+            const disbursement = fmt(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000));
+            const dates = { locale: 'en', dateFormat: 'dd MMMM yyyy' };
+
+            const names = (app.fullName || 'Unknown Applicant').trim().split(/\s+/);
+            const result = { externalId: app.workflowId, productId };
+
+            try {
+              const product = (await get(`/loanproducts/${productId}`, opts)(state)).data;
+              const idOf = v => (v && typeof v === 'object' ? v.id : v);
+              const clamp = (v, min, max) => Math.min(max ?? v, Math.max(min ?? v, v));
+              const principal = clamp(Number(app.requestedAmount), product.minPrincipal, product.maxPrincipal);
+              const repayments = clamp(Number(app.termMonths || product.numberOfRepayments),
+                product.minNumberOfRepayments, product.maxNumberOfRepayments);
+              const repaymentEvery = product.repaymentEvery || 1;
+              const repaymentFrequencyType = idOf(product.repaymentFrequencyType) ?? 2;
+
+              const client = (await post('/clients', {
+                officeId: Number(cfg.officeId || 1),
+                firstname: names[0],
+                lastname: names.slice(1).join(' ') || 'NA',
+                legalFormId: 1,
+                active: true,
+                activationDate: today,
+                externalId: `${app.workflowId}-client`,
+                ...(app.email ? { emailAddress: app.email } : {}),
+                ...(app.phone ? { mobileNo: app.phone } : {}),
+                ...dates
+              }, opts)(state)).data;
+              result.clientId = client.clientId;
+
+              const loan = (await post('/loans', {
+                clientId: client.clientId,
+                productId,
+                principal,
+                loanTermFrequency: repayments * repaymentEvery,
+                loanTermFrequencyType: repaymentFrequencyType,
+                numberOfRepayments: repayments,
+                repaymentEvery,
+                repaymentFrequencyType,
+                interestRatePerPeriod: product.interestRatePerPeriod,
+                amortizationType: idOf(product.amortizationType) ?? 1,
+                interestType: idOf(product.interestType) ?? 0,
+                interestCalculationPeriodType: idOf(product.interestCalculationPeriodType) ?? 1,
+                transactionProcessingStrategyCode: product.transactionProcessingStrategyCode || 'mifos-standard-strategy',
+                expectedDisbursementDate: disbursement,
+                submittedOnDate: today,
+                loanType: 'individual',
+                externalId: app.workflowId,
+                ...dates
+              }, opts)(state)).data;
+              result.loanId = loan.loanId;
+              result.principal = principal;
+
+              await post(`/loans/${loan.loanId}?command=approve`, {
+                approvedOnDate: today,
+                expectedDisbursementDate: disbursement,
+                approvedLoanAmount: principal,
+                ...dates
+              }, opts)(state);
+
+              result.status = 'APPROVED_IN_FINERACT';
+              console.log('Fineract loan approved', result.loanId, 'externalId', result.externalId);
+            } catch (e) {
+              // Report the failure to the gateway instead of leaving the case in WRITING_TO_FINERACT
+              result.status = 'FINERACT_ERROR';
+              result.error = e.message;
+              result.details = e.body;
+              console.error('Fineract write-back failed', e.message, JSON.stringify(e.body));
+            }
+
+            return { ...state, fineractLoan: result };
           });
-          // Example real operations (requires Fineract credential configured in Lightning):
-          // post('/clients', {
-          //   body: {
-          //     officeId: 1,
-          //     firstname: $.application.fullName?.split(' ')[0],
-          //     lastname: $.application.fullName?.split(' ').slice(1).join(' ') || 'NA',
-          //     active: true,
-          //     activationDate: new Date().toISOString().slice(0, 10),
-          //     dateFormat: 'yyyy-MM-dd',
-          //     locale: 'en'
-          //   }
-          // });
 
       callback-fineract-done:
         name: Callback Gateway – COMPLETED
