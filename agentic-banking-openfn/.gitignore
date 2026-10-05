@@ -1,0 +1,13 @@
+target/
+.idea/
+*.iml
+.classpath
+.project
+.settings/
+*.log
+.DS_Store
+.env
+
+# OpenFn CLI deploy artifacts (instance-specific ids / local config)
+openfn/.state.json
+openfn/.config.json
