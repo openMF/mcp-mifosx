@@ -22,7 +22,9 @@ import org.community.mifos.agentic.loan.config.OpenFnProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
@@ -49,19 +51,20 @@ public class OpenFnClient {
         log.info("Triggering OpenFn webhook {} with workflowId={}",
                 webhookUrl, payload.get("workflowId"));
         try {
-            Map<String, Object> body = restClient.post()
+            ResponseEntity<Map<String, Object>> response = restClient.post()
                     .uri(webhookUrl)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(payload)
                     .retrieve()
-                    .body(new ParameterizedTypeReference<>() {});
+                    .toEntity(new ParameterizedTypeReference<>() {});
 
-            if (body == null) {
-                return OpenFnTriggerResult.accepted(null, null, null);
-            }
+            // Lightning returns only work_order_id in the body; ids are also sent as
+            // x-meta-run-id / x-meta-work-order-id response headers.
+            HttpHeaders headers = response.getHeaders();
+            Map<String, Object> body = response.getBody() != null ? response.getBody() : Map.of();
             return OpenFnTriggerResult.accepted(
-                    str(body.get("run_id")),
-                    str(body.get("work_order_id")),
+                    firstNonNull(headers.getFirst("x-meta-run-id"), str(body.get("run_id"))),
+                    firstNonNull(headers.getFirst("x-meta-work-order-id"), str(body.get("work_order_id"))),
                     str(body.get("attempt_id")));
         } catch (RestClientException ex) {
             log.error("OpenFn webhook trigger failed: {}", ex.getMessage());
@@ -99,6 +102,10 @@ public class OpenFnClient {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    private static String firstNonNull(String a, String b) {
+        return a != null ? a : b;
     }
 
     public record OpenFnTriggerResult(String runId, String workOrderId, String attemptId) {
