@@ -15,6 +15,9 @@ public class OpenFnProperties {
     private String gatewayBaseUrl = "http://host.docker.internal:8080";
     private String ollamaUrl = "http://host.docker.internal:11434";
     private String ollamaModel = "llama3.2:latest";
+    private String visionModel = "qwen2.5vl:3b";
+    private int curpMaxIssueAgeDays = 30;
+    private float documentRenderDpi = 120f;
     private Webhooks webhooks = new Webhooks();
 
     public String getBaseUrl() { return baseUrl; }
@@ -37,6 +40,15 @@ public class OpenFnProperties {
 
     public String getOllamaModel() { return ollamaModel; }
     public void setOllamaModel(String ollamaModel) { this.ollamaModel = ollamaModel; }
+
+    public String getVisionModel() { return visionModel; }
+    public void setVisionModel(String visionModel) { this.visionModel = visionModel; }
+
+    public int getCurpMaxIssueAgeDays() { return curpMaxIssueAgeDays; }
+    public void setCurpMaxIssueAgeDays(int curpMaxIssueAgeDays) { this.curpMaxIssueAgeDays = curpMaxIssueAgeDays; }
+
+    public float getDocumentRenderDpi() { return documentRenderDpi; }
+    public void setDocumentRenderDpi(float documentRenderDpi) { this.documentRenderDpi = documentRenderDpi; }
 
     public Webhooks getWebhooks() { return webhooks; }
     public void setWebhooks(Webhooks webhooks) { this.webhooks = webhooks; }

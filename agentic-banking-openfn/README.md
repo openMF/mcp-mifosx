@@ -33,7 +33,13 @@ call back by sending `gatewayBaseUrl` in the webhook payload.
   (model, recommendation, reasoning, assessments) as a **loan note**. Retries reuse the
   client/loan already created.
 
-> **Current state:** the bank/credit data and document OCR steps are still simulated.
+- **CURP documents:** the gateway renders the first page of each PDF to PNG; a local Ollama
+  **vision** model extracts the CURP fields, which are validated (clave format, name match,
+  "CURP Certificada: verificada con el Registro Civil", issue date within 30 days). A valid
+  CURP clave becomes the Fineract client's `externalId`, and the analysis is attached as a
+  second loan note.
+
+> **Current state:** the bank/credit data step is still simulated.
 
 ## Prerequisites
 
@@ -135,7 +141,9 @@ Install [Ollama](https://ollama.com/download) and pull the decision model:
 
 ```bash
 ollama pull llama3.2:3b
+ollama pull qwen2.5vl:3b
 export OLLAMA_MODEL=llama3.2:3b
+export OLLAMA_VISION_MODEL=qwen2.5vl:3b
 ```
 
 Like the callbacks, `OPENFN_OLLAMA_URL` must be reachable **from the Lightning container**.
@@ -150,7 +158,8 @@ docker compose exec -T web curl -s http://192.168.65.254:11434/api/tags
 ```
 
 If that returns nothing, set the Windows environment variable `OLLAMA_HOST=0.0.0.0` and
-restart Ollama. Small models (3B) fit a 4 GB GPU; a decision takes roughly 10–20 s.
+restart Ollama. Small models (3B) fit a 4 GB GPU; a decision takes roughly 10–20 s and a
+CURP page roughly 1–2 minutes.
 
 ### Fineract
 
@@ -199,6 +208,9 @@ Notes:
 | `LOAN_LOCAL_FALLBACK` | `true` | Run underwriting in the gateway if OpenFn is unreachable |
 | `OPENFN_OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama used by the OpenFn decision job (as seen from Lightning) |
 | `OLLAMA_MODEL` | `llama3.2:latest` | Ollama model for the decision job |
+| `OLLAMA_VISION_MODEL` | `qwen2.5vl:3b` | Ollama vision model for CURP documents |
+| `CURP_MAX_ISSUE_AGE_DAYS` | `30` | Maximum age of a CURP constancia's issue date |
+| `DOCUMENT_RENDER_DPI` | `120` | DPI used to render PDF pages before vision analysis |
 
 - While `OPENFN_CALLBACK_SECRET` is left at `change-me-in-prod`, the gateway accepts
   callbacks **without checking the secret**. Set a real value outside local development.
@@ -209,7 +221,9 @@ Notes:
 ## 4. Test the flow end to end
 
 ```bash
-# Submit – note the workflowId
+# Submit – note the workflowId. Optional: add a CURP constancia (file name must contain
+# "curp"; PDF, PNG or JPEG, path as seen by the gateway):
+#   "documentPaths": ["/path/to/curp_XXXX.pdf"]
 curl -s -X POST localhost:8080/api/loans/submit -H 'Content-Type: application/json' \
   -d '{"applicantId":"APP-1001","fullName":"Alice Example","requestedAmount":20000,"termMonths":12}'
 
