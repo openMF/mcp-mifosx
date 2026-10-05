@@ -256,7 +256,6 @@ public class LoanOrchestrationService {
             decision.setWorkflowId(workflowId);
         }
         decision.setHumanDecision(state.getHumanAction());
-        decision.setFinalStatus("APPROVED");
 
         if (body.get("fineractLoan") instanceof Map<?, ?> fl) {
             decision.setFineractLoan((Map<String, Object>) fl);
@@ -264,6 +263,20 @@ public class LoanOrchestrationService {
             decision.setFineractLoan(Map.of("error", str(body.get("error"))));
         }
 
+        Map<String, Object> fineractLoan = decision.getFineractLoan();
+        Object error = fineractLoan != null ? fineractLoan.get("error") : null;
+        if (error != null || (fineractLoan != null && "FINERACT_ERROR".equals(fineractLoan.get("status")))) {
+            // Write-back failed: keep the case retryable (POST review again) instead of COMPLETED
+            decision.setFinalStatus("FINERACT_ERROR");
+            state.setErrorMessage("Fineract write-back failed: " + error);
+            state.setFinalResult(decision);
+            state.setStatus(LoanCaseState.Status.FAILED);
+            log.warn("Fineract write-back failed for {}: {}", workflowId, error);
+            return;
+        }
+
+        decision.setFinalStatus("APPROVED");
+        state.setErrorMessage(null);
         state.setFinalResult(decision);
         state.setStatus(LoanCaseState.Status.COMPLETED);
         log.info("Fineract write-back complete for {}", workflowId);

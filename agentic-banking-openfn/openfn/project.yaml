@@ -326,7 +326,19 @@ workflows:
               const repaymentEvery = product.repaymentEvery || 1;
               const repaymentFrequencyType = idOf(product.repaymentFrequencyType) ?? 2;
 
-              const client = (await post('/clients', {
+              // Retries (re-review, rerun in Lightning) resume from the first missing step:
+              // client and loan external ids are unique in Fineract, so reuse what exists.
+              const findByExternalId = async path => {
+                try {
+                  return (await get(path, opts)(state)).data;
+                } catch (e) {
+                  if (e.statusCode === 404) return null;
+                  throw e;
+                }
+              };
+
+              const existingClient = await findByExternalId(`/clients/external-id/${app.workflowId}-client`);
+              const clientId = existingClient ? existingClient.id : (await post('/clients', {
                 officeId: Number(cfg.officeId || 1),
                 firstname: names[0],
                 lastname: names.slice(1).join(' ') || 'NA',
@@ -337,11 +349,12 @@ workflows:
                 ...(app.email ? { emailAddress: app.email } : {}),
                 ...(app.phone ? { mobileNo: app.phone } : {}),
                 ...dates
-              }, opts)(state)).data;
-              result.clientId = client.clientId;
+              }, opts)(state)).data.clientId;
+              result.clientId = clientId;
 
-              const loan = (await post('/loans', {
-                clientId: client.clientId,
+              const existingLoan = await findByExternalId(`/loans/external-id/${app.workflowId}`);
+              const loanId = existingLoan ? existingLoan.id : (await post('/loans', {
+                clientId,
                 productId,
                 principal,
                 loanTermFrequency: repayments * repaymentEvery,
@@ -359,16 +372,25 @@ workflows:
                 loanType: 'individual',
                 externalId: app.workflowId,
                 ...dates
-              }, opts)(state)).data;
-              result.loanId = loan.loanId;
+              }, opts)(state)).data.loanId;
+              result.loanId = loanId;
               result.principal = principal;
 
-              await post(`/loans/${loan.loanId}?command=approve`, {
-                approvedOnDate: today,
-                expectedDisbursementDate: disbursement,
-                approvedLoanAmount: principal,
-                ...dates
-              }, opts)(state);
+              const status = existingLoan?.status || {};
+              if (existingLoan && !status.pendingApproval && !status.waitingForDisbursal && !status.active) {
+                throw new Error(`Loan ${loanId} (externalId ${app.workflowId}) is ${status.value}, cannot approve`);
+              }
+              if (!existingLoan || status.pendingApproval) {
+                await post(`/loans/${loanId}?command=approve`, {
+                  approvedOnDate: today,
+                  expectedDisbursementDate: disbursement,
+                  approvedLoanAmount: principal,
+                  ...dates
+                }, opts)(state);
+              }
+              if (existingClient || existingLoan) {
+                result.resumed = true;
+              }
 
               result.status = 'APPROVED_IN_FINERACT';
               console.log('Fineract loan approved', result.loanId, 'externalId', result.externalId);
