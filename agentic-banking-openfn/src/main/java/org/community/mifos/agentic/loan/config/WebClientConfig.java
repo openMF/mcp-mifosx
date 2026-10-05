@@ -16,7 +16,10 @@ public class WebClientConfig {
 
     @Bean
     RestClient.Builder restClientBuilder() {
+        // Pin HTTP/1.1: the JDK default (HTTP/2) sends an h2c upgrade on plain http://,
+        // which Lightning (Cowboy) accepts and the JDK client then fails to read.
         HttpClient httpClient = HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
         JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(httpClient);
