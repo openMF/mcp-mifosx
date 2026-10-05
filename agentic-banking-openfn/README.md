@@ -24,11 +24,16 @@ Two workflows are defined in [`openfn/project.yaml`](openfn/project.yaml):
 Each job reports back to the gateway over HTTP. The gateway tells the jobs where to
 call back by sending `gatewayBaseUrl` in the webhook payload.
 
-> **Current state:** the bank/credit data, document OCR and the decision step are
-> simulated or rule-based (the Ollama call is commented out), and the
-> *Create + Approve Loan in Fineract* job returns a simulated `loanId` – no request is
-> sent to Fineract yet. The flow is complete end to end; these jobs are the extension
-> points.
+- **Decision:** a local **Ollama** model aggregates the specialist assessments into a
+  recommendation. If Ollama is unreachable or returns invalid JSON, a rule-based decision
+  is used. A guardrail keeps the LLM from being more lenient than the assessments
+  (e.g. it cannot APPROVE when an assessment is REFER).
+- **Fineract write-back:** on APPROVE the review workflow creates a client, submits a loan
+  with `externalId = workflowId` and approves it, then attaches the underwriting decision
+  (model, recommendation, reasoning, assessments) as a **loan note**. Retries reuse the
+  client/loan already created.
+
+> **Current state:** the bank/credit data and document OCR steps are still simulated.
 
 ## Prerequisites
 
@@ -124,6 +129,63 @@ export OPENFN_GATEWAY_BASE_URL=http://$(hostname -I | awk '{print $1}'):8080
 
 The WSL IP changes after a reboot, so set it again each session.
 
+### Ollama
+
+Install [Ollama](https://ollama.com/download) and pull the decision model:
+
+```bash
+ollama pull llama3.2:3b
+export OLLAMA_MODEL=llama3.2:3b
+```
+
+Like the callbacks, `OPENFN_OLLAMA_URL` must be reachable **from the Lightning container**.
+The default `http://host.docker.internal:11434` works for Ollama on the Docker host. With
+Docker Desktop on Windows, Ollama installed natively on Windows is reachable at the Docker
+host gateway even when `host.docker.internal` has been remapped:
+
+```bash
+export OPENFN_OLLAMA_URL=http://192.168.65.254:11434
+# check from the Lightning folder:
+docker compose exec -T web curl -s http://192.168.65.254:11434/api/tags
+```
+
+If that returns nothing, set the Windows environment variable `OLLAMA_HOST=0.0.0.0` and
+restart Ollama. Small models (3B) fit a 4 GB GPU; a decision takes roughly 10–20 s.
+
+### Fineract
+
+The *Create + Approve Loan in Fineract* job reads its connection details from a Lightning
+**credential**, so no secrets live in `project.yaml`. Create it **before** deploying:
+
+1. In Lightning: **Credentials → New credential → Raw JSON**, name it `fineract`:
+
+   ```json
+   {
+     "baseUrl": "https://host.docker.internal:8443/fineract-provider/api/v1",
+     "username": "mifos",
+     "password": "password",
+     "tenantId": "default",
+     "productId": 1,
+     "officeId": 1,
+     "tls": { "rejectUnauthorized": false }
+   }
+   ```
+
+   `baseUrl` must be reachable from the Lightning container. `tls.rejectUnauthorized: false`
+   is only for a local Fineract with a self-signed certificate.
+2. In `openfn/project.yaml`, the `credentials:` block names the Lightning user that owns
+   it (`super@openfn.org` for the dev setup above). Change `owner` (and the matching key
+   and `credential:` reference) if you use another user.
+3. The tenant needs a loan product: `productId` must be an existing product
+   (`GET /loanproducts`).
+
+Notes:
+
+- Create the credential in the UI. Lightning's `POST /api/credentials` ignores a top-level
+  `body`; it expects `credential_bodies: [{"name": "main", "body": {...}}]`.
+- A project without an environment uses the credential body named **`main`**. A run that
+  fails with `Credential environment mismatch ... 'unknown'` means that body is missing.
+
 ### Configuration
 
 | Variable | Default | Purpose |
@@ -135,8 +197,8 @@ The WSL IP changes after a reboot, so set it again each session.
 | `OPENFN_BASE_URL` | `http://localhost:4000` | Lightning base URL (run status lookups) |
 | `OPENFN_API_TOKEN` | – | Lightning API token (run status lookups) |
 | `LOAN_LOCAL_FALLBACK` | `true` | Run underwriting in the gateway if OpenFn is unreachable |
-| `OLLAMA_URL` / `OLLAMA_MODEL` | `http://localhost:11434` / `llama3.2:latest` | Local Ollama |
-| `FINERACT_BASE_URL`, `FINERACT_USER`, `FINERACT_PASSWORD`, `FINERACT_TENANT` | sandbox | Reserved for the Fineract write-back job (not used yet) |
+| `OPENFN_OLLAMA_URL` | `http://host.docker.internal:11434` | Ollama used by the OpenFn decision job (as seen from Lightning) |
+| `OLLAMA_MODEL` | `llama3.2:latest` | Ollama model for the decision job |
 
 - While `OPENFN_CALLBACK_SECRET` is left at `change-me-in-prod`, the gateway accepts
   callbacks **without checking the secret**. Set a real value outside local development.

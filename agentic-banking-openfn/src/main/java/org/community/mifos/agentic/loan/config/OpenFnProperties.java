@@ -13,6 +13,8 @@ public class OpenFnProperties {
     private String projectId = "";
     private String callbackSecret = "change-me-in-prod";
     private String gatewayBaseUrl = "http://host.docker.internal:8080";
+    private String ollamaUrl = "http://host.docker.internal:11434";
+    private String ollamaModel = "llama3.2:latest";
     private Webhooks webhooks = new Webhooks();
 
     public String getBaseUrl() { return baseUrl; }
@@ -29,6 +31,12 @@ public class OpenFnProperties {
 
     public String getGatewayBaseUrl() { return gatewayBaseUrl; }
     public void setGatewayBaseUrl(String gatewayBaseUrl) { this.gatewayBaseUrl = gatewayBaseUrl; }
+
+    public String getOllamaUrl() { return ollamaUrl; }
+    public void setOllamaUrl(String ollamaUrl) { this.ollamaUrl = ollamaUrl; }
+
+    public String getOllamaModel() { return ollamaModel; }
+    public void setOllamaModel(String ollamaModel) { this.ollamaModel = ollamaModel; }
 
     public Webhooks getWebhooks() { return webhooks; }
     public void setWebhooks(Webhooks webhooks) { this.webhooks = webhooks; }

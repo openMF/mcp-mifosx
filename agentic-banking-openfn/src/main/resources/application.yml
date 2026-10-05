@@ -34,6 +34,9 @@ openfn:
   callback-secret: ${OPENFN_CALLBACK_SECRET:change-me-in-prod}
   # Base URL OpenFn jobs use to call back into this gateway (must be reachable from the Lightning worker)
   gateway-base-url: ${OPENFN_GATEWAY_BASE_URL:http://host.docker.internal:8080}
+  # Ollama used by the OpenFn decision job (URL must be reachable from the Lightning worker)
+  ollama-url: ${OPENFN_OLLAMA_URL:http://host.docker.internal:11434}
+  ollama-model: ${OLLAMA_MODEL:llama3.2:latest}
 
 # Local Ollama (used both by gateway fallback and by OpenFn HTTP jobs)
 ollama:
