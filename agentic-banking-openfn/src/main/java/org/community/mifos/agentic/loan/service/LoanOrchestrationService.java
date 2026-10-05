@@ -17,6 +17,7 @@ import org.community.mifos.agentic.loan.config.LoanProperties;
 import org.community.mifos.agentic.loan.config.OpenFnProperties;
 import org.community.mifos.agentic.loan.dto.HumanReviewRequest;
 import org.community.mifos.agentic.loan.dto.SubmitLoanRequest;
+import org.community.mifos.agentic.loan.model.AssessmentResult;
 import org.community.mifos.agentic.loan.model.LoanApplication;
 import org.community.mifos.agentic.loan.model.LoanCaseState;
 import org.community.mifos.agentic.loan.model.LoanDecision;
@@ -28,6 +29,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -232,8 +234,7 @@ public class LoanOrchestrationService {
         decision.setFinalStatus("PENDING_HUMAN_REVIEW");
 
         if (body.get("assessments") instanceof List<?> list) {
-            // leave raw; OpenFn jobs send compatible maps – gateway stores as context
-            decision.setContext(Map.of("assessments", list));
+            decision.setAssessments(toAssessments(list));
         }
         if (body.get("context") instanceof Map<?, ?> ctx) {
             decision.setContext((Map<String, Object>) ctx);
@@ -318,7 +319,24 @@ public class LoanOrchestrationService {
         return p;
     }
 
+    private static List<AssessmentResult> toAssessments(List<?> raw) {
+        List<AssessmentResult> out = new ArrayList<>();
+        for (Object o : raw) {
+            if (o instanceof Map<?, ?> m) {
+                out.add(new AssessmentResult(
+                        str(m.get("type")),
+                        str(m.get("verdict")),
+                        m.get("score") instanceof Number n ? n.doubleValue() : 0.0,
+                        str(m.get("rationale"))));
+            }
+        }
+        return out;
+    }
+
     private LoanCaseState require(String workflowId) {
+        if (workflowId == null || workflowId.isBlank()) {
+            throw new IllegalArgumentException("workflowId is required");
+        }
         return store.get(workflowId)
                 .orElseThrow(() -> new IllegalArgumentException("Unknown workflowId: " + workflowId));
     }
