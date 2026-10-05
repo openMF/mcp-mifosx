@@ -1,0 +1,38 @@
+# Copyright since 2026 Mifos Initiative
+#
+# This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+# If a copy of the MPL was not distributed with this file, You can obtain one at
+# http://mozilla.org/MPL/2.0/.
+spring:
+  application:
+    name: loan-doc-classifier
+
+  # Ollama base (also used by the regular Spring AI Ollama starter if needed)
+  ai:
+    ollama:
+      base-url: http://192.168.80.134:11434
+      chat:
+        options:
+          model: clef-flash          # not used for decisions; kept for completeness
+
+    # Spring AI TypeSafe – points at the local Ollama System One endpoint
+    typesafe:
+      base-url: http://192.168.80.134:11434
+      api-key: ollama           # any non-empty value is accepted by Ollama
+      model: clef-flash               # or clef-flash for a smaller/faster variant
+      timeout: 120s             # Clef is 27B; first load can be slow
+      retry:
+        total-timeout: 180s
+
+# Application-specific settings
+app:
+  classifier:
+    decision-threshold: 0.75    # probability above which we treat the document as a bank statement
+
+server:
+  port: 8080
+
+logging:
+  level:
+    com.example.loandoc: INFO
+    org.springaicommunity.typesafe: DEBUG

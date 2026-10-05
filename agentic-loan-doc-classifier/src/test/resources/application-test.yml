@@ -1,0 +1,11 @@
+spring:
+  ai:
+    typesafe:
+      base-url: http://localhost:11434
+      api-key: ollama
+      model: clef
+      timeout: 180s
+
+app:
+  classifier:
+    decision-threshold: 0.70

@@ -85,3 +85,4 @@ agent-skill/*.egg-info/
 !agent-skill/SKILL.md
 !agent-skill/references/*.md
 
+/agentic-loan-doc-classifier/target/
