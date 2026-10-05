@@ -317,6 +317,8 @@ public class LoanOrchestrationService {
         // Callback target for OpenFn jobs
         p.put("gatewayBaseUrl", openFnProps.getGatewayBaseUrl());
         p.put("callbackSecret", openFnProps.getCallbackSecret());
+        p.put("ollamaUrl", openFnProps.getOllamaUrl());
+        p.put("ollamaModel", openFnProps.getOllamaModel());
         return p;
     }
 

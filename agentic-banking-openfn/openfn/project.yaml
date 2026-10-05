@@ -48,7 +48,9 @@ workflows:
                 metadata: app.metadata || {}
               },
               gatewayBaseUrl: app.gatewayBaseUrl || 'http://host.docker.internal:8080',
-              callbackSecret: app.callbackSecret || ''
+              callbackSecret: app.callbackSecret || '',
+              ollamaUrl: app.ollamaUrl || 'http://host.docker.internal:11434',
+              ollamaModel: app.ollamaModel || 'llama3.2:latest'
             };
           });
 
@@ -158,38 +160,85 @@ workflows:
         adaptor: "@openfn/language-http@latest"
         enabled: true
         body: |
-          // Call local Ollama. If down, heuristic fallback (same as Temporal design).
-          fn(state => {
-            const fails = state.assessments.filter(a => a.verdict === 'FAIL').length;
-            const refers = state.assessments.filter(a => a.verdict === 'REFER').length;
-            let recommendation, confidence, rationale;
-            if (fails > 0) {
-              recommendation = 'REJECT';
-              confidence = 0.8;
-              rationale = 'One or more specialist assessments failed.';
-            } else if (refers > 0) {
-              recommendation = 'REFER';
-              confidence = 0.65;
-              rationale = 'Borderline assessments – human review required.';
-            } else {
-              recommendation = 'APPROVE';
-              confidence = 0.78;
-              rationale = 'All specialist assessments passed.';
+          // Local Ollama aggregates the specialist assessments into a decision (same prompt
+          // contract as agentic-banking-temporal). If Ollama is down or returns invalid JSON,
+          // the rule-based decision below is used instead.
+          fn(async state => {
+            const { application, assessments, bankData, creditReport, ollamaUrl, ollamaModel } = state;
+
+            const fails = assessments.filter(a => a.verdict === 'FAIL').length;
+            const refers = assessments.filter(a => a.verdict === 'REFER').length;
+            const rules = fails > 0
+              ? { recommendation: 'REJECT', confidence: 0.8, riskLevel: 'HIGH', rationale: 'One or more specialist assessments failed.' }
+              : refers > 0
+                ? { recommendation: 'REFER', confidence: 0.65, riskLevel: 'MEDIUM', rationale: 'Borderline assessments – human review required.' }
+                : { recommendation: 'APPROVE', confidence: 0.78, riskLevel: 'LOW', rationale: 'All specialist assessments passed.' };
+
+            const prompt = [
+              'You are an expert loan underwriter agent running on-premise.',
+              'Analyse the following loan application data and return ONLY a valid JSON object',
+              'with no additional text, markdown or explanation.',
+              '',
+              'Required JSON schema:',
+              '{',
+              '  "recommendation": "APPROVE" | "REJECT" | "REFER",',
+              '  "confidence": number between 0 and 1,',
+              '  "summary": "concise 2-4 sentence rationale",',
+              '  "riskLevel": "LOW" | "MEDIUM" | "HIGH"',
+              '}',
+              '',
+              'Data:',
+              JSON.stringify({ application, assessments, bank: bankData, credit: creditReport }, null, 2),
+              '',
+              'Rules:',
+              '- Prefer APPROVE only when income, expense and credit assessments all passed and risk is LOW/MEDIUM.',
+              '- Prefer REJECT when credit score is weak or disposable income is insufficient.',
+              '- Use REFER when data is incomplete or borderline.'
+            ].join('\n');
+
+            try {
+              console.log(`Calling Ollama model=${ollamaModel} at ${ollamaUrl}`);
+              const res = await post(`${ollamaUrl}/api/generate`, {
+                model: ollamaModel,
+                prompt,
+                stream: false,
+                format: 'json',
+                options: { temperature: 0.1 }
+              }, { timeout: 180000 })(state);
+
+              const raw = String(res.data?.response || '');
+              const json = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+              const recommendation = String(json.recommendation || '').toUpperCase();
+              if (!['APPROVE', 'REJECT', 'REFER'].includes(recommendation)) {
+                throw new Error(`Unexpected recommendation: ${json.recommendation}`);
+              }
+              const confidence = Math.min(1, Math.max(0, Number(json.confidence)));
+              const aiDecision = {
+                recommendation,
+                confidence: Number.isFinite(confidence) ? confidence : rules.confidence,
+                rationale: json.summary || rules.rationale,
+                riskLevel: String(json.riskLevel || rules.riskLevel).toUpperCase(),
+                source: 'ollama',
+                model: ollamaModel,
+                raw
+              };
+
+              // Guardrail: the LLM may be stricter than the assessments, never more lenient
+              const severity = { APPROVE: 0, REFER: 1, REJECT: 2 };
+              if (severity[recommendation] < severity[rules.recommendation]) {
+                aiDecision.guardrail = `LLM recommended ${recommendation}, but the specialist assessments require ` +
+                  `${rules.recommendation} (${rules.rationale})`;
+                aiDecision.recommendation = rules.recommendation;
+                aiDecision.rationale = `${aiDecision.rationale} [Guardrail: ${aiDecision.guardrail}]`;
+                console.log(aiDecision.guardrail);
+              }
+              console.log('Ollama decision', JSON.stringify(aiDecision));
+              return { ...state, aiDecision };
+            } catch (e) {
+              console.log(`Ollama unavailable or invalid response (${e.message}); using rule-based decision`);
+              return { ...state, aiDecision: { ...rules, source: 'rules-fallback', model: ollamaModel, error: e.message } };
             }
-            return {
-              ...state,
-              aiDecision: { recommendation, confidence, rationale }
-            };
           });
-          // Optional live Ollama call (uncomment when Ollama is reachable from worker):
-          // post('http://host.docker.internal:11434/api/generate', {
-          //   body: {
-          //     model: 'llama3.2:latest',
-          //     prompt: `Return ONLY JSON {"recommendation":"APPROVE|REJECT|REFER","confidence":0-1,"rationale":"..."} for loan ${JSON.stringify($.application)} assessments ${JSON.stringify($.assessments)}`,
-          //     stream: false,
-          //     format: 'json'
-          //   }
-          // });
 
       callback-gateway:
         name: Callback Gateway – PENDING_HUMAN_REVIEW
@@ -207,7 +256,15 @@ workflows:
               context: {
                 bank: $.bankData,
                 credit: $.creditReport,
-                documents: $.docResults
+                documents: $.docResults,
+                decision: {
+                  source: $.aiDecision.source,
+                  model: $.aiDecision.model,
+                  riskLevel: $.aiDecision.riskLevel,
+                  raw: $.aiDecision.raw,
+                  guardrail: $.aiDecision.guardrail,
+                  error: $.aiDecision.error
+                }
               }
             },
             {
@@ -396,6 +453,57 @@ workflows:
 
               result.status = 'APPROVED_IN_FINERACT';
               console.log('Fineract loan approved', result.loanId, 'externalId', result.externalId);
+
+              // Underwriting decision note (independent: a failure here does not fail the write-back)
+              try {
+                const header = '=== Agentic underwriting decision (Ollama / OpenFn) ===';
+                const marker = `Workflow ID (loan externalId): ${app.workflowId}`;
+                const notes = (await get(`/loans/${loanId}/notes`, opts)(state)).data || [];
+                const existing = notes.find(n => (n.note || '').includes(header) && n.note.includes(marker));
+                if (existing) {
+                  result.decisionNoteId = existing.id;
+                } else {
+                  const summary = state.summary || {};
+                  const decision = (summary.context && summary.context.decision) || {};
+                  const lines = [
+                    header,
+                    marker,
+                    `Decision source: ${decision.source || 'unknown'}${decision.model ? ` (model ${decision.model})` : ''}`,
+                    `AI recommendation: ${summary.recommendation}`,
+                    `Confidence: ${summary.confidence}`,
+                    `Risk level: ${decision.riskLevel || 'n/a'}`,
+                    `Human decision: ${state.action}${state.comments ? ` – ${state.comments}` : ''}`,
+                    '',
+                    '--- AI summary ---',
+                    summary.rationale || '(none)'
+                  ];
+                  if (decision.raw) {
+                    lines.push('', '--- LLM raw output ---', decision.raw);
+                  }
+                  if (decision.guardrail) {
+                    lines.push('', `--- Guardrail applied: ${decision.guardrail} ---`);
+                  }
+                  if (decision.error) {
+                    lines.push('', `--- Ollama not used: ${decision.error} ---`);
+                  }
+                  if (Array.isArray(summary.assessments) && summary.assessments.length) {
+                    lines.push('', '--- Assessments ---');
+                    summary.assessments.forEach(a =>
+                      lines.push(`- ${a.type}: ${a.verdict} score=${a.score} reason=${a.rationale}`));
+                  }
+                  lines.push('', '--- Product adaptation ---', `Principal submitted: ${principal}`, `Repayments: ${repayments}`);
+                  const text = lines.join('\n');
+                  const note = (await post(`/loans/${loanId}/notes`, {
+                    note: text.length > 4000 ? `${text.slice(0, 3997)}...` : text
+                  }, opts)(state)).data;
+                  result.decisionNoteId = note.resourceId;
+                }
+                result.decisionNoteAttached = true;
+              } catch (noteError) {
+                result.decisionNoteAttached = false;
+                result.decisionNoteError = noteError.message;
+                console.error('Could not attach decision note', noteError.message, JSON.stringify(noteError.body));
+              }
             } catch (e) {
               // Report the failure to the gateway instead of leaving the case in WRITING_TO_FINERACT
               result.status = 'FINERACT_ERROR';
