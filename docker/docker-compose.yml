@@ -1,0 +1,58 @@
+# ── Mifos Pi Agent ── Docker Compose ──────────────────────────────────
+# Deploy Pi Agent with the Mifos X MCP Server
+#
+# Usage:
+#   cp .env.example .env    # Configure credentials
+#
+#   # Run a query (print mode)
+#   docker compose run --rm pi-agent -p "List all clients"
+#
+#   # Interactive TUI session
+#   docker compose run --rm pi-agent
+#
+# For Kubernetes, see k8s/ directory.
+# ─────────────────────────────────────────────────────────────────────
+
+services:
+  pi-agent:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: mifos/pi-agent:latest
+    container_name: mifos-pi-agent
+    env_file:
+      - .env
+    environment:
+      - MIFOSX_BASE_URL=${MIFOSX_BASE_URL:-https://sandbox.mifos.community/fineract-provider/api/v1}
+      - MIFOSX_USERNAME=${MIFOSX_USERNAME:-mifos}
+      - MIFOSX_PASSWORD=${MIFOSX_PASSWORD:-password}
+      - MIFOSX_TENANT_ID=${MIFOSX_TENANT_ID:-default}
+      # Pi Agent LLM provider — set ONE of the following:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY:-}
+    volumes:
+      # Mount workspace for Pi to operate on
+      - workspace:/workspace
+      # Persist Pi sessions and configuration
+      - pi-data:/home/pi/.pi/sessions
+    networks:
+      - mifos-net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1.0"
+        reservations:
+          memory: 256M
+          cpus: "0.25"
+
+volumes:
+  workspace:
+    driver: local
+  pi-data:
+    driver: local
+
+networks:
+  mifos-net:
+    driver: bridge
