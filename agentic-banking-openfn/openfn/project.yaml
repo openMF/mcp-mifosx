@@ -52,13 +52,13 @@ workflows:
           post(
             `${$.gatewayBaseUrl}/api/openfn/callback/status`,
             {
+              workflowId: $.application.workflowId,
+              phase: 'GATHERING_DATA'
+            },
+            {
               headers: {
                 'Content-Type': 'application/json',
                 'X-OpenFn-Secret': $.callbackSecret
-              },
-              body: {
-                workflowId: $.application.workflowId,
-                phase: 'GATHERING_DATA'
               }
             }
           );
@@ -191,21 +191,21 @@ workflows:
           post(
             `${$.gatewayBaseUrl}/api/openfn/callback/underwriting-complete`,
             {
+              workflowId: $.application.workflowId,
+              recommendation: $.aiDecision.recommendation,
+              confidence: $.aiDecision.confidence,
+              rationale: $.aiDecision.rationale,
+              assessments: $.assessments,
+              context: {
+                bank: $.bankData,
+                credit: $.creditReport,
+                documents: $.docResults
+              }
+            },
+            {
               headers: {
                 'Content-Type': 'application/json',
                 'X-OpenFn-Secret': $.callbackSecret
-              },
-              body: {
-                workflowId: $.application.workflowId,
-                recommendation: $.aiDecision.recommendation,
-                confidence: $.aiDecision.confidence,
-                rationale: $.aiDecision.rationale,
-                assessments: $.assessments,
-                context: {
-                  bank: $.bankData,
-                  credit: $.creditReport,
-                  documents: $.docResults
-                }
               }
             }
           );
@@ -327,13 +327,13 @@ workflows:
           post(
             `${$.gatewayBaseUrl}/api/openfn/callback/fineract-complete`,
             {
+              workflowId: $.workflowId,
+              fineractLoan: $.fineractLoan
+            },
+            {
               headers: {
                 'Content-Type': 'application/json',
                 'X-OpenFn-Secret': $.callbackSecret
-              },
-              body: {
-                workflowId: $.workflowId,
-                fineractLoan: $.fineractLoan
               }
             }
           );
