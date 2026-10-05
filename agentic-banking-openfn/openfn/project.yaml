@@ -50,7 +50,12 @@ workflows:
               gatewayBaseUrl: app.gatewayBaseUrl || 'http://host.docker.internal:8080',
               callbackSecret: app.callbackSecret || '',
               ollamaUrl: app.ollamaUrl || 'http://host.docker.internal:11434',
-              ollamaModel: app.ollamaModel || 'llama3.2:latest'
+              ollamaModel: app.ollamaModel || 'llama3.2:latest',
+              visionModel: app.visionModel || 'qwen2.5vl:3b',
+              curpMaxIssueAgeDays: Number(app.curpMaxIssueAgeDays || 30),
+              // Rendered page images; dropped again after process-documents
+              documents: app.documents || [],
+              data: { ...app, documents: undefined }
             };
           });
 
@@ -103,16 +108,160 @@ workflows:
           });
 
       process-documents:
-        name: Process Documents (OCR stub)
-        adaptor: "@openfn/language-common@latest"
+        name: Process Documents (CURP vision)
+        adaptor: "@openfn/language-http@latest"
         enabled: true
         body: |
-          fn(state => {
-            const paths = state.application.documentPaths || [];
-            const docResults = paths.length
-              ? paths.map(p => ({ path: p, extracted: true, type: 'ID', confidence: 0.9 }))
-              : [{ path: 'stub', extracted: true, type: 'NONE', confidence: 1.0 }];
-            return { ...state, docResults };
+          // CURP constancias (RENAPO) are read by a local Ollama vision model, then validated
+          // like agentic-banking-temporal's CurpDocumentAgent: clave format, name match,
+          // "CURP Certificada: verificada con el Registro Civil" and issue date age.
+          // The gateway renders the PDF's first page to PNG (documents[].imageBase64).
+          fn(async state => {
+            const { application, ollamaUrl, visionModel, curpMaxIssueAgeDays } = state;
+            const documents = state.documents || [];
+
+            const VISION_PROMPT = [
+              'You are a document specialist for Mexican CURP constancias issued by RENAPO.',
+              'Extract the fields from the image and return ONLY a valid JSON object. Do not include markdown formatting, explanations, or thinking tags.',
+              '',
+              '{',
+              '  "curpClave": "18-character code",',
+              '  "fullName": "Full name as printed on document",',
+              '  "registrationEntity": "State of registration",',
+              '  "issueDate": "YYYY-MM-DD",',
+              '  "civilRegistryVerified": true,',
+              '  "confidence": 0.95',
+              '}',
+              '',
+              'IMPORTANT: Set "civilRegistryVerified" to true ONLY if the document explicitly contains BOTH phrases: "CURP Certificada" AND "verificada con el Registro Civil".'
+            ].join('\n');
+
+            const CURP_CLAVE = /\b([A-Z]{4}\d{6}[HM][A-Z]{5}[0-9A-Z]\d)\b/;
+            const CURP_FORMAT = /^[A-Z]{4}\d{6}[HM][A-Z]{5}[0-9A-Z]\d$/;
+            const MONTHS_ES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8,
+              septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
+            const normalizeName = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .toUpperCase().replace(/[^A-Z ]/g, ' ').replace(/\s+/g, ' ').trim();
+            const firstText = (o, ...keys) => {
+              for (const k of keys) {
+                const v = o && o[k];
+                if (v != null && String(v).trim() && String(v).toLowerCase() !== 'null') return String(v);
+              }
+              return null;
+            };
+
+            const extract = raw => {
+              const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, ' ').replace(/```(?:json)?/g, ' ').trim();
+              const doc = { type: 'CURP' };
+              try {
+                const json = JSON.parse(cleaned.slice(cleaned.indexOf('{'), cleaned.lastIndexOf('}') + 1));
+                const clave = firstText(json, 'curpClave', 'curp', 'clave', 'claveCurp', 'CURP');
+                if (clave) doc.curpClave = clave.toUpperCase().replace(/\s+/g, '');
+                const name = firstText(json, 'fullName', 'nombre', 'name', 'nombreCompleto');
+                if (name) doc.fullName = name.trim().toUpperCase();
+                doc.registrationEntity = firstText(json, 'registrationEntity', 'entidad', 'entidadRegistro');
+                const issue = firstText(json, 'issueDate', 'fechaEmision', 'fecha', 'date');
+                if (issue && /^\d{4}-\d{2}-\d{2}/.test(issue.trim())) doc.issueDate = issue.trim().slice(0, 10);
+                doc.civilRegistryVerified = json.civilRegistryVerified === true;
+                if (json.confidence != null) doc.confidence = Number(json.confidence);
+              } catch (e) {
+                console.log('Vision JSON parse failed, using text fallbacks:', e.message);
+              }
+              // Text fallbacks (the model sometimes answers in prose)
+              const upper = cleaned.toUpperCase();
+              if (!doc.curpClave) {
+                const m = upper.replace(/\s+/g, '').match(CURP_CLAVE) || upper.match(CURP_CLAVE);
+                if (m) doc.curpClave = m[1];
+              }
+              if (!doc.fullName) {
+                const m = upper.match(/NOMBRE\s*:?\s*([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ ]{4,80})/);
+                if (m) doc.fullName = m[1].replace(/\s+/g, ' ').trim();
+              }
+              if (!doc.issueDate) {
+                const m = cleaned.match(/(\d{1,2})\s+de\s+([a-záéíóúñ]+)\s+de\s+(\d{4})/i);
+                const month = m && MONTHS_ES[m[2].toLowerCase()];
+                if (month) doc.issueDate = `${m[3]}-${String(month).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+              }
+              if (!doc.civilRegistryVerified && /CURP\s+Certificada/i.test(cleaned) && /verificada\s+con\s+el\s+Registro\s+Civil/i.test(cleaned)) {
+                doc.civilRegistryVerified = true;
+              }
+              return doc;
+            };
+
+            const validate = doc => {
+              const messages = [];
+              const expected = normalizeName(application.fullName);
+              const actual = normalizeName(doc.fullName);
+              const tokens = s => [...new Set(s.split(' '))].sort().join(' ');
+              const nameOk = !!expected && !!actual &&
+                (actual === expected || actual.includes(expected) || expected.includes(actual) || tokens(actual) === tokens(expected));
+              messages.push(nameOk
+                ? `Name match OK: application name matches CURP name '${doc.fullName}'`
+                : `Name mismatch: expected '${application.fullName}' vs CURP '${doc.fullName}'`);
+
+              const claveOk = !!doc.curpClave && CURP_FORMAT.test(doc.curpClave);
+              const registryOk = claveOk && doc.civilRegistryVerified === true;
+              messages.push(registryOk
+                ? `Civil Registry OK: certified CURP with clave ${doc.curpClave}`
+                : !claveOk
+                  ? 'Civil Registry FAIL: CURP clave missing or invalid format'
+                  : "Civil Registry FAIL: missing required text 'CURP Certificada: verificada con el Registro Civil'");
+
+              let dateOk = false;
+              if (doc.issueDate) {
+                const age = Math.floor((Date.now() - Date.parse(`${doc.issueDate}T00:00:00Z`)) / 86400000);
+                dateOk = age >= 0 && age <= curpMaxIssueAgeDays;
+                messages.push(dateOk
+                  ? `Issue date OK: ${doc.issueDate} (${age} days old, max ${curpMaxIssueAgeDays})`
+                  : age < 0
+                    ? `Issue date FAIL: ${doc.issueDate} is in the future`
+                    : `Issue date FAIL: ${doc.issueDate} is ${age} days old (max ${curpMaxIssueAgeDays})`);
+              } else {
+                messages.push('Issue date FAIL: could not extract issue date from CURP document');
+              }
+              return { nameOk, registryOk, dateOk, valid: nameOk && registryOk && dateOk, messages };
+            };
+
+            const docResults = [];
+            for (const d of documents) {
+              const result = { path: d.path, docType: d.docType };
+              if (d.error || !d.imageBase64) {
+                docResults.push({ ...result, valid: false, validationMessages: [`Document not readable: ${d.error || 'no image'}`] });
+                continue;
+              }
+              if (d.docType !== 'CURP') {
+                docResults.push({ ...result, valid: false, extracted: { type: d.docType },
+                  validationMessages: ['Generic extraction not implemented (only CURP documents are analysed)'] });
+                continue;
+              }
+              try {
+                console.log(`Calling Ollama vision model=${visionModel} for ${d.path}`);
+                const res = await post(`${ollamaUrl}/api/chat`, {
+                  model: visionModel,
+                  messages: [{ role: 'user', content: VISION_PROMPT, images: [d.imageBase64] }],
+                  stream: false,
+                  think: false,
+                  options: { temperature: 0.1, num_predict: 2048 }
+                }, { timeout: 300000 })(state);
+                const message = res.data?.message || {};
+                const raw = String(message.content || message.thinking || res.data?.response || '');
+                const extracted = extract(raw);
+                const check = validate(extracted);
+                extracted.nameMatches = check.nameOk;
+                extracted.registryOk = check.registryOk;
+                extracted.issueDateOk = check.dateOk;
+                docResults.push({ ...result, valid: check.valid, extracted, validationMessages: check.messages,
+                  visionModel, visionRaw: raw.slice(0, 3000) });
+                console.log('CURP review', JSON.stringify({ valid: check.valid, clave: extracted.curpClave, name: extracted.fullName }));
+              } catch (e) {
+                docResults.push({ ...result, valid: false, visionModel,
+                  validationMessages: [`Vision model unavailable or failed: ${e.message}`] });
+                console.log(`Vision failed for ${d.path}: ${e.message}`);
+              }
+            }
+
+            // Drop the page images: they are large and not needed by later steps
+            return { ...state, documents: undefined, docResults };
           });
 
       specialist-assessments:
@@ -164,7 +313,7 @@ workflows:
           // contract as agentic-banking-temporal). If Ollama is down or returns invalid JSON,
           // the rule-based decision below is used instead.
           fn(async state => {
-            const { application, assessments, bankData, creditReport, ollamaUrl, ollamaModel } = state;
+            const { application, assessments, bankData, creditReport, docResults, ollamaUrl, ollamaModel } = state;
 
             const fails = assessments.filter(a => a.verdict === 'FAIL').length;
             const refers = assessments.filter(a => a.verdict === 'REFER').length;
@@ -188,7 +337,13 @@ workflows:
               '}',
               '',
               'Data:',
-              JSON.stringify({ application, assessments, bank: bankData, credit: creditReport }, null, 2),
+              JSON.stringify({
+                application,
+                assessments,
+                bank: bankData,
+                credit: creditReport,
+                documents: (docResults || []).map(d => ({ docType: d.docType, valid: d.valid, validationMessages: d.validationMessages }))
+              }, null, 2),
               '',
               'Rules:',
               '- Prefer APPROVE only when income, expense and credit assessments all passed and risk is LOW/MEDIUM.',
@@ -375,6 +530,13 @@ workflows:
             const names = (app.fullName || 'Unknown Applicant').trim().split(/\s+/);
             const result = { externalId: app.workflowId, productId };
 
+            // Client externalId: the validated CURP clave when available (traceability to the
+            // identity document, as in agentic-banking-temporal), otherwise <workflowId>-client
+            const documents = (state.summary && state.summary.context && state.summary.context.documents) || [];
+            const validCurp = documents.find(d => d.valid === true && d.extracted && d.extracted.curpClave);
+            const clientExternalId = validCurp ? validCurp.extracted.curpClave : `${app.workflowId}-client`;
+            result.clientExternalId = clientExternalId;
+
             try {
               const product = (await get(`/loanproducts/${productId}`, opts)(state)).data;
               const idOf = v => (v && typeof v === 'object' ? v.id : v);
@@ -396,7 +558,7 @@ workflows:
                 }
               };
 
-              const existingClient = await findByExternalId(`/clients/external-id/${app.workflowId}-client`);
+              const existingClient = await findByExternalId(`/clients/external-id/${encodeURIComponent(clientExternalId)}`);
               const clientId = existingClient ? existingClient.id : (await post('/clients', {
                 officeId: Number(cfg.officeId || 1),
                 firstname: names[0],
@@ -404,7 +566,7 @@ workflows:
                 legalFormId: 1,
                 active: true,
                 activationDate: today,
-                externalId: `${app.workflowId}-client`,
+                externalId: clientExternalId,
                 ...(app.email ? { emailAddress: app.email } : {}),
                 ...(app.phone ? { mobileNo: app.phone } : {}),
                 ...dates
@@ -503,6 +665,54 @@ workflows:
                 result.decisionNoteAttached = false;
                 result.decisionNoteError = noteError.message;
                 console.error('Could not attach decision note', noteError.message, JSON.stringify(noteError.body));
+              }
+
+              // Vision model note (independent of the decision note, as in agentic-banking-temporal)
+              const analysed = documents.filter(d => d.visionModel || d.extracted);
+              if (analysed.length) {
+                try {
+                  const header = '=== Vision model document analysis (Ollama / OpenFn) ===';
+                  const marker = `Workflow ID (loan externalId): ${app.workflowId}`;
+                  const notes = (await get(`/loans/${loanId}/notes`, opts)(state)).data || [];
+                  const existing = notes.find(n => (n.note || '').includes(header) && n.note.includes(marker));
+                  if (existing) {
+                    result.visionNoteId = existing.id;
+                  } else {
+                    const models = [...new Set(analysed.map(d => d.visionModel).filter(Boolean))];
+                    const lines = [
+                      header,
+                      `Vision model: ${models.join(', ') || '(unknown)'}`,
+                      marker,
+                      `Client externalId: ${clientExternalId}`,
+                      'Source: gateway PDF -> PNG, OpenFn process-documents job -> Ollama vision',
+                      ''
+                    ];
+                    analysed.forEach((d, i) => {
+                      const x = d.extracted || {};
+                      lines.push(`--- Document #${i + 1} ---`, `Path: ${d.path}`, `Type: ${d.docType}`, `Overall valid: ${d.valid}`);
+                      if (d.validationMessages && d.validationMessages.length) {
+                        lines.push('Validation messages:', ...d.validationMessages.map(m => `  - ${m}`));
+                      }
+                      if (x.curpClave) lines.push(`CURP clave: ${x.curpClave}`);
+                      if (x.fullName) lines.push(`Extracted name: ${x.fullName}`);
+                      if (x.issueDate) lines.push(`Issue date: ${x.issueDate}`);
+                      if (x.registrationEntity) lines.push(`Registration entity: ${x.registrationEntity}`);
+                      if (x.confidence != null) lines.push(`Confidence: ${x.confidence}`);
+                      if (d.visionRaw) lines.push('', '--- Vision model raw analysis output ---', d.visionRaw);
+                      lines.push('');
+                    });
+                    const text = lines.join('\n');
+                    const note = (await post(`/loans/${loanId}/notes`, {
+                      note: text.length > 4000 ? `${text.slice(0, 3997)}...` : text
+                    }, opts)(state)).data;
+                    result.visionNoteId = note.resourceId;
+                  }
+                  result.visionNoteAttached = true;
+                } catch (noteError) {
+                  result.visionNoteAttached = false;
+                  result.visionNoteError = noteError.message;
+                  console.error('Could not attach vision note', noteError.message, JSON.stringify(noteError.body));
+                }
               }
             } catch (e) {
               // Report the failure to the gateway instead of leaving the case in WRITING_TO_FINERACT

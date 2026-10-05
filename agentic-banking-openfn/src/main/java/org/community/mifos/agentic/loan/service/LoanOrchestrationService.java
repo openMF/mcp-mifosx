@@ -15,6 +15,7 @@ package org.community.mifos.agentic.loan.service;
 
 import org.community.mifos.agentic.loan.config.LoanProperties;
 import org.community.mifos.agentic.loan.config.OpenFnProperties;
+import org.community.mifos.agentic.loan.document.DocumentImages;
 import org.community.mifos.agentic.loan.dto.HumanReviewRequest;
 import org.community.mifos.agentic.loan.dto.SubmitLoanRequest;
 import org.community.mifos.agentic.loan.model.AssessmentResult;
@@ -319,6 +320,9 @@ public class LoanOrchestrationService {
         p.put("callbackSecret", openFnProps.getCallbackSecret());
         p.put("ollamaUrl", openFnProps.getOllamaUrl());
         p.put("ollamaModel", openFnProps.getOllamaModel());
+        p.put("visionModel", openFnProps.getVisionModel());
+        p.put("curpMaxIssueAgeDays", openFnProps.getCurpMaxIssueAgeDays());
+        p.put("documents", DocumentImages.prepare(app.getDocumentPaths(), openFnProps.getDocumentRenderDpi()));
         return p;
     }
 

@@ -37,6 +37,11 @@ openfn:
   # Ollama used by the OpenFn decision job (URL must be reachable from the Lightning worker)
   ollama-url: ${OPENFN_OLLAMA_URL:http://host.docker.internal:11434}
   ollama-model: ${OLLAMA_MODEL:llama3.2:latest}
+  # Vision model for the CURP document job, and the CURP validity window
+  vision-model: ${OLLAMA_VISION_MODEL:qwen2.5vl:3b}
+  curp-max-issue-age-days: ${CURP_MAX_ISSUE_AGE_DAYS:30}
+  # PDF documents are rendered to PNG (first page) at this DPI before upload to OpenFn
+  document-render-dpi: ${DOCUMENT_RENDER_DPI:120}
 
 # Local Ollama (used both by gateway fallback and by OpenFn HTTP jobs)
 ollama:
