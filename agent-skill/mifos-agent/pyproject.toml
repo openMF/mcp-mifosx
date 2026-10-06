@@ -29,3 +29,11 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["fineract_skill"]
+
+# same lint contract as python/ so CI is stable across ruff versions
+[tool.ruff]
+line-length = 150
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E203", "E402", "E701"]

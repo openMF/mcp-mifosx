@@ -35,7 +35,6 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 # ── Import all domain handlers ─────────────────────────────────────────
-
 from fineract_skill.domains import (
     accounting,
     charges,
@@ -122,12 +121,12 @@ class ToolSpec:
             "description": self.description,
             "inputSchema": input_schema,
         }
-        
+
         schema["annotations"] = {
             "readOnlyHint": self.read_only,
             "destructiveHint": self.destructive,
         }
-            
+
         return schema
 
 

@@ -7,12 +7,11 @@ Client domain — search, create, update, and manage banking clients.
 
 from __future__ import annotations
 
-from typing import Any
 import urllib.parse
+from typing import Any
 
 from fineract_skill.client import FineractClient, FineractError
 from fineract_skill.helpers import fineract_today, fmt_date, safe_result
-
 
 # ── Search & Read ──────────────────────────────────────────────────────
 
