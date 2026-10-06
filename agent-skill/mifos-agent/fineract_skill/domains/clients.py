@@ -103,12 +103,12 @@ def get_client_accounts(client: FineractClient, client_id: int) -> dict[str, Any
             "clientId": client_id,
             "loanAccounts": [
                 {
-                    "loanId": l.get("id"),
-                    "accountNo": l.get("accountNo"),
-                    "status": l.get("status", {}).get("value"),
-                    "outstandingBalance": l.get("loanBalance", 0.00),
+                    "loanId": loan.get("id"),
+                    "accountNo": loan.get("accountNo"),
+                    "status": loan.get("status", {}).get("value"),
+                    "outstandingBalance": loan.get("loanBalance", 0.00),
                 }
-                for l in loans
+                for loan in loans
             ],
             "savingsAccounts": [
                 {
