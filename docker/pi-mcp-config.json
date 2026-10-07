@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "mifos-fineract": {
+      "command": "/opt/venv/bin/python3",
+      "args": ["/opt/mcp-mifosx/mcp_server.py"],
+      "env": {
+        "MIFOSX_BASE_URL": "${MIFOSX_BASE_URL}",
+        "MIFOSX_USERNAME": "${MIFOSX_USERNAME}",
+        "MIFOSX_PASSWORD": "${MIFOSX_PASSWORD}",
+        "MIFOSX_TENANT_ID": "${MIFOSX_TENANT_ID}"
+      }
+    }
+  }
+}

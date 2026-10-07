@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mifos-pi-agent
+  namespace: mifos-pi-agent
+  labels:
+    app.kubernetes.io/name: mifos-pi-agent
+    app.kubernetes.io/component: agent
+    app.kubernetes.io/part-of: mcp-mifosx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mifos-pi-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mifos-pi-agent
+        app.kubernetes.io/component: agent
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: pi-agent
+          image: mifos/pi-agent:latest
+          imagePullPolicy: Always
+          command: ["sleep", "infinity"]
+          envFrom:
+            - secretRef:
+                name: mifos-pi-agent-secrets
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: pi-data
+              mountPath: /home/pi/.pi/sessions
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: pi-agent-workspace
+        - name: pi-data
+          persistentVolumeClaim:
+            claimName: pi-agent-data
