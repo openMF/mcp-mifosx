@@ -1,5 +1,5 @@
 # ── Stage 1: Build the Python MCP server ──────────────────────────────
-FROM node:22-bookworm-slim AS mcp-builder
+FROM node:24-bookworm-slim AS mcp-builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-venv && rm -rf /var/lib/apt/lists/*
@@ -11,7 +11,7 @@ RUN python3 -m venv /opt/venv && \
 COPY python/ .
 
 # ── Stage 2: Pi Agent with MCP integration ────────────────────────────
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim
 
 LABEL org.opencontainers.image.title="mifos-pi-agent" \
       org.opencontainers.image.description="Pi Coding Agent with Mifos X MCP Server — Dockerized for banking AI workflows" \
