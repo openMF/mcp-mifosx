@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/joho/godotenv v1.5.1
-	github.com/mark3labs/mcp-go v1.1.1
+	github.com/mark3labs/mcp-go v1.2.1
 	github.com/prometheus/client_golang v1.25.0
 )
 
