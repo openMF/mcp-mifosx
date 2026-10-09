@@ -133,7 +133,7 @@ def validate_tool_registry():
         names = set()
         for tool in TOOL_REGISTRY:
             if not tool.name:
-                errors.append(f"REGISTRY ERROR: Tool missing 'name'.")
+                errors.append("REGISTRY ERROR: Tool missing 'name'.")
             if not tool.description:
                 errors.append(f"REGISTRY ERROR: Tool '{tool.name}' missing 'description'.")
             if not callable(tool.handler):
@@ -142,9 +142,10 @@ def validate_tool_registry():
                 errors.append(f"REGISTRY ERROR: Duplicate tool name '{tool.name}'.")
             names.add(tool.name)
 
-        # Check schema exports
-        openai = get_openai_tools()
-        mcp = get_mcp_tools()
+        # Check schema exports — include opt-in tools, since this validates
+        # that every registry tool converts, not what defaults expose
+        openai = get_openai_tools(allow_opt_in=True)
+        mcp = get_mcp_tools(allow_opt_in=True)
         if len(openai) != len(TOOL_REGISTRY):
             errors.append("REGISTRY ERROR: OpenAI schema count mismatch.")
         if len(mcp) != len(TOOL_REGISTRY):
@@ -196,7 +197,7 @@ def main():
     print("[6/6] Cross-referencing checklist...")
     checklist = os.path.join(SKILL_DIR, "references", "checklist.md")
     if os.path.isfile(checklist):
-        print(f"  ✓ Checklist found at references/checklist.md")
+        print("  ✓ Checklist found at references/checklist.md")
     else:
         warnings.append("STRUCTURE WARNING: references/checklist.md not found.")
 

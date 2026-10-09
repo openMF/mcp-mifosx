@@ -12,7 +12,6 @@ from typing import Any
 from fineract_skill.client import FineractClient, FineractError
 from fineract_skill.helpers import fineract_today, fmt_date, safe_result
 
-
 # ── Read ───────────────────────────────────────────────────────────────
 
 def get_savings_account(client: FineractClient, account_id: int) -> dict[str, Any]:

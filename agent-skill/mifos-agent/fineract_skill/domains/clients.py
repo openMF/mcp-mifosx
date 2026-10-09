@@ -7,12 +7,11 @@ Client domain — search, create, update, and manage banking clients.
 
 from __future__ import annotations
 
-from typing import Any
 import urllib.parse
+from typing import Any
 
 from fineract_skill.client import FineractClient, FineractError
 from fineract_skill.helpers import fineract_today, fmt_date, safe_result
-
 
 # ── Search & Read ──────────────────────────────────────────────────────
 
@@ -103,12 +102,12 @@ def get_client_accounts(client: FineractClient, client_id: int) -> dict[str, Any
             "clientId": client_id,
             "loanAccounts": [
                 {
-                    "loanId": l.get("id"),
-                    "accountNo": l.get("accountNo"),
-                    "status": l.get("status", {}).get("value"),
-                    "outstandingBalance": l.get("loanBalance", 0.00),
+                    "loanId": loan.get("id"),
+                    "accountNo": loan.get("accountNo"),
+                    "status": loan.get("status", {}).get("value"),
+                    "outstandingBalance": loan.get("loanBalance", 0.00),
                 }
-                for l in loans
+                for loan in loans
             ],
             "savingsAccounts": [
                 {
