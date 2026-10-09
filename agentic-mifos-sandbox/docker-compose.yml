@@ -1,0 +1,117 @@
+# Agentic Mifos sandbox: a minimal, self-contained Mifos X environment for
+# agentic workflows. This file starts the system of record (Apache Fineract)
+# and the Mifos X web app; OpenFn, the Pi agents and the scoped MCP servers
+# are added as separate services.
+#
+#   cp .env.example .env    # then set the passwords
+#   docker compose up -d
+#   open http://localhost:4200   (mifos / password)
+#
+# Networks
+#   edge  - the only network with published ports (bound to 127.0.0.1)
+#   core  - internal: Fineract and its database, no route to the internet
+services:
+  fineract-db:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_USER: postgres
+      # Superuser, used only by the init script; Fineract never sees it.
+      POSTGRES_PASSWORD: ${FINERACT_DB_ADMIN_PASSWORD:?set FINERACT_DB_ADMIN_PASSWORD in .env}
+      FINERACT_APP_DB_USER: fineract
+      FINERACT_APP_DB_PASSWORD: ${FINERACT_DB_APP_PASSWORD:?set FINERACT_DB_APP_PASSWORD in .env}
+    volumes:
+      - ./fineract/postgresql-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - fineract-db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [core]
+    mem_limit: 768m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  fineract:
+    # Pinned by digest (same build as the web app's e2e suite): apache/fineract
+    # publishes several tags a day and `latest` moves under you.
+    image: ${FINERACT_IMAGE:-apache/fineract:7ac780192@sha256:c3722d8475e140949b6bbec505833f0b5e5a6c27f8f8bd8d2ac38ff7df20fa05}
+    depends_on:
+      fineract-db:
+        condition: service_healthy
+    environment:
+      SPRING_PROFILES_ACTIVE: test,diagnostics
+      FINERACT_NODE_ID: 1
+      FINERACT_HIKARI_DRIVER_SOURCE_CLASS_NAME: org.postgresql.Driver
+      FINERACT_HIKARI_JDBC_URL: jdbc:postgresql://fineract-db:5432/fineract_tenants
+      # Dedicated non-superuser role created by fineract/postgresql-init.sh.
+      FINERACT_HIKARI_USERNAME: fineract
+      FINERACT_HIKARI_PASSWORD: ${FINERACT_DB_APP_PASSWORD}
+      FINERACT_HIKARI_MINIMUM_IDLE: 3
+      FINERACT_HIKARI_MAXIMUM_POOL_SIZE: 10
+      FINERACT_DEFAULT_TENANTDB_HOSTNAME: fineract-db
+      FINERACT_DEFAULT_TENANTDB_PORT: 5432
+      FINERACT_DEFAULT_TENANTDB_UID: fineract
+      FINERACT_DEFAULT_TENANTDB_PWD: ${FINERACT_DB_APP_PASSWORD}
+      FINERACT_DEFAULT_TENANTDB_NAME: fineract_default
+      FINERACT_DEFAULT_TENANTDB_TIMEZONE: ${FINERACT_TIMEZONE:-UTC}
+      FINERACT_SERVER_SSL_ENABLED: "true"
+      FINERACT_INSECURE_HTTP_CLIENT: "true"
+      FINERACT_EXTERNAL_EVENTS_ENABLED: "false"
+      JAVA_TOOL_OPTIONS: >-
+        -Xmx1536m -Xms512m
+        -XX:+UseG1GC -XX:MaxGCPauseMillis=200
+        -Djava.security.egd=file:/dev/./urandom
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- --no-check-certificate https://localhost:8443/fineract-provider/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 60
+      start_period: 120s
+    networks: [core]
+    mem_limit: 2g
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  web-app:
+    image: ${WEBAPP_IMAGE:-openmf/web-app:1.14}
+    depends_on:
+      fineract:
+        condition: service_healthy
+    environment:
+      FINERACT_PROXY_TARGET: https://fineract:8443
+      # Empty URLs make the app call its own origin; nginx proxies to Fineract.
+      FINERACT_API_URLS: ""
+      FINERACT_API_URL: ""
+      FINERACT_API_PROVIDER: /fineract-provider/api
+      FINERACT_API_VERSION: /v1
+      FINERACT_PLATFORM_TENANT_IDENTIFIER: default
+      # The sandbox has exactly one backend; hide the server picker.
+      MIFOS_ALLOW_SERVER_SWITCH_SELECTOR: "false"
+      MIFOS_DEFAULT_LANGUAGE: en-US
+      MIFOS_PRELOAD_CLIENTS: "true"
+      MIFOS_DEFAULT_CHAR_DELIMITER: ","
+    volumes:
+      - ./web-app/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+    # The image's own CMD renders env.js only; render the proxy config too.
+    # Only $FINERACT_PROXY_TARGET is substituted so nginx variables survive.
+    command: >-
+      /bin/sh -c "
+      envsubst '$$FINERACT_PROXY_TARGET' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf &&
+      envsubst < /usr/share/nginx/html/assets/env.template.js > /usr/share/nginx/html/assets/env.js &&
+      exec nginx -g 'daemon off;'
+      "
+    ports:
+      - "127.0.0.1:${WEBAPP_PORT:-4200}:80"
+    networks: [edge, core]
+    mem_limit: 256m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+networks:
+  edge: {}
+  core:
+    internal: true
+
+volumes:
+  fineract-db-data: {}
