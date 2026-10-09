@@ -1,0 +1,28 @@
+# Serves the Mifos X web app and proxies the Fineract API through the same
+# origin, so Fineract never needs a published port or a browser TLS exception.
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Docker's embedded DNS. Resolving per request (via the variable below)
+    # keeps the proxy working when the Fineract container is recreated.
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    # ${FINERACT_PROXY_TARGET} is substituted at start-up; nginx variables
+    # ($uri, $host, ...) are left untouched. proxy_pass has no URI part, so
+    # the original /fineract-provider/... request path is forwarded as is.
+    location /fineract-provider/ {
+        set $fineract_upstream ${FINERACT_PROXY_TARGET};
+        proxy_pass $fineract_upstream;
+        proxy_ssl_verify off;
+        proxy_connect_timeout 30s;
+        proxy_read_timeout 120s;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
