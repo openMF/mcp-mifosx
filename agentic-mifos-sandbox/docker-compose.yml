@@ -1,15 +1,17 @@
 # Agentic Mifos sandbox: a minimal, self-contained Mifos X environment for
-# agentic workflows. This file starts the system of record (Apache Fineract)
-# and the Mifos X web app; OpenFn, the Pi agents and the scoped MCP servers
-# are added as separate services.
+# agentic workflows. This file starts the system of record (Apache Fineract),
+# the Mifos X web app and the OpenFn Lightning orchestrator; the Pi agents and
+# the scoped MCP servers are added as separate services.
 #
-#   cp .env.example .env    # then set the passwords
+#   ./scripts/gen-secrets.sh   # creates .env with generated passwords and keys
 #   docker compose up -d
-#   open http://localhost:4200   (mifos / password)
+#   open http://localhost:4200   Mifos X web app (mifos / password)
+#   open http://localhost:4000   OpenFn Lightning (LIGHTNING_ADMIN_* in .env)
 #
 # Networks
-#   edge  - the only network with published ports (bound to 127.0.0.1)
-#   core  - internal: Fineract and its database, no route to the internet
+#   edge    - published ports (bound to 127.0.0.1) and outbound internet
+#   core    - internal: Fineract and its database, no route to the internet
+#   openfn  - internal: Lightning and its database
 services:
   fineract-db:
     image: postgres:18.4-alpine
@@ -108,10 +110,129 @@ services:
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
+  lightning-db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: postgres
+      # Superuser, used only by the init script; Lightning never sees it.
+      POSTGRES_PASSWORD: ${LIGHTNING_DB_ADMIN_PASSWORD:?set LIGHTNING_DB_ADMIN_PASSWORD in .env}
+      LIGHTNING_APP_DB_USER: lightning
+      LIGHTNING_APP_DB_PASSWORD: ${LIGHTNING_DB_APP_PASSWORD:?set LIGHTNING_DB_APP_PASSWORD in .env}
+    volumes:
+      - ./lightning/postgresql-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - lightning-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [openfn]
+    mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  # Shared settings for the Lightning server and its one-shot setup job.
+  lightning-setup: &lightning
+    image: ${LIGHTNING_IMAGE:-openfn/lightning:v2.19.0}
+    depends_on:
+      lightning-db:
+        condition: service_healthy
+    environment: &lightning-env
+      # Dedicated non-superuser role created by lightning/postgresql-init.sh.
+      DATABASE_URL: ecto://lightning:${LIGHTNING_DB_APP_PASSWORD}@lightning-db:5432/lightning
+      # The database is only reachable on the internal openfn network.
+      DISABLE_DB_SSL: "true"
+      SECRET_KEY_BASE: ${LIGHTNING_SECRET_KEY_BASE:?run scripts/gen-secrets.sh}
+      PRIMARY_ENCRYPTION_KEY: ${LIGHTNING_PRIMARY_ENCRYPTION_KEY:?run scripts/gen-secrets.sh}
+      WORKER_RUNS_PRIVATE_KEY: ${LIGHTNING_WORKER_RUNS_PRIVATE_KEY:?run scripts/gen-secrets.sh}
+      WORKER_SECRET: ${LIGHTNING_WORKER_SECRET:?run scripts/gen-secrets.sh}
+      LISTEN_ADDRESS: 0.0.0.0
+      PORT: 4000
+      URL_SCHEME: http
+      URL_HOST: localhost
+      URL_PORT: ${LIGHTNING_PORT:-4000}
+      # Must be set: when unset, Lightning v2.19 passes nil to Phoenix and every
+      # websocket (the UI and the worker) fails with an ArgumentError.
+      ORIGINS: http://localhost:${LIGHTNING_PORT:-4000}
+      ALLOW_SIGNUP: "false"
+      LIGHTNING_ADMIN_EMAIL: ${LIGHTNING_ADMIN_EMAIL:?set LIGHTNING_ADMIN_EMAIL in .env}
+      LIGHTNING_ADMIN_PASSWORD: ${LIGHTNING_ADMIN_PASSWORD:?run scripts/gen-secrets.sh}
+    # Runs the migrations, then creates the admin user if it does not exist yet.
+    # Safe to run on every `up`.
+    command:
+      - /app/bin/lightning
+      - eval
+      - |
+        Lightning.Release.migrate()
+        email = System.fetch_env!("LIGHTNING_ADMIN_EMAIL")
+        {:ok, _, _} =
+          Lightning.Setup.with_minimum_setup(fn ->
+            case Lightning.Accounts.get_user_by_email(email) do
+              nil ->
+                {:ok, _} =
+                  Lightning.SetupUtils.setup_user(%{
+                    role: :superuser,
+                    email: email,
+                    first_name: "Sandbox",
+                    last_name: "Admin",
+                    password: System.fetch_env!("LIGHTNING_ADMIN_PASSWORD")
+                  })
+                IO.puts("Created Lightning admin #{email}")
+              _user ->
+                IO.puts("Lightning admin #{email} already exists")
+            end
+          end)
+    # edge: the adaptor catalogue is fetched from npm.
+    networks: [openfn, edge]
+    mem_limit: 1g
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  lightning:
+    <<: *lightning
+    depends_on:
+      lightning-setup:
+        condition: service_completed_successfully
+    environment:
+      <<: *lightning-env
+      LIGHTNING_ADMIN_EMAIL: ""
+      LIGHTNING_ADMIN_PASSWORD: ""
+    command: ["/app/bin/server"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4000/health_check || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    ports:
+      - "127.0.0.1:${LIGHTNING_PORT:-4000}:4000"
+    mem_limit: 1536m
+    restart: unless-stopped
+
+  lightning-worker:
+    image: ${LIGHTNING_WORKER_IMAGE:-openfn/ws-worker:v1.29.5}
+    depends_on:
+      lightning:
+        condition: service_healthy
+    environment:
+      WORKER_LIGHTNING_SERVICE_URL: ws://lightning:4000/worker
+      WORKER_SECRET: ${LIGHTNING_WORKER_SECRET}
+      WORKER_LIGHTNING_PUBLIC_KEY: ${LIGHTNING_WORKER_PUBLIC_KEY:?run scripts/gen-secrets.sh}
+      WORKER_CAPACITY: ${LIGHTNING_WORKER_CAPACITY:-2}
+      NODE_OPTIONS: --dns-result-order=ipv4first
+    # edge: adaptors are installed from npm at run time.
+    networks: [openfn, edge]
+    mem_limit: 1g
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
 networks:
   edge: {}
   core:
     internal: true
+  openfn:
+    internal: true
 
 volumes:
   fineract-db-data: {}
+  lightning-db-data: {}
