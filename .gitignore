@@ -82,8 +82,8 @@ ollama_context_eval.py
 agent-skill/__pycache__/
 agent-skill/**/__pycache__/
 agent-skill/*.egg-info/
-!agent-skill/README.md
-!agent-skill/SKILL.md
-!agent-skill/references/*.md
+!agent-skill/mifos-agent/README.md
+!agent-skill/mifos-agent/SKILL.md
+!agent-skill/mifos-agent/references/*.md
 
 /agentic-loan-doc-classifier/target/

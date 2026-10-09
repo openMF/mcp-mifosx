@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: agent-skill
+        working-directory: agent-skill/mifos-agent
 
     steps:
       - uses: actions/checkout@v7
