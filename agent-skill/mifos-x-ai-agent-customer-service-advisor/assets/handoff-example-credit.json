@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "handoff_id": "9c41d7aa-02be-4f3c-8e55-6a7b0c2d3e02",
+  "created_at": "2026-10-07T11:40:00-06:00",
+  "source_agent": "mifos-x-ai-agent-customer-service-advisor",
+  "route": "CREDIT_ANALYST",
+  "route_reason": "Customer needs a loan for working capital.",
+  "customer": {
+    "entity_type": "INDIVIDUAL",
+    "existing_customer": "NO",
+    "fineract_client_id": null,
+    "reference_number": null,
+    "preferred_channel": "WHATSAPP"
+  },
+  "need": {
+    "type": "CREDIT",
+    "approx_amount": 80000,
+    "currency": "MXN",
+    "desired_term": null,
+    "liquidity_need": null,
+    "purpose": "Working capital for a small shop",
+    "formal_income_proof": "YES",
+    "inquiry_reason": null
+  },
+  "filters_triggered": [],
+  "escalation_required": false,
+  "active_process": false,
+  "urgency": "NORMAL",
+  "documents_mentioned": ["bank statements"],
+  "conversation_summary": "New individual customer needs about 80,000 MXN for a small shop and has bank statements to prove income. Asked about the interest rate; it was not quoted and will be reviewed by the specialist.",
+  "customer_confirmed_transfer": true,
+  "next_step": "The Credit Analyst will contact the customer by WhatsApp to review requirements and the initial pre-analysis."
+}

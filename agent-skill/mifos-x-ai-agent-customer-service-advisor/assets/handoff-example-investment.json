@@ -1,0 +1,33 @@
+{
+  "schema_version": "1.0",
+  "handoff_id": "5b0f2c1e-7d3a-4e8b-9a61-2f4c8d9e1a01",
+  "created_at": "2026-10-07T10:15:00-06:00",
+  "source_agent": "mifos-x-ai-agent-customer-service-advisor",
+  "route": "INVESTMENT_ADVISOR",
+  "route_reason": "Customer wants to invest savings and earn returns.",
+  "customer": {
+    "entity_type": "INDIVIDUAL",
+    "existing_customer": "NO",
+    "fineract_client_id": null,
+    "reference_number": null,
+    "preferred_channel": "WHATSAPP"
+  },
+  "need": {
+    "type": "INVESTMENT",
+    "approx_amount": 250000,
+    "currency": "MXN",
+    "desired_term": "6 months",
+    "liquidity_need": "No periodic income needed",
+    "purpose": null,
+    "formal_income_proof": null,
+    "inquiry_reason": null
+  },
+  "filters_triggered": [],
+  "escalation_required": false,
+  "active_process": false,
+  "urgency": "NORMAL",
+  "documents_mentioned": [],
+  "conversation_summary": "New individual customer wants to invest about 250,000 MXN for around 6 months without periodic income. Asked about the rate; it was not quoted and will be provided by the specialist.",
+  "customer_confirmed_transfer": true,
+  "next_step": "The Investment Commercial Advisor will contact the customer by WhatsApp to simulate current options for the amount and term."
+}

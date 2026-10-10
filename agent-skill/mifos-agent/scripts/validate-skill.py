@@ -3,23 +3,25 @@
 # SPDX-License-Identifier: MPL-2.0
 
 """
-Validate the Fineract Agent Skill metadata and structure.
+Validate an Agent Skill's metadata and structure.
 
 Checks:
-1. SKILL.md frontmatter (name format, description length, triggers)
+1. SKILL.md frontmatter (name format, name matches folder, description length, triggers)
 2. Directory structure (flat hierarchy, no human docs)
 3. SKILL.md line count (< 500 lines)
-4. Tool registry integrity
+4. Tool registry integrity (only for skills that ship the fineract_skill package)
 
 Usage:
-    python3 scripts/validate-skill.py
+    python3 scripts/validate-skill.py                 # validates this skill (mifos-agent)
+    python3 scripts/validate-skill.py <skill-folder>  # validates any skill folder
 """
 
 import os
 import re
 import sys
 
-SKILL_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SKILL_DIR = (os.path.abspath(sys.argv[1]) if len(sys.argv) > 1
+             else os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 SKILL_MD = os.path.join(SKILL_DIR, "SKILL.md")
 
 errors = []
@@ -57,6 +59,15 @@ def validate_name(name: str):
         errors.append(
             f"NAME ERROR: '{name}' contains invalid characters. "
             "Use only lowercase letters, numbers, and single hyphens."
+        )
+
+
+def validate_name_matches_folder(name: str):
+    folder = os.path.basename(os.path.normpath(SKILL_DIR))
+    if name and name != folder:
+        warnings.append(
+            f"NAME WARNING: name '{name}' differs from the folder name '{folder}'. "
+            "Pi accepts this, but other Agent Skills clients may require them to match."
         )
 
 
@@ -121,6 +132,9 @@ def validate_no_human_docs():
 
 
 def validate_tool_registry():
+    if not os.path.isdir(os.path.join(SKILL_DIR, "fineract_skill")):
+        print("  - No fineract_skill package in this skill; registry check skipped")
+        return
     try:
         sys.path.insert(0, SKILL_DIR)
         from fineract_skill.tools import TOOL_REGISTRY, get_mcp_tools, get_openai_tools
@@ -164,7 +178,7 @@ def validate_tool_registry():
 
 def main():
     print("=" * 60)
-    print("Fineract Agent Skill — Metadata & Structure Validation")
+    print(f"Agent Skill Validation — {os.path.basename(os.path.normpath(SKILL_DIR))}")
     print("=" * 60)
 
     if not check_skill_md_exists():
@@ -178,6 +192,7 @@ def main():
 
     print("\n[1/6] Validating metadata...")
     validate_name(fm.get("name", ""))
+    validate_name_matches_folder(fm.get("name", ""))
     validate_description(fm.get("description", ""))
 
     print("[2/6] Validating SKILL.md length...")
@@ -199,7 +214,7 @@ def main():
     if os.path.isfile(checklist):
         print("  ✓ Checklist found at references/checklist.md")
     else:
-        warnings.append("STRUCTURE WARNING: references/checklist.md not found.")
+        print("  - No references/checklist.md in this skill; skipped")
 
     print_results()
 
