@@ -32,6 +32,33 @@ workflows:
           fn(state => {
             const app = state.data || {};
             console.log('normalize-application', app.workflowId);
+            // Later jobs send X-OpenFn-Secret to this URL. Plain HTTP is only
+            // accepted for hosts on a local or private network (localhost,
+            // Docker service names, private IPv4); anything else must be HTTPS,
+            // so the secret never crosses an untrusted network.
+            // Keep in sync with the copy in the other workflow: jobs cannot
+            // share code. The job sandbox has no URL global, hence the regex.
+            const callbackUrl = (raw) => {
+              const m = /^(https?):\/\/(\[[^\]]+\]|[^\/:?#]+)(:\d+)?([\/?#].*)?$/i.exec(raw);
+              if (!m) throw new Error(`gatewayBaseUrl is not an http(s) URL: ${raw}`);
+              const url = { protocol: `${m[1].toLowerCase()}:`, origin: `${m[1]}://${m[2]}${m[3] || ''}` };
+              const host = m[2].toLowerCase().replace(/^\[|\]$/g, '');
+              // Private ranges only for a real dotted-quad (not 127.evil.com).
+              const ip = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+              const o = ip ? ip.slice(1).map(Number) : null;
+              const privateIp = !!o && o.every(n => n <= 255) &&
+                (o[0] === 127 || o[0] === 10 || (o[0] === 192 && o[1] === 168) ||
+                  (o[0] === 172 && o[1] >= 16 && o[1] <= 31));
+              // Dotless names are Docker service names; IPv6 literals other
+              // than ::1 are not treated as local.
+              const local = host === 'localhost' || host === '::1' ||
+                host === 'host.docker.internal' || privateIp ||
+                (!host.includes('.') && !host.includes(':'));
+              if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) {
+                throw new Error(`gatewayBaseUrl must use https for non-local hosts: ${url.origin}`);
+              }
+              return raw.replace(/\/+$/, '');
+            };
             return {
               ...state,
               application: {
@@ -47,7 +74,7 @@ workflows:
                 documentPaths: app.documentPaths || [],
                 metadata: app.metadata || {}
               },
-              gatewayBaseUrl: app.gatewayBaseUrl || 'http://host.docker.internal:8080',
+              gatewayBaseUrl: callbackUrl(app.gatewayBaseUrl || 'http://host.docker.internal:8080'),
               callbackSecret: app.callbackSecret || '',
               ollamaUrl: app.ollamaUrl || 'http://host.docker.internal:11434',
               ollamaModel: app.ollamaModel || 'llama3.2:latest',
@@ -73,7 +100,11 @@ workflows:
             {
               headers: {
                 'Content-Type': 'application/json',
-                'X-OpenFn-Secret': $.callbackSecret
+                // Not $.callbackSecret: a $ anywhere in this argument makes the
+                // compiler wrap the whole options object in a function, which
+                // language-http's post() then spreads into nothing, dropping
+                // every header. A function per value keeps options an object.
+                'X-OpenFn-Secret': state => state.callbackSecret
               }
             }
           );
@@ -425,7 +456,11 @@ workflows:
             {
               headers: {
                 'Content-Type': 'application/json',
-                'X-OpenFn-Secret': $.callbackSecret
+                // Not $.callbackSecret: a $ anywhere in this argument makes the
+                // compiler wrap the whole options object in a function, which
+                // language-http's post() then spreads into nothing, dropping
+                // every header. A function per value keeps options an object.
+                'X-OpenFn-Secret': state => state.callbackSecret
               }
             }
           );
@@ -487,6 +522,33 @@ workflows:
           fn(state => {
             const d = state.data || {};
             console.log('prepare-review', d.workflowId, d.action);
+            // Later jobs send X-OpenFn-Secret to this URL. Plain HTTP is only
+            // accepted for hosts on a local or private network (localhost,
+            // Docker service names, private IPv4); anything else must be HTTPS,
+            // so the secret never crosses an untrusted network.
+            // Keep in sync with the copy in the other workflow: jobs cannot
+            // share code. The job sandbox has no URL global, hence the regex.
+            const callbackUrl = (raw) => {
+              const m = /^(https?):\/\/(\[[^\]]+\]|[^\/:?#]+)(:\d+)?([\/?#].*)?$/i.exec(raw);
+              if (!m) throw new Error(`gatewayBaseUrl is not an http(s) URL: ${raw}`);
+              const url = { protocol: `${m[1].toLowerCase()}:`, origin: `${m[1]}://${m[2]}${m[3] || ''}` };
+              const host = m[2].toLowerCase().replace(/^\[|\]$/g, '');
+              // Private ranges only for a real dotted-quad (not 127.evil.com).
+              const ip = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+              const o = ip ? ip.slice(1).map(Number) : null;
+              const privateIp = !!o && o.every(n => n <= 255) &&
+                (o[0] === 127 || o[0] === 10 || (o[0] === 192 && o[1] === 168) ||
+                  (o[0] === 172 && o[1] >= 16 && o[1] <= 31));
+              // Dotless names are Docker service names; IPv6 literals other
+              // than ::1 are not treated as local.
+              const local = host === 'localhost' || host === '::1' ||
+                host === 'host.docker.internal' || privateIp ||
+                (!host.includes('.') && !host.includes(':'));
+              if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) {
+                throw new Error(`gatewayBaseUrl must use https for non-local hosts: ${url.origin}`);
+              }
+              return raw.replace(/\/+$/, '');
+            };
             return {
               ...state,
               workflowId: d.workflowId,
@@ -494,7 +556,7 @@ workflows:
               comments: d.comments || '',
               application: d.application || {},
               summary: d.summary || {},
-              gatewayBaseUrl: d.gatewayBaseUrl || 'http://host.docker.internal:8080',
+              gatewayBaseUrl: callbackUrl(d.gatewayBaseUrl || 'http://host.docker.internal:8080'),
               callbackSecret: d.callbackSecret || ''
             };
           });
@@ -739,7 +801,11 @@ workflows:
             {
               headers: {
                 'Content-Type': 'application/json',
-                'X-OpenFn-Secret': $.callbackSecret
+                // Not $.callbackSecret: a $ anywhere in this argument makes the
+                // compiler wrap the whole options object in a function, which
+                // language-http's post() then spreads into nothing, dropping
+                // every header. A function per value keeps options an object.
+                'X-OpenFn-Secret': state => state.callbackSecret
               }
             }
           );
