@@ -1,0 +1,337 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/openMF/mcp-mifosx/agent-skill/mifos-x-ai-agent-customer-service-advisor/assets/handoff.schema.json",
+  "title": "Customer Service Advisor handoff",
+  "description": "Case handoff produced by the Customer Service Advisor when routing a customer to the Investment Commercial Advisor, the Credit Analyst / Commercial Advisor, or the Operations department. Never contains sensitive personal data such as ID numbers, account numbers or statements.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "handoff_id",
+    "created_at",
+    "source_agent",
+    "route",
+    "route_reason",
+    "customer",
+    "need",
+    "filters_triggered",
+    "escalation_required",
+    "active_process",
+    "urgency",
+    "conversation_summary",
+    "customer_confirmed_transfer",
+    "next_step"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "handoff_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this handoff, for example a UUID."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp of the handoff."
+    },
+    "source_agent": {
+      "const": "mifos-x-ai-agent-customer-service-advisor"
+    },
+    "route": {
+      "enum": [
+        "INVESTMENT_ADVISOR",
+        "CREDIT_ANALYST",
+        "OPERATIONS"
+      ],
+      "description": "Destination of the case."
+    },
+    "route_reason": {
+      "allOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "One sentence explaining why this route was chosen."
+        },
+        {
+          "$ref": "#/$defs/safeText"
+        }
+      ]
+    },
+    "customer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_type",
+        "existing_customer",
+        "fineract_client_id",
+        "reference_number",
+        "preferred_channel"
+      ],
+      "properties": {
+        "entity_type": {
+          "enum": [
+            "INDIVIDUAL",
+            "LEGAL_ENTITY",
+            "UNKNOWN"
+          ]
+        },
+        "existing_customer": {
+          "enum": [
+            "YES",
+            "NO",
+            "UNKNOWN"
+          ]
+        },
+        "fineract_client_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Set only when a read-only lookup found exactly one matching client."
+        },
+        "reference_number": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "allOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/safeText"
+                }
+              ]
+            }
+          ],
+          "description": "Customer or case reference number, only if the customer offered it (AI-261 Operations profiling). Never an ID number (INE, CURP, RFC) or an account number."
+        },
+        "preferred_channel": {
+          "enum": [
+            "WHATSAPP",
+            "PHONE",
+            "EMAIL",
+            "CHAT",
+            "BRANCH",
+            "UNKNOWN"
+          ]
+        }
+      }
+    },
+    "need": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "approx_amount",
+        "currency",
+        "desired_term",
+        "liquidity_need",
+        "purpose",
+        "formal_income_proof",
+        "inquiry_reason"
+      ],
+      "properties": {
+        "type": {
+          "enum": [
+            "INVESTMENT",
+            "CREDIT",
+            "INQUIRY",
+            "COMPLAINT",
+            "OTHER"
+          ]
+        },
+        "approx_amount": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "currency": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "ISO-4217 code, for example MXN."
+        },
+        "desired_term": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "allOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/safeText"
+                }
+              ]
+            }
+          ],
+          "description": "Free text as stated by the customer, for example '6 months' or '180 days'."
+        },
+        "liquidity_need": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "allOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/safeText"
+                }
+              ]
+            }
+          ],
+          "description": "Investment route: need for liquidity or periodic income, as stated."
+        },
+        "purpose": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "allOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/safeText"
+                }
+              ]
+            }
+          ],
+          "description": "Credit route: purpose of the loan, only if mentioned voluntarily."
+        },
+        "formal_income_proof": {
+          "enum": [
+            "YES",
+            "NO",
+            "UNKNOWN",
+            null
+          ],
+          "description": "Credit route: can the customer prove formal income (bank statements or payslips)."
+        },
+        "inquiry_reason": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "allOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/safeText"
+                }
+              ]
+            }
+          ],
+          "description": "Operations route: reason for the inquiry in one phrase."
+        }
+      }
+    },
+    "filters_triggered": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "escalate"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "escalate": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "escalation_required": {
+      "type": "boolean"
+    },
+    "active_process": {
+      "type": [
+        "boolean",
+        "null"
+      ],
+      "description": "True when the customer already has an ongoing simulation or open credit file; null when unknown."
+    },
+    "urgency": {
+      "enum": [
+        "NORMAL",
+        "HIGH"
+      ]
+    },
+    "documents_mentioned": {
+      "type": "array",
+      "items": {
+        "allOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/$defs/safeText"
+          }
+        ]
+      },
+      "description": "Document types the customer mentioned (for example 'bank statements'). Never document contents or numbers."
+    },
+    "conversation_summary": {
+      "allOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "What was asked and the customer's answers, in two or three sentences."
+        },
+        {
+          "$ref": "#/$defs/safeText"
+        }
+      ]
+    },
+    "customer_confirmed_transfer": {
+      "type": "boolean"
+    },
+    "next_step": {
+      "allOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the customer should expect next from the specialist or Operations."
+        },
+        {
+          "$ref": "#/$defs/safeText"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "description": "Free text that must not contain sensitive identifiers: no sequences of 8+ digits, including digits separated by spaces or hyphens (ISO dates such as 2026-10-10 are allowed), and no RFC/CURP-style codes (3-4 letters followed by 6 digits).",
+      "not": {
+        "pattern": "(\\d{8,}|(?!\\d{4}-\\d{2}-\\d{2}(?!\\d))\\d(?:[\\s-]?\\d){7,}|[A-Za-z]{3,4}\\d{6})"
+      }
+    }
+  }
+}
