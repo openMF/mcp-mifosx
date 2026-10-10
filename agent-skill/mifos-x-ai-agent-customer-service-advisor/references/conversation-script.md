@@ -38,4 +38,4 @@ Reference wording for each stage. Adapt it naturally to the conversation and the
 >
 > **Customer:** No, I'm new. WhatsApp is fine.
 >
-> **Advisor:** I'd be happy to connect you with our Credit Analyst to review requirements and initial pre-analysis with you: individual customer, about $80,000 MXN for your shop, bank statements available, contact by WhatsApp. Does that sound good?
+> **Advisor:** I'd be happy to connect you with our Credit Analyst to review requirements and initial pre-analysis with you: individual customer, about 80,000 pesos for your shop, bank statements available, contact by WhatsApp. Does that sound good?

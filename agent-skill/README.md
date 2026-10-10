@@ -14,7 +14,9 @@ The advisor receives individual or legal-entity customers, identifies their need
 profiling questions per reply, applies the eight eligibility filters from AI-261, and routes the case to
 the Investment Commercial Advisor, the Credit Analyst or Operations. It never quotes rates, gives advice,
 promises approval, accepts funds or formalizes anything. When the customer agrees to the transfer it
-outputs a handoff JSON that conforms to `assets/handoff.schema.json`.
+outputs a handoff JSON that conforms to `assets/handoff.schema.json`, inside a fenced block labelled
+`handoff`. The block is meant for the next specialist: the harness or gateway should intercept it, route it,
+and not show it in the customer chat.
 
 ```
 mifos-x-ai-agent-customer-service-advisor/

@@ -40,7 +40,7 @@ Ask the missing fields in this order, at most two per reply. The order follows t
 
 - **Investment:** approximate amount → desired term (or liquidity / periodic income need) → existing customer → entity type → preferred channel.
 - **Credit:** approximate amount → proof of formal income (bank statements or payslips) → existing customer → entity type → purpose (only if volunteered; never ask) → preferred channel.
-- **Operations:** reason for the inquiry in one phrase → existing customer (and reference number only if offered) → entity type → preferred channel.
+- **Operations:** reason for the inquiry in one phrase → existing customer (and customer or case reference number only if offered) → preferred channel. Capture entity type only when the customer provides it or it is applicable.
 
 ## Rules
 
@@ -48,5 +48,5 @@ Ask the missing fields in this order, at most two per reply. The order follows t
 - Ask "Are you already a customer of our institution?" as a yes/no question (use the configured institution name if available; never show brackets). Never ask for a name, ID or account number to look the customer up.
 - Ask at most two questions per reply.
 - Do not request complete documents upon initial contact unless specifically required by the specialist or Operations. Document guidance is the responsibility of the specialist or Operations.
-- Never ask for ID numbers, account numbers or other sensitive data. A customer/reference number is recorded only if the customer offers it.
+- Never ask for ID numbers, account numbers or other sensitive data. A customer or case reference number (as defined in the ticket) is recorded only if the customer offers it, and only in `customer.reference_number`; ID numbers (INE, CURP, RFC) and account numbers are never recorded anywhere.
 - If the customer declines to answer, record `null` / `UNKNOWN` and continue routing.

@@ -155,11 +155,32 @@ def test_route_must_be_a_known_destination(validator):
     "Customer asked to check account number 1234567890.",
     "Customer shared INE IDMEX2045678912 in the chat.",
     "Customer RFC is GOKA900101AB1.",
+    "Customer shared account number 1234 5678 9012.",
+    "Customer shared account number 1234-5678-9012.",
 ])
 def test_privacy_guard_rejects_identifiers_in_free_text(validator, leak):
     handoff = _example("operations")
     handoff["conversation_summary"] = leak
     assert list(validator.iter_errors(handoff)), f"leak not caught: {leak}"
+
+
+def test_privacy_guard_allows_dates_and_reference_numbers(validator):
+    handoff = _example("operations")
+    handoff["conversation_summary"] = "Customer asked on 2026-10-10 about case REF-20431."
+    handoff["customer"]["reference_number"] = "REF-20431"
+    assert not list(validator.iter_errors(handoff))
+
+
+def test_reference_number_rejects_account_numbers(validator):
+    handoff = _example("operations")
+    handoff["customer"]["reference_number"] = "1234 5678 9012"
+    assert list(validator.iter_errors(handoff))
+
+
+def test_handoff_is_marked_for_the_harness_not_the_customer():
+    body = _body()
+    assert "fenced block labelled `handoff`" in body
+    assert "must not show it in the customer chat" in body
 
 
 def test_privacy_guard_allows_normal_amounts(validator):

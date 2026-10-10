@@ -107,7 +107,7 @@
               ]
             }
           ],
-          "description": "Customer or case reference number, only if the customer offered it. Never an ID or account number."
+          "description": "Customer or case reference number, only if the customer offered it (AI-261 Operations profiling). Never an ID number (INE, CURP, RFC) or an account number."
         },
         "preferred_channel": {
           "enum": [
@@ -328,9 +328,9 @@
   "$defs": {
     "safeText": {
       "type": "string",
-      "description": "Free text that must not contain sensitive identifiers: no runs of 8+ digits (account or ID numbers) and no RFC/CURP-style codes (3-4 letters followed by 6 digits).",
+      "description": "Free text that must not contain sensitive identifiers: no sequences of 8+ digits, including digits separated by spaces or hyphens (ISO dates such as 2026-10-10 are allowed), and no RFC/CURP-style codes (3-4 letters followed by 6 digits).",
       "not": {
-        "pattern": "(\\d{8,}|[A-Za-z]{3,4}\\d{6})"
+        "pattern": "(\\d{8,}|(?!\\d{4}-\\d{2}-\\d{2}(?!\\d))\\d(?:[\\s-]?\\d){7,}|[A-Za-z]{3,4}\\d{6})"
       }
     }
   }
