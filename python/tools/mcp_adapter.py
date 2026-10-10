@@ -66,7 +66,16 @@ class FineractAdapter:
             return response.json()
         except requests.exceptions.RequestException as e:
             if e.response is not None:
-                return {"error": self._parse_fineract_error(e.response)}
+                # Carry the HTTP status alongside the message: without it, a
+                # 503 that happens to say "not available" is indistinguishable
+                # from a genuine 404 and gets reported as "not found".
+                # Named status_code, not status: Fineract payloads carry
+                # `status` as an object, and wrappers call
+                # .get("status", {}).get("value", "") on them.
+                return {
+                    "error": self._parse_fineract_error(e.response),
+                    "status_code": e.response.status_code,
+                }
             return {"error": f"Connection failed: {str(e)}"}
 
     def execute_post(self, endpoint: str, payload: dict):
@@ -84,7 +93,16 @@ class FineractAdapter:
             return response.json()
         except requests.exceptions.RequestException as e:
             if e.response is not None:
-                return {"error": self._parse_fineract_error(e.response)}
+                # Carry the HTTP status alongside the message: without it, a
+                # 503 that happens to say "not available" is indistinguishable
+                # from a genuine 404 and gets reported as "not found".
+                # Named status_code, not status: Fineract payloads carry
+                # `status` as an object, and wrappers call
+                # .get("status", {}).get("value", "") on them.
+                return {
+                    "error": self._parse_fineract_error(e.response),
+                    "status_code": e.response.status_code,
+                }
             return {"error": f"Connection failed: {str(e)}"}
 
     def execute_put(self, endpoint: str, payload: dict):
@@ -100,7 +118,16 @@ class FineractAdapter:
             return response.json()
         except requests.exceptions.RequestException as e:
             if e.response is not None:
-                return {"error": self._parse_fineract_error(e.response)}
+                # Carry the HTTP status alongside the message: without it, a
+                # 503 that happens to say "not available" is indistinguishable
+                # from a genuine 404 and gets reported as "not found".
+                # Named status_code, not status: Fineract payloads carry
+                # `status` as an object, and wrappers call
+                # .get("status", {}).get("value", "") on them.
+                return {
+                    "error": self._parse_fineract_error(e.response),
+                    "status_code": e.response.status_code,
+                }
             return {"error": f"Connection failed: {str(e)}"}
 
     def execute_delete(self, endpoint: str):
@@ -116,7 +143,16 @@ class FineractAdapter:
             return response.json()
         except requests.exceptions.RequestException as e:
             if e.response is not None:
-                return {"error": self._parse_fineract_error(e.response)}
+                # Carry the HTTP status alongside the message: without it, a
+                # 503 that happens to say "not available" is indistinguishable
+                # from a genuine 404 and gets reported as "not found".
+                # Named status_code, not status: Fineract payloads carry
+                # `status` as an object, and wrappers call
+                # .get("status", {}).get("value", "") on them.
+                return {
+                    "error": self._parse_fineract_error(e.response),
+                    "status_code": e.response.status_code,
+                }
             return {"error": f"Connection failed: {str(e)}"}
 
 

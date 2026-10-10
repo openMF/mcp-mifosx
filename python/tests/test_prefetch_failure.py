@@ -55,9 +55,9 @@ def _outcome(fn: Callable[..., Any], **kwargs: Any) -> Dict[str, Any]:
 
 def test_genuine_miss_gets_the_friendly_message() -> None:
     """The behaviour every caller expects when the record is really absent."""
-    assert _prefetch_failure({"error": _REAL_MISSING}, "Client ID 7 not found.") == {
-        "error": "Client ID 7 not found."
-    }
+    assert _prefetch_failure(
+        {"error": _REAL_MISSING, "status_code": 404}, "Client ID 7 not found."
+    ) == {"error": "Client ID 7 not found."}
 
 
 def test_fineract_validation_wording_is_recognised_as_a_miss() -> None:
@@ -101,6 +101,46 @@ def test_server_error_is_reported_as_itself() -> None:
     assert result == {"error": _SERVER_ERROR}
 
 
+def test_service_wording_on_a_503_is_not_a_miss() -> None:
+    """CodeRabbit's finding: "Service not available" is an outage, not a
+    missing record, even though it overlaps the old missing wording."""
+    result = _prefetch_failure(
+        {"error": "Fineract Error: Service not available.", "status_code": 503},
+        "Client ID 7 not found.",
+    )
+    assert result == {"error": "Fineract Error: Service not available.", "status_code": 503}
+    assert "not found" not in result["error"]
+
+
+def test_ambiguous_wording_without_a_status_passes_through() -> None:
+    """Stripped of its status, "not available" no longer proves a miss."""
+    raw = "Fineract Error: The requested resource is not available."
+    assert _prefetch_failure({"error": raw}, "Client ID 7 not found.") == {
+        "error": raw
+    }
+
+
+def test_auth_and_rate_limit_failures_are_not_misses() -> None:
+    for status in (401, 403, 408, 429):
+        payload = {"error": "Fineract Error: Service not available.", "status_code": status}
+        assert _prefetch_failure(payload, "gone") is payload
+
+
+def test_other_4xx_falls_back_to_the_wording() -> None:
+    """Fineract reports some absent records as a 400, so wording still counts."""
+    assert _prefetch_failure(
+        {"error": _VALIDATION_MISSING, "status": 400}, "Loan gone"
+    ) == {"error": "Loan gone"}
+
+
+def test_fineract_status_object_is_not_mistaken_for_an_http_status() -> None:
+    """Fineract payloads carry `status` as an *object*, and wrappers read
+    ``.get("status", {}).get("value", "")``. The adapter must not reuse
+    that key for the HTTP status or those reads raise AttributeError."""
+    payload = {"error": _REAL_MISSING, "status": {"value": "invalid", "code": 400}}
+    assert _prefetch_failure(payload, "Client ID 7 not found.") is payload
+
+
 def test_unrecognised_error_passes_through() -> None:
     """Default to honesty: show the real text rather than guess."""
     raw = "Validation Error: The parameter journalEntries is not supported"
@@ -142,7 +182,11 @@ def test_wrapper_reports_outage_instead_of_not_found(monkeypatch: pytest.MonkeyP
 
 def test_wrapper_still_explains_a_missing_loan(monkeypatch: pytest.MonkeyPatch) -> None:
     """The friendly message must survive for the case it was written for."""
-    monkeypatch.setattr(mcp_server, "get_loan_details", _Stub({"error": _REAL_MISSING}))
+    monkeypatch.setattr(
+        mcp_server,
+        "get_loan_details",
+        _Stub({"error": _REAL_MISSING, "status_code": 404}),
+    )
     result = _outcome(mcp_server.approve_disburse_loan, loanId=42)
 
     assert result == {

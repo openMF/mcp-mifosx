@@ -90,11 +90,13 @@ mcp = FastMCP("Mifos-Banking-Agent")
 
 # --- Shared helpers ---
 
-# Backend wording that only ever means "that record is absent".
+# Backend wording that only ever means "that record is absent". Deliberately
+# excludes "not available": a 503 whose developerMessage reads "Service not
+# available" is not a miss. The HTTP status the adapter now carries tells the
+# two apart far more reliably than wording ever can.
 _MISSING_MARKERS = (
     "not found",
     "does not exist",
-    "not available",
     "no such ",
     # The adapter renders a 404 two ways (mcp_adapter.py:52,54) and a 404 is
     # a miss whichever way it arrives, body parseable or not.
@@ -124,15 +126,19 @@ def _prefetch_failure(result: Any, message: str) -> Dict[str, Any]:
     "not found" (issue #570): an agent told the record is missing goes
     hunting for data that was never queried.
 
-    The friendly message is used only when the backend actually reported a
-    missing record. Connection failures, timeouts and server errors are
-    returned unchanged.
+    The HTTP status decides first, because wording cannot be trusted to:
+    a 503 reading "Service not available" is not a miss, however much it
+    resembles one. Only when no status is available — a connection
+    failure, or a domain layer that built the dict itself — is the
+    wording consulted, and then only for phrases that cannot describe
+    anything else.
 
     Parameters
     ----------
     result : Any
-        What the pre-fetch returned — normally ``{"error": ...}``, but any
-        other value is handled without raising.
+        What the pre-fetch returned — normally ``{"error": ...}``, plus
+        ``status`` once the adapter has seen an HTTP response. Any other
+        value is handled without raising.
     message : str
         Friendly "not found" text to use when the record is genuinely
         missing.
@@ -145,6 +151,15 @@ def _prefetch_failure(result: Any, message: str) -> Dict[str, Any]:
     """
     if not isinstance(result, dict) or "error" not in result:
         return {"error": message}
+
+    status = result.get("status_code")
+    if isinstance(status, int) and not isinstance(status, bool):
+        if status == 404:
+            return {"error": message}
+        if status >= 500 or status in (401, 403, 408, 429):
+            return result
+        # Any other 4xx is ambiguous: Fineract reports some absent records
+        # as a 400, so fall through and let the wording make the call.
 
     detail = str(result["error"]).lower()
     if any(marker in detail for marker in _UNAVAILABLE_MARKERS):
