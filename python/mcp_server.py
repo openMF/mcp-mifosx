@@ -146,11 +146,14 @@ def _prefetch_failure(result: Any, message: str) -> Dict[str, Any]:
     Returns
     -------
     Dict[str, Any]
-        ``{"error": message}`` for a real miss, otherwise `result` with
-        its original detail intact.
+        ``{"error": message}`` for a real miss; `result` untouched when the
+        failure was something else; and ``{"error": "Unexpected pre-fetch
+        response."}`` when the shape proves nothing either way.
     """
     if not isinstance(result, dict) or "error" not in result:
-        return {"error": message}
+        # A null body, an array or any other stray shape says nothing about
+        # whether the record exists, so it must not be called "not found".
+        return {"error": "Unexpected pre-fetch response."}
 
     status = result.get("status_code")
     if isinstance(status, int) and not isinstance(status, bool):

@@ -155,17 +155,25 @@ def test_extra_keys_are_preserved() -> None:
     assert _prefetch_failure(payload, "gone") is payload
 
 
-def test_non_dict_result_falls_back_to_the_friendly_message() -> None:
-    """No detail to preserve, so the caller's message is the best answer."""
+def test_null_result_is_not_called_a_miss() -> None:
+    """A 200 with a JSON null body proves nothing about the record."""
     assert _prefetch_failure(None, "Client ID 7 not found.") == {
-        "error": "Client ID 7 not found."
+        "error": "Unexpected pre-fetch response."
     }
 
 
-def test_dict_without_an_error_key_falls_back_to_the_friendly_message() -> None:
-    """An unexpected shape should still produce a usable answer."""
+def test_list_result_is_not_called_a_miss() -> None:
+    """A collection endpoint can answer with a bare array."""
+    assert _prefetch_failure([{"id": 1}], "Client ID 7 not found.") == {
+        "error": "Unexpected pre-fetch response."
+    }
+
+
+def test_dict_without_an_error_key_is_not_called_a_miss() -> None:
+    """A successful shape reaching the helper is a contract breach, not a
+    miss -- the caller's guard should never have routed it here."""
     assert _prefetch_failure({"data": {}}, "Client ID 7 not found.") == {
-        "error": "Client ID 7 not found."
+        "error": "Unexpected pre-fetch response."
     }
 
 
@@ -203,6 +211,17 @@ def test_wrapper_reports_outage_for_a_client_pre_fetch(monkeypatch: pytest.Monke
 
     assert "Connection failed" in result["error"]
     assert "not found" not in result["error"]
+
+
+def test_null_pre_fetch_is_not_reported_as_a_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: a 200 with a JSON null body is not evidence the record
+    was deleted or never existed."""
+    monkeypatch.setattr(mcp_server, "get_loan_details", _Stub(None))
+    result = _outcome(mcp_server.delete_loan_app, loanId=42)
+
+    assert result == {"error": "Unexpected pre-fetch response."}
 
 
 def test_no_masking_pattern_remains_in_server_source() -> None:
