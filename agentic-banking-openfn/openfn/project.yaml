@@ -73,7 +73,11 @@ workflows:
             {
               headers: {
                 'Content-Type': 'application/json',
-                'X-OpenFn-Secret': $.callbackSecret
+                // Not $.callbackSecret: a $ anywhere in this argument makes the
+                // compiler wrap the whole options object in a function, which
+                // language-http's post() then spreads into nothing, dropping
+                // every header. A function per value keeps options an object.
+                'X-OpenFn-Secret': state => state.callbackSecret
               }
             }
           );
@@ -425,7 +429,11 @@ workflows:
             {
               headers: {
                 'Content-Type': 'application/json',
-                'X-OpenFn-Secret': $.callbackSecret
+                // Not $.callbackSecret: a $ anywhere in this argument makes the
+                // compiler wrap the whole options object in a function, which
+                // language-http's post() then spreads into nothing, dropping
+                // every header. A function per value keeps options an object.
+                'X-OpenFn-Secret': state => state.callbackSecret
               }
             }
           );
@@ -739,7 +747,11 @@ workflows:
             {
               headers: {
                 'Content-Type': 'application/json',
-                'X-OpenFn-Secret': $.callbackSecret
+                // Not $.callbackSecret: a $ anywhere in this argument makes the
+                // compiler wrap the whole options object in a function, which
+                // language-http's post() then spreads into nothing, dropping
+                // every header. A function per value keeps options an object.
+                'X-OpenFn-Secret': state => state.callbackSecret
               }
             }
           );
