@@ -25,7 +25,7 @@ from tools.mcp_adapter import FineractAdapter
 
 # ── bare arrays → keyed dict ─────────────────────────────────────────
 
-def test_bare_list_wrapped_under_given_key():
+def test_bare_list_wrapped_under_given_key() -> None:
     """A collection response must satisfy the declared dict schema."""
 
     @safe_tool("list_things", list_key="things")
@@ -35,7 +35,7 @@ def test_bare_list_wrapped_under_given_key():
     assert list_things() == {"things": [{"id": 1}, {"id": 2}]}
 
 
-def test_bare_list_defaults_to_items_key():
+def test_bare_list_defaults_to_items_key() -> None:
     @safe_tool("list_things")
     def list_things() -> Dict[str, Any]:
         return [{"id": 1}]
@@ -43,7 +43,7 @@ def test_bare_list_defaults_to_items_key():
     assert list_things() == {"items": [{"id": 1}]}
 
 
-def test_empty_list_is_still_wrapped():
+def test_empty_list_is_still_wrapped() -> None:
     """An empty array is still an array and would fail the same way."""
 
     @safe_tool("list_things", list_key="things")
@@ -55,7 +55,7 @@ def test_empty_list_is_still_wrapped():
 
 # ── error sentinel → real MCP error ──────────────────────────────────
 
-def test_error_sentinel_becomes_tool_error():
+def test_error_sentinel_becomes_tool_error() -> None:
     """An `{"error": ...}` payload must not look like a successful call."""
 
     @safe_tool("deposit")
@@ -66,7 +66,7 @@ def test_error_sentinel_becomes_tool_error():
         deposit()
 
 
-def test_error_sentinel_survives_extra_keys():
+def test_error_sentinel_survives_extra_keys() -> None:
     """`get_overdue_loans` merges `suggestions` onto the payload, so the
     sentinel can arrive with more than one key. It must still raise."""
 
@@ -78,7 +78,7 @@ def test_error_sentinel_survives_extra_keys():
         get_overdue_loans()
 
 
-def test_non_error_dict_passes_through_unchanged():
+def test_non_error_dict_passes_through_unchanged() -> None:
     @safe_tool("get_office")
     def get_office() -> Dict[str, Any]:
         return {"id": 1, "name": "Head Office", "errors": []}
@@ -86,7 +86,7 @@ def test_non_error_dict_passes_through_unchanged():
     assert get_office() == {"id": 1, "name": "Head Office", "errors": []}
 
 
-def test_unexpected_exception_becomes_tool_error():
+def test_unexpected_exception_becomes_tool_error() -> None:
     """A crash must surface as isError, not as a normal-looking payload."""
 
     @safe_tool("boom")
@@ -99,7 +99,7 @@ def test_unexpected_exception_becomes_tool_error():
 
 # ── validation actually runs ─────────────────────────────────────────
 
-def test_validation_blocks_negative_amount():
+def test_validation_blocks_negative_amount() -> None:
     """`validate_input` was defined but never applied before this."""
     from mcp_server import make_repayment
 
@@ -107,14 +107,14 @@ def test_validation_blocks_negative_amount():
         make_repayment(loanId=1, amount=-5)
 
 
-def test_validation_blocks_non_positive_loan_id():
+def test_validation_blocks_non_positive_loan_id() -> None:
     from mcp_server import make_repayment
 
     with pytest.raises(ToolError, match="loanId must be a positive integer"):
         make_repayment(loanId=0, amount=10)
 
 
-def test_validation_stops_before_any_request():
+def test_validation_stops_before_any_request() -> None:
     """The guard must reject bad input ahead of the domain call."""
     called = []
 
@@ -129,7 +129,7 @@ def test_validation_stops_before_any_request():
     assert called == [], "domain function ran despite invalid input"
 
 
-def test_validate_input_is_a_no_op_for_uncovered_tools():
+def test_validate_input_is_a_no_op_for_uncovered_tools() -> None:
     """Only get_loan and make_repayment have rules today; everything
     else must pass through untouched."""
     validate_input("list_all_offices", {"officeId": -5})
@@ -138,7 +138,7 @@ def test_validate_input_is_a_no_op_for_uncovered_tools():
 
 # ── signature preservation ──────────────────────────────────────────
 
-def test_guard_preserves_signature_for_schema_generation():
+def test_guard_preserves_signature_for_schema_generation() -> None:
     """FastMCP derives the input schema from the signature, so the
     wrapper must not obscure the parameters."""
 
@@ -157,7 +157,7 @@ def test_guard_preserves_signature_for_schema_generation():
 class _FakeResponse:
     """Minimal stand-in for requests.Response."""
 
-    def __init__(self, payload: Any, status_code: int = 400):
+    def __init__(self, payload: Any, status_code: int = 400) -> None:
         self._payload = payload
         self.status_code = status_code
         self.text = str(payload)
@@ -173,7 +173,7 @@ def adapter() -> FineractAdapter:
     return FineractAdapter()
 
 
-def test_specific_detail_wins_over_generic_message(adapter):
+def test_specific_detail_wins_over_generic_message(adapter: FineractAdapter) -> None:
     """Fineract sends a generic developerMessage that claims validation
     errors 'are provided' while hiding the actual reason in errors[]."""
     response = _FakeResponse({
@@ -191,7 +191,7 @@ def test_specific_detail_wins_over_generic_message(adapter):
     assert "journalEntries is not supported" in message
 
 
-def test_every_listed_error_is_reported(adapter):
+def test_every_listed_error_is_reported(adapter: FineractAdapter) -> None:
     response = _FakeResponse({
         "developerMessage": "The request was invalid.",
         "errors": [
@@ -206,7 +206,7 @@ def test_every_listed_error_is_reported(adapter):
     assert "loanId is required" in message
 
 
-def test_falls_back_to_generic_message(adapter):
+def test_falls_back_to_generic_message(adapter: FineractAdapter) -> None:
     """When no specific reason exists the generic text is still useful."""
     response = _FakeResponse({
         "developerMessage": "The requested resource is not available.",
@@ -217,7 +217,7 @@ def test_falls_back_to_generic_message(adapter):
     assert "The requested resource is not available" in message
 
 
-def test_falls_back_to_status_and_body(adapter):
+def test_falls_back_to_status_and_body(adapter: FineractAdapter) -> None:
     response = _FakeResponse({"unexpected": "shape"}, status_code=502)
 
     message = adapter._parse_fineract_error(response)
@@ -225,7 +225,7 @@ def test_falls_back_to_status_and_body(adapter):
     assert "502" in message
 
 
-def test_non_dict_body_still_reports_status(adapter):
+def test_non_dict_body_still_reports_status(adapter: FineractAdapter) -> None:
     """A JSON array body must not fall into the parse-failure branch and
     lose the status code."""
     response = _FakeResponse(["not", "a", "dict"], status_code=500)
@@ -236,7 +236,7 @@ def test_non_dict_body_still_reports_status(adapter):
     assert "Failed to parse" not in message
 
 
-def test_unparseable_body_reports_status_not_a_crash(adapter):
+def test_unparseable_body_reports_status_not_a_crash(adapter: FineractAdapter) -> None:
     response = _FakeResponse(ValueError("no json"), status_code=503)
 
     message = adapter._parse_fineract_error(response)
