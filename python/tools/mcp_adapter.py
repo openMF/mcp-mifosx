@@ -40,18 +40,46 @@ class FineractAdapter:
             "Content-Type": "application/json"
         }
 
-    def _parse_fineract_error(self, response: requests.Response):
-        """Extracts readable error messages from Fineract's complex JSON error responses."""
+    def _parse_fineract_error(self, response: requests.Response) -> str:
+        """Extracts readable error messages from Fineract's complex JSON error responses.
+
+        Fineract sends a generic `developerMessage` ("validation errors which
+        are provided") *and* a specific `errors[]` list. The list holds the
+        reason a caller can act on, so it is checked first; the generic text
+        is only used when no specific reason exists.
+
+        Parameters
+        ----------
+        response : requests.Response
+            The failed HTTP response.
+
+        Returns
+        -------
+        str
+            The most specific message available.
+        """
         try:
             error_data = response.json()
-            # Fineract usually puts the human-readable error here:
-            if "developerMessage" in error_data:
-                return f"Fineract Error: {error_data['developerMessage']}"
-            elif "errors" in error_data and len(error_data["errors"]) > 0:
-                return f"Validation Error: {error_data['errors'][0].get('defaultUserMessage', 'Unknown error')}"
-            return f"Error {response.status_code}: {response.text}"
         except Exception:
             return f"HTTP {response.status_code}: Failed to parse error response."
+
+        if isinstance(error_data, dict):
+            details = [
+                detail
+                for detail in (
+                    err.get("developerMessage") or err.get("defaultUserMessage")
+                    for err in (error_data.get("errors") or [])
+                    if isinstance(err, dict)
+                )
+                if detail
+            ]
+            if details:
+                return f"Validation Error: {'; '.join(details)}"
+
+            if "developerMessage" in error_data:
+                return f"Fineract Error: {error_data['developerMessage']}"
+
+        return f"Error {response.status_code}: {response.text}"
 
     def execute_get(self, endpoint: str, params: dict = None):
         """Executes a standard GET request."""
