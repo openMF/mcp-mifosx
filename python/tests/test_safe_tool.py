@@ -19,7 +19,7 @@ from typing import Any, Dict
 import pytest
 from fastmcp.exceptions import ToolError
 
-from core.validation_engine import validate_input
+from core.validation_engine import ValidationError, validate_input
 from mcp_server import safe_tool
 from tools.mcp_adapter import FineractAdapter
 
@@ -129,11 +129,38 @@ def test_validation_stops_before_any_request() -> None:
     assert called == [], "domain function ran despite invalid input"
 
 
-def test_validate_input_is_a_no_op_for_uncovered_tools() -> None:
-    """Only get_loan and make_repayment have rules today; everything
-    else must pass through untouched."""
-    validate_input("list_all_offices", {"officeId": -5})
-    validate_input("delete_client_profile", {"clientId": -5})
+def test_validate_input_rejects_non_positive_resource_ids() -> None:
+    """Resource IDs are checked for *every* tool, not only the two with
+    tool-specific rules, so bad IDs are rejected before any request."""
+    with pytest.raises(ValidationError, match="officeId must be a positive integer"):
+        validate_input("list_all_offices", {"officeId": -5})
+
+    with pytest.raises(ValidationError, match="clientId must be a positive integer"):
+        validate_input("delete_client_profile", {"clientId": -5})
+
+
+def test_validate_input_rejects_zero_resource_id() -> None:
+    with pytest.raises(ValidationError, match="id must be a positive integer"):
+        validate_input("get_client_accts", {"id": 0})
+
+
+def test_validate_input_allows_absent_optional_ids() -> None:
+    """An optional ID is either absent or None and must not be mistaken
+    for a bad value."""
+    validate_input("list_all_offices", {})
+    validate_input("list_all_groups", {"officeId": None})
+    validate_input("get_client_accts", {"clientId": 1, "id": None})
+
+
+def test_validate_input_ignores_bool_and_string_id_fields() -> None:
+    """`bool` subclasses `int`, and `externalId` is a string that merely
+    ends in `Id` — neither may be rejected."""
+    validate_input(
+        "create_new_client",
+        {"firstname": "A", "lastname": "B", "isActive": False},
+    )
+    validate_input("create_lending_group", {"name": "G", "externalId": ""})
+    validate_input("create_new_client", {"firstname": "A", "lastname": "B", "officeId": 1})
 
 
 # ── signature preservation ──────────────────────────────────────────
