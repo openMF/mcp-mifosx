@@ -7,6 +7,7 @@ import logging
 from typing import Optional
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
 
 # 1. Provide an MCP-specific Logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MCP Server] %(message)s')
@@ -113,11 +114,74 @@ def _resolve_client_id(name: str):
         return None
     return clients[0].get("entityId") or clients[0].get("id")
 
+def safe_tool(tool_name: str, list_key: str = "items") -> Callable:
+    """Normalise a tool's result into valid MCP output.
+
+    The domain layer reports failure three different ways: a
+    ``ValidationError`` from input checks, a bare JSON array from
+    collection endpoints, and an ``{"error": ...}`` sentinel from the
+    HTTP adapter. Each breaks the MCP contract if it reaches the client
+    unchanged -- arrays violate the ``-> dict`` output schema, and error
+    sentinels arrive inside a *successful* response, so an agent cannot
+    tell a failed withdrawal from a completed one.
+
+    This wraps the three cases at the boundary: arrays are keyed,
+    sentinels are raised, and exceptions surface as MCP errors.
+
+    Parameters
+    ----------
+    tool_name : str
+        Name passed to ``validate_input``; must match the registered
+        tool name.
+    list_key : str, optional
+        Key bare JSON arrays are wrapped under, by default ``"items"``.
+
+    Returns
+    -------
+    Callable
+        Decorator that preserves the wrapped function's signature, so
+        FastMCP still derives the correct input and output schema.
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+            try:
+                # Bind args + kwargs so validate_input sees defaults too
+                bound = signature(func).bind_partial(*args, **kwargs)
+                bound.apply_defaults()
+
+                validate_input(tool_name, dict(bound.arguments))
+
+                result = func(*args, **kwargs)
+
+            except ValidationError as e:
+                raise ToolError(str(e)) from e
+            except ToolError:
+                raise
+            except Exception:
+                logger.exception("Tool %s raised", tool_name)
+                raise ToolError("Internal tool execution error") from None
+
+            # Collection endpoints return a bare array, but the tool
+            # declares `-> dict`; FastMCP rejects the mismatch.
+            if isinstance(result, list):
+                return {list_key: result}
+
+            # Adapter sentinel -> a real MCP error (isError: true)
+            if isinstance(result, dict) and "error" in result:
+                raise ToolError(str(result["error"]))
+
+            return result
+
+        return wrapper
+    return decorator
+
 # --- Register all MCP-native tools ---
 
 # --- CLIENTS & GROUPS ---
 
 @mcp.tool()
+@safe_tool("search_clients")
 def search_clients(nameQuery: str) -> dict:
     """Find the client ID for a given name. Returns clientId — use this for all subsequent tool calls."""
     result = search_clients_by_name.func(nameQuery)
@@ -135,10 +199,11 @@ def search_clients(nameQuery: str) -> dict:
     }
 
 @mcp.tool()
+@safe_tool("get_client")
 def get_client(clientId: int) -> dict:
     """Show key details for a specific client."""
     data = get_client_details.func(clientId)
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or "error" in data:
         return data
     return {
         "clientId":       data.get("id"),
@@ -153,6 +218,7 @@ def get_client(clientId: int) -> dict:
     }
 
 @mcp.tool()
+@safe_tool("get_client_accts")
 def get_client_accts(clientId: int = None, clientIds: list = None, id: int = None, nameQuery: str = None, name: str = None) -> dict:
     """Show all loans and savings accounts for a client. Accepts either a clientId (int) or a client name via nameQuery."""
     # Resolve by name if no ID was given (Qwen may pass nameQuery directly)
@@ -201,26 +267,31 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
     }
 
 @mcp.tool()
+@safe_tool("create_new_client")
 def create_new_client(firstname: str, lastname: str, mobileNo: str = None, officeId: int = 1, isActive: bool = True) -> dict:
     """Create a new banking client"""
     return create_client.func(firstname, lastname, mobileNo, officeId, isActive)
 
 @mcp.tool()
+@safe_tool("activate_pending_client")
 def activate_pending_client(clientId: int) -> dict:
     """Activate a pending client profile"""
     return activate_client.func(clientId)
 
 @mcp.tool()
+@safe_tool("update_mobile")
 def update_mobile(clientId: int, newMobileNo: str) -> dict:
     """Update a client's phone number"""
     return update_client_mobile.func(clientId, newMobileNo)
 
 @mcp.tool()
+@safe_tool("close_client_profile")
 def close_client_profile(clientId: int, closureReasonId: int = 17) -> dict:
     """Close a client's profile"""
     return close_client.func(clientId, closureReasonId)
 
 @mcp.tool()
+@safe_tool("update_existing_client")
 def update_existing_client(clientId: int, firstname: Optional[str] = None, lastname: Optional[str] = None,
                           mobileNo: Optional[str] = None, externalId: Optional[str] = None) -> dict:
     """Update an existing client's details.
@@ -232,6 +303,7 @@ def update_existing_client(clientId: int, firstname: Optional[str] = None, lastn
     return update_client.func(clientId, firstname, lastname, mobileNo, externalId)
 
 @mcp.tool()
+@safe_tool("delete_client_profile")
 def delete_client_profile(clientId: int) -> dict:
     """Delete a client profile.
     Validates clientId exists before executing."""
@@ -241,76 +313,91 @@ def delete_client_profile(clientId: int) -> dict:
     return delete_client.func(clientId)
 
 @mcp.tool()
+@safe_tool("create_lending_group")
 def create_lending_group(name: str, officeId: int = 1, externalId: str = None) -> dict:
     """Create a new lending group"""
     return create_group_domain.func(name, officeId, externalId)
 
 @mcp.tool()
+@safe_tool("get_group")
 def get_group(groupId: int) -> dict:
     """Show details and members of a lending group"""
     return get_group_domain.func(groupId)
 
 @mcp.tool()
+@safe_tool("list_all_groups", list_key="groups")
 def list_all_groups(officeId: int = None) -> dict:
     """List all lending groups"""
     return list_groups.func(officeId)
 
 @mcp.tool()
+@safe_tool("activate_pending_group")
 def activate_pending_group(groupId: int) -> dict:
     """Activate a pending group"""
     return activate_group_domain.func(groupId)
 
 @mcp.tool()
+@safe_tool("add_member_to_group")
 def add_member_to_group(groupId: int, clientId: int) -> dict:
     """Add a client member to a group"""
     return add_group_member.func(groupId, clientId)
 
 @mcp.tool()
+@safe_tool("list_all_centers", list_key="centers")
 def list_all_centers(officeId: int = None) -> dict:
     """List all centers"""
     return list_centers.func(officeId)
 
 @mcp.tool()
+@safe_tool("get_center")
 def get_center(centerId: int) -> dict:
     """Show details for a center"""
     return get_center_domain.func(centerId)
 
 @mcp.tool()
+@safe_tool("create_new_center")
 def create_new_center(name: str, officeId: int, externalId: str = None) -> dict:
     """Create a new center"""
     return create_center_domain.func(name, officeId, externalId)
 
 @mcp.tool()
+@safe_tool("get_identifiers", list_key="identifiers")
 def get_identifiers(clientId: int) -> dict:
     """List client ID documents (passports, etc.)"""
     return get_client_identifiers.func(clientId)
 
 @mcp.tool()
+@safe_tool("add_identifier")
 def add_identifier(clientId: int, documentTypeId: int, documentKey: str) -> dict:
     """Add a new identity document for a client"""
     return create_client_identifier.func(clientId, documentTypeId, documentKey)
 
 @mcp.tool()
+@safe_tool("list_documents", list_key="documents")
 def list_documents(clientId: int) -> dict:
     """List all uploaded files/documents for a client"""
     return get_client_documents.func(clientId)
 
 @mcp.tool()
+@safe_tool("list_client_charges")
 def list_client_charges(clientId: int) -> dict:
     """List client-level fees or penalties"""
     return get_client_charges.func(clientId)
 
 @mcp.tool()
+@safe_tool("apply_client_fee")
 def apply_client_fee(clientId: int, chargeId: int, amount: float) -> dict:
     """Apply a one-time fee/charge to a client profile"""
     return apply_client_charge.func(clientId, chargeId, amount)
 
 @mcp.tool()
+@safe_tool("list_client_txns")
 def list_client_txns(clientId: int) -> dict:
     """List financial transactions for the client"""
     return get_client_transactions.func(clientId)
 
 @mcp.tool()
+@safe_tool("get_addresses")
 def get_addresses(clientId: int) -> dict:
     """Show client addresses"""
     return get_client_addresses.func(clientId)
@@ -318,12 +405,13 @@ def get_addresses(clientId: int) -> dict:
 # --- LOANS ---
 
 @mcp.tool()
+@safe_tool("get_loan")
 def get_loan(loanId: int) -> dict:
     """Get key details of a specific loan."""
 
     data = get_loan_details.func(loanId)
 
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or "error" in data:
         return data
 
     tl = data.get("timeline", {})
@@ -355,10 +443,11 @@ def get_loan(loanId: int) -> dict:
         "suggestions": suggestions
     }
 @mcp.tool()
+@safe_tool("get_repayment_sched")
 def get_repayment_sched(loanId: int) -> dict:
     """Get the repayment schedule for a loan."""
     data = get_repayment_schedule.func(loanId)
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or "error" in data:
         return data
     periods = data.get("periods", [])
     return {
@@ -379,10 +468,11 @@ def get_repayment_sched(loanId: int) -> dict:
     }
 
 @mcp.tool()
+@safe_tool("get_loan_hist")
 def get_loan_hist(loanId: int) -> dict:
     """Get the transaction history for a loan (repayments, disbursements, charges)."""
     data = get_loan_history.func(loanId)
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or "error" in data:
         return data
     txns = data.get("transactions", [])
     return {
@@ -401,11 +491,13 @@ def get_loan_hist(loanId: int) -> dict:
     }
 
 @mcp.tool()
+@safe_tool("create_new_loan")
 def create_new_loan(clientId: int, principal: float, months: int, productId: int = 1) -> dict:
     """Create a new loan application"""
     return create_loan.func(clientId, principal, months, productId)
 
 @mcp.tool()
+@safe_tool("approve_disburse_loan")
 def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
     """Approve and disburse a pending loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
@@ -420,6 +512,7 @@ def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
     return approve_and_disburse_loan.func(loanId, amount)
 
 @mcp.tool()
+@safe_tool("reject_loan")
 def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk profile") -> dict:
     """Reject a pending loan application. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
@@ -431,6 +524,7 @@ def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk prof
     return reject_loan_application.func(loanId, note)
 
 @mcp.tool()
+@safe_tool("make_repayment")
 def make_repayment(loanId: int, amount: float) -> dict:
     """Make a repayment on an active loan. Validates loanId and status before executing."""
     check = get_loan_details.func(loanId)
@@ -442,6 +536,7 @@ def make_repayment(loanId: int, amount: float) -> dict:
     return make_loan_repayment.func(loanId, amount)
 
 @mcp.tool()
+@safe_tool("apply_loan_fee")
 def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
     """Apply a fee/charge to a loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
@@ -450,6 +545,7 @@ def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
     return apply_late_fee.func(loanId, feeAmount, 2)
 
 @mcp.tool()
+@safe_tool("waive_loan_interest")
 def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized Waiver") -> dict:
     """Waive interest on a loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
@@ -458,6 +554,7 @@ def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized W
     return waive_interest.func(loanId, amount, note)
 
 @mcp.tool()
+@safe_tool("get_overdue_loans_for_client")
 def get_overdue_loans_for_client(clientId: int) -> dict:
     """Get all overdue or in-arrears loans for a client"""
 
@@ -489,41 +586,14 @@ def get_overdue_loans_for_client(clientId: int) -> dict:
     #     "suggestions": suggestions
     # }
 
-def safe_tool(tool_name: str) -> Callable:
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Dict[str, Any]:
-            try:
-                # 🔹 Bind args + kwargs properly
-                bound = signature(func).bind_partial(*args, **kwargs)
-                bound.apply_defaults()
-
-                validate_input(tool_name, dict(bound.arguments))
-
-                return func(*args, **kwargs)
-
-            except ValidationError as e:
-                return {
-                    "error": str(e),
-                    "safe": True,
-                    "tool": tool_name
-                }
-
-            except Exception:
-                return {
-                    "error": "Internal tool execution error",
-                    "safe": False,
-                    "tool": tool_name
-                }
-
-        return wrapper
-    return decorator
 @mcp.tool()
+@safe_tool("create_group_loan_app")
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
     """Create a group loan application for an existing lending group"""
     return create_group_loan.func(groupId, principal, months, productId)
 
 @mcp.tool()
+@safe_tool("undo_approval")
 def undo_approval(loanId: int) -> dict:
     """Undo a loan approval so terms can be modified. Only works on approved (not yet disbursed) loans."""
     check = get_loan_details.func(loanId)
@@ -535,6 +605,7 @@ def undo_approval(loanId: int) -> dict:
     return undo_loan_approval.func(loanId)
 
 @mcp.tool()
+@safe_tool("undo_disbursal")
 def undo_disbursal(loanId: int) -> dict:
     """Undo a loan disbursal to reverse funds and return the loan to approved status."""
     check = get_loan_details.func(loanId)
@@ -546,12 +617,14 @@ def undo_disbursal(loanId: int) -> dict:
     return undo_loan_disbursal.func(loanId)
 
 @mcp.tool()
+@safe_tool("get_loan_app_template")
 def get_loan_app_template(clientId: int, productId: int = None) -> dict:
     """Get the pre-filled loan application template for a client, including product defaults and available charge options.
     Call this before create_new_loan to see what fields and products are available."""
     return get_loan_template.func(clientId, productId)
 
 @mcp.tool()
+@safe_tool("reschedule_loan_app")
 def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: str = None,
                          newInterestRate: float = None, graceOnPrincipal: int = None,
                          extraTerms: int = None, reason: str = "Rescheduled via AI Agent") -> dict:
@@ -568,6 +641,7 @@ def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: s
                             newInterestRate, graceOnPrincipal, extraTerms, reason)
 
 @mcp.tool()
+@safe_tool("update_existing_loan")
 def update_existing_loan(
     loanId: int,
     principal: Optional[float] = None,
@@ -588,6 +662,7 @@ def update_existing_loan(
     return update_loan.func(loanId, principal, months, productId)
 
 @mcp.tool()
+@safe_tool("delete_loan_app")
 def delete_loan_app(loanId: int) -> dict:
     """Delete a draft or submitted loan application.
     Validates loanId exists and is in deletable state before executing.
@@ -605,10 +680,11 @@ def delete_loan_app(loanId: int) -> dict:
 # --- SAVINGS ---
 
 @mcp.tool()
+@safe_tool("get_savings")
 def get_savings(accountId: int) -> dict:
     """Get key details of a savings account."""
     data = get_savings_account.func(accountId)
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or "error" in data:
         return data
     tl = data.get("timeline", {})
     summary = data.get("summary", {})
@@ -625,10 +701,11 @@ def get_savings(accountId: int) -> dict:
     }
 
 @mcp.tool()
+@safe_tool("get_savings_txns")
 def get_savings_txns(accountId: int) -> dict:
     """Get transactions for a savings account."""
     data = get_savings_transactions.func(accountId)
-    if not isinstance(data, dict):
+    if not isinstance(data, dict) or "error" in data:
         return data
     txns = data.get("transactions", [])
     return {
@@ -646,21 +723,25 @@ def get_savings_txns(accountId: int) -> dict:
     }
 
 @mcp.tool()
+@safe_tool("create_savings")
 def create_savings(clientId: int, productId: int = 1) -> dict:
     """Create a new savings account"""
     return create_savings_account.func(clientId, productId)
 
 @mcp.tool()
+@safe_tool("approve_activate_savings")
 def approve_activate_savings(accountId: int) -> dict:
     """Approve and activate a savings account"""
     return approve_and_activate_savings.func(accountId)
 
 @mcp.tool()
+@safe_tool("close_savings")
 def close_savings(accountId: int) -> dict:
     """Close a savings account"""
     return close_savings_account.func(accountId)
 
 @mcp.tool()
+@safe_tool("deposit")
 def deposit(accountId: int, amount: float) -> dict:
     """Deposit money into a savings account. Validates accountId exists before executing."""
     check = get_savings_account.func(accountId)
@@ -672,6 +753,7 @@ def deposit(accountId: int, amount: float) -> dict:
     return deposit_savings.func(accountId, amount)
 
 @mcp.tool()
+@safe_tool("withdraw")
 def withdraw(accountId: int, amount: float) -> dict:
     """Withdraw money from a savings account. Validates accountId and balance before executing."""
     check = get_savings_account.func(accountId)
@@ -686,11 +768,13 @@ def withdraw(accountId: int, amount: float) -> dict:
     return withdraw_savings.func(accountId, amount)
 
 @mcp.tool()
+@safe_tool("apply_savings_fee")
 def apply_savings_fee(accountId: int, amount: float, chargeId: int = 1) -> dict:
     """Apply a charge/block to a savings account"""
     return apply_savings_charge.func(accountId, amount, chargeId)
 
 @mcp.tool()
+@safe_tool("calc_post_interest")
 def calc_post_interest(accountId: int) -> dict:
     """Calculate and post interest to a savings account"""
     return calculate_and_post_interest.func(accountId)
@@ -699,21 +783,25 @@ def calc_post_interest(accountId: int) -> dict:
 # --- STAFF & OFFICES ---
 
 @mcp.tool()
+@safe_tool("list_all_staff", list_key="staff")
 def list_all_staff(officeId: int = None, status: str = "all") -> dict:
     """List bank staff members"""
     return list_staff.func(officeId, status)
 
 @mcp.tool()
+@safe_tool("get_staff")
 def get_staff(staffId: int) -> dict:
     """Get details for a staff member"""
     return get_staff_details.func(staffId)
 
 @mcp.tool()
+@safe_tool("list_all_offices", list_key="offices")
 def list_all_offices() -> dict:
     """List all bank offices/branches"""
     return list_offices.func()
 
 @mcp.tool()
+@safe_tool("get_office")
 def get_office(officeId: int) -> dict:
     """Get details for an office"""
     return get_office_details.func(officeId)
@@ -722,16 +810,19 @@ def get_office(officeId: int) -> dict:
 # --- ACCOUNTING ---
 
 @mcp.tool()
+@safe_tool("list_accounts", list_key="accounts")
 def list_accounts(type: int = None) -> dict:
     """List GL accounts (Chart of Accounts). Types: 1=Asset, 2=Liability, 3=Equity, 4=Income, 5=Expense"""
     return list_gl_accounts.func(type)
 
 @mcp.tool()
+@safe_tool("list_journal_entries")
 def list_journal_entries(glAccountId: int = None, transactionId: str = None) -> dict:
     """List journal entries for an account or transaction ID"""
     return get_journal_entries.func(glAccountId, transactionId)
 
 @mcp.tool()
+@safe_tool("record_journal_entry")
 def record_journal_entry(officeId: int, date: str, credits: list, debits: list, comment: str = "") -> dict:
     """Record a manual journal entry. Date format: 'dd MMMM yyyy' e.g. '10 March 2026'"""
     return create_journal_entry.func(officeId, date, credits, debits, comment)
@@ -740,28 +831,33 @@ def record_journal_entry(officeId: int, date: str, credits: list, debits: list, 
 # --- REPORTS ---
 
 @mcp.tool()
+@safe_tool("list_all_reports", list_key="reports")
 def list_all_reports(reportType: str = None) -> dict:
     """List all Fineract report definitions. Optionally filter by type: 'Table', 'Chart', 'SMS', 'Text', 'Pentaho'."""
     return list_reports.func(reportType)
 
 @mcp.tool()
+@safe_tool("get_report_definition")
 def get_report_definition(reportId: int) -> dict:
     """Get the full definition (SQL, parameters, type) for a specific report by ID."""
     return get_report.func(reportId)
 
 @mcp.tool()
+@safe_tool("run_fineract_report")
 def run_fineract_report(reportName: str, params: dict = None) -> dict:
     """Run a Fineract report by its exact name and return the results.
     Example: run_fineract_report('Active Loans - Summary', {'officeId': '1'})"""
     return run_report.func(reportName, params)
 
 @mcp.tool()
+@safe_tool("create_report_definition")
 def create_report_definition(reportName: str, reportType: str, reportSql: str, description: str = "") -> dict:
     """Register a new report definition in Fineract.
     reportType: 'Table' | 'Chart' | 'SMS' | 'Text' | 'Pentaho'"""
     return create_report.func(reportName, reportType, reportSql, description)
 
 @mcp.tool()
+@safe_tool("update_report_definition")
 def update_report_definition(reportId: int, reportName: str = None, reportType: str = None, reportSql: str = None, description: str = None) -> dict:
     """Update an existing report definition. Only provided fields are changed."""
     return update_report.func(reportId, reportName, reportType, reportSql, description)
@@ -770,23 +866,27 @@ def update_report_definition(reportId: int, reportName: str = None, reportType: 
 # --- PRODUCTS ---
 
 @mcp.tool()
+@safe_tool("list_available_loan_products")
 def list_available_loan_products() -> dict:
     """List all loan products with their principal ranges, interest rates, and repayment terms.
     Call this before create_new_loan to find a valid productId."""
     return list_loan_products.func()
 
 @mcp.tool()
+@safe_tool("get_loan_product_details")
 def get_loan_product_details(productId: int) -> dict:
     """Get full details for a loan product including charges, interest rules, and amortization type."""
     return get_loan_product.func(productId)
 
 @mcp.tool()
+@safe_tool("list_available_savings_products")
 def list_available_savings_products() -> dict:
     """List all savings products with their interest rates and minimum balances.
     Call this before create_savings to find a valid productId."""
     return list_savings_products.func()
 
 @mcp.tool()
+@safe_tool("get_savings_product_details")
 def get_savings_product_details(productId: int) -> dict:
     """Get full details for a savings product including interest compounding rules and charges."""
     return get_savings_product.func(productId)
@@ -795,16 +895,19 @@ def get_savings_product_details(productId: int) -> dict:
 # --- CHARGES ---
 
 @mcp.tool()
+@safe_tool("list_all_charges", list_key="charges")
 def list_all_charges() -> dict:
     """List all available charge definitions (fees and penalties) in the system"""
     return list_charges_domain.func()
 
 @mcp.tool()
+@safe_tool("get_charge")
 def get_charge(chargeId: int) -> dict:
     """Get details of a specific charge by its ID"""
     return get_charge_domain.func(chargeId)
 
 @mcp.tool()
+@safe_tool("create_new_charge")
 def create_new_charge(name: str, amount: float, currencyCode: str = "USD",
                       chargeAppliesTo: int = 1, chargeTimeType: int = 2,
                       chargeCalculationType: int = 1, isPenalty: bool = False,
@@ -817,6 +920,7 @@ def create_new_charge(name: str, amount: float, currencyCode: str = "USD",
                                      chargeTimeType, chargeCalculationType, isPenalty, isActive)
 
 @mcp.tool()
+@safe_tool("update_existing_charge")
 def update_existing_charge(chargeId: int, name: str = None, amount: float = None,
                            isActive: bool = None) -> dict:
     """Update an existing charge definition"""
@@ -826,16 +930,19 @@ def update_existing_charge(chargeId: int, name: str = None, amount: float = None
 # --- CODE TABLES ---
 
 @mcp.tool()
+@safe_tool("list_system_codes", list_key="systemCodes")
 def list_system_codes() -> dict:
     """List all system codes (dropdown categories like Gender, Client Type, ID Type, etc.)"""
     return list_codes_domain.func()
 
 @mcp.tool()
+@safe_tool("get_code_values", list_key="codeValues")
 def get_code_values(codeId: int) -> dict:
     """Get the dropdown values for a specific code. Use list_system_codes() first to find the code ID."""
     return get_code_values_domain.func(codeId)
 
 @mcp.tool()
+@safe_tool("list_all_datatables", list_key="datatables")
 def list_all_datatables() -> dict:
     """List all registered data tables (custom fields, additional data extensions)"""
     return list_datatables_domain.func()
