@@ -7,11 +7,19 @@
 #   docker compose up -d
 #   open http://localhost:4200   Mifos X web app (mifos / password)
 #   open http://localhost:4000   OpenFn Lightning (LIGHTNING_ADMIN_* in .env)
+#   curl http://localhost:8080/actuator/health   Agentic gateway (loan API)
 #
 # Networks
 #   edge    - published ports (bound to 127.0.0.1) and outbound internet
 #   core    - internal: Fineract and its database, no route to the internet
-#   openfn  - internal: Lightning and its database
+#   openfn  - internal: Lightning, its worker, the bootstrap and the gateway
+
+# Webhook trigger ids of the OpenFn project. The bootstrap provisions the
+# triggers with exactly these ids, so the gateway's webhook URLs are fixed.
+x-openfn-triggers:
+  loan-submit: &trigger-loan-submit 8c5f206e-6510-4bc1-87cd-cd71554e9335
+  loan-review: &trigger-loan-review bde8f76a-5f61-4183-ac6f-0ec0ce8d9ff4
+
 services:
   fineract-db:
     image: postgres:18.6-alpine
@@ -120,7 +128,7 @@ services:
       LIGHTNING_APP_DB_PASSWORD: ${LIGHTNING_DB_APP_PASSWORD:?set LIGHTNING_DB_APP_PASSWORD in .env}
     volumes:
       - ./lightning/postgresql-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
-      - lightning-db-data:/var/lib/postgresql/data
+      - lightning-db-data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -131,12 +139,24 @@ services:
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
+  # Hands the shared bootstrap-state volume to uid 1000 (the Lightning and
+  # bootstrap images), so neither needs to run as root.
+  state-init:
+    image: busybox:1.37
+    command: ["sh", "-c", "chown 1000:1000 /state && chmod 700 /state"]
+    volumes:
+      - bootstrap-state:/state
+    network_mode: none
+    restart: "no"
+
   # Shared settings for the Lightning server and its one-shot setup job.
   lightning-setup: &lightning
     image: ${LIGHTNING_IMAGE:-openfn/lightning:v2.19.0}
     depends_on:
       lightning-db:
         condition: service_healthy
+      state-init:
+        condition: service_completed_successfully
     environment: &lightning-env
       # Dedicated non-superuser role created by lightning/postgresql-init.sh.
       DATABASE_URL: ecto://lightning:${LIGHTNING_DB_APP_PASSWORD}@lightning-db:5432/lightning
@@ -157,8 +177,9 @@ services:
       ALLOW_SIGNUP: "false"
       LIGHTNING_ADMIN_EMAIL: ${LIGHTNING_ADMIN_EMAIL:?set LIGHTNING_ADMIN_EMAIL in .env}
       LIGHTNING_ADMIN_PASSWORD: ${LIGHTNING_ADMIN_PASSWORD:?run scripts/gen-secrets.sh}
-    # Runs the migrations, then creates the admin user if it does not exist yet.
-    # Safe to run on every `up`.
+    # Runs the migrations, creates the admin user if it does not exist yet, and
+    # writes an API token for the bootstrap to /state (kept while it stays
+    # valid). Safe to run on every `up`.
     command:
       - /app/bin/lightning
       - eval
@@ -181,7 +202,19 @@ services:
               _user ->
                 IO.puts("Lightning admin #{email} already exists")
             end
+
+            token_file = "/state/lightning-api-token"
+            current = if File.exists?(token_file), do: String.trim(File.read!(token_file))
+
+            if is_nil(current) or is_nil(Lightning.Accounts.get_user_by_api_token(current)) do
+              user = Lightning.Accounts.get_user_by_email(email)
+              File.write!(token_file, Lightning.Accounts.generate_api_token(user))
+              File.chmod!(token_file, 0o600)
+              IO.puts("Wrote a Lightning API token for the bootstrap")
+            end
           end)
+    volumes:
+      - bootstrap-state:/state
     # edge: the adaptor catalogue is fetched from npm.
     networks: [openfn, edge]
     mem_limit: 1g
@@ -198,6 +231,7 @@ services:
       LIGHTNING_ADMIN_EMAIL: ""
       LIGHTNING_ADMIN_PASSWORD: ""
     command: ["/app/bin/server"]
+    volumes: []
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:4000/health_check || exit 1"]
       interval: 10s
@@ -221,8 +255,68 @@ services:
       WORKER_CAPACITY: ${LIGHTNING_WORKER_CAPACITY:-2}
       NODE_OPTIONS: --dns-result-order=ipv4first
     # edge: adaptors are installed from npm at run time.
-    networks: [openfn, edge]
+    # core: the Fineract write-back job calls Fineract directly.
+    networks: [openfn, edge, core]
     mem_limit: 1g
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  bootstrap:
+    build: ./bootstrap
+    depends_on:
+      fineract:
+        condition: service_healthy
+      lightning:
+        condition: service_healthy
+    environment:
+      FINERACT_URL: https://fineract:8443/fineract-provider/api/v1
+      FINERACT_USERNAME: ${FINERACT_USERNAME:-mifos}
+      FINERACT_PASSWORD: ${FINERACT_PASSWORD:-password}
+      FINERACT_TENANT: default
+      LIGHTNING_URL: http://lightning:4000
+      LIGHTNING_ADMIN_EMAIL: ${LIGHTNING_ADMIN_EMAIL}
+      LIGHTNING_API_TOKEN_FILE: /state/lightning-api-token
+      OPENFN_PROJECT_SPEC: /spec/project.yaml
+      OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
+      OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
+    volumes:
+      - bootstrap-state:/state:ro
+      - ../agentic-banking-openfn/openfn/project.yaml:/spec/project.yaml:ro
+    networks: [core, openfn]
+    mem_limit: 128m
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  gateway:
+    build: ../agentic-banking-openfn
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      # Spring resolves the ${...} placeholders below from these two variables.
+      OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
+      OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
+      OPENFN_WEBHOOK_LOAN_SUBMIT: http://lightning:4000/i/$${OPENFN_TRIGGER_LOAN_SUBMIT}
+      OPENFN_WEBHOOK_LOAN_REVIEW: http://lightning:4000/i/$${OPENFN_TRIGGER_LOAN_REVIEW}
+      OPENFN_BASE_URL: http://lightning:4000
+      # Where OpenFn jobs (run by the worker) call back into the gateway.
+      OPENFN_GATEWAY_BASE_URL: http://gateway:8080
+      OPENFN_CALLBACK_SECRET: ${OPENFN_CALLBACK_SECRET:?run scripts/gen-secrets.sh}
+      # No Ollama service yet: the decision job falls back to its rule-based
+      # decision when this host does not resolve.
+      OPENFN_OLLAMA_URL: http://ollama:11434
+      # Surface OpenFn failures instead of underwriting inside the gateway.
+      LOAN_LOCAL_FALLBACK: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    ports:
+      - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
+    networks: [edge, openfn]
+    mem_limit: 768m
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
@@ -236,3 +330,4 @@ networks:
 volumes:
   fineract-db-data: {}
   lightning-db-data: {}
+  bootstrap-state: {}
