@@ -6,13 +6,12 @@ package server
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/openMF/mcp-mifosx/go/adapter"
 	"github.com/openMF/mcp-mifosx/go/tools"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -29,8 +28,12 @@ func NewHTTPServer(srv *MifosMcpServer, port string) *MifosHTTPServer {
 	}
 }
 
-func (s *MifosHTTPServer) Serve() error {
-	sseServer := server.NewSSEServer(s.McpServer.MCPServer)
+// Handler exposes only the caller-scoped HTTP pilot, independent of stdio.
+func (s *MifosHTTPServer) Handler() http.Handler {
+	// Always build the restricted catalog here, even if a caller constructs
+	// MifosHTTPServer directly with the full stdio server.
+	pilot := newCallerScopedHTTPServer(s.McpServer.Registry.Fineract)
+	sseServer := server.NewSSEServer(pilot.MCPServer)
 
 	mux := http.NewServeMux()
 	mux.Handle("/sse", sseServer.SSEHandler())
@@ -42,7 +45,7 @@ func (s *MifosHTTPServer) Serve() error {
 		json.NewEncoder(w).Encode(map[string]string{"status": "UP", "version": "1.0.0-go"})
 	})
 
-	for _, def := range s.McpServer.Registry.ToolDefs {
+	for _, def := range pilot.Registry.ToolDefs {
 		d := def
 		path := "/api/" + d.Name
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
@@ -55,26 +58,42 @@ func (s *MifosHTTPServer) Serve() error {
 
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-Mifos-Tenant-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Mifos-Tenant-Id")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
+		if r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" {
+			// Exactly one value per identity header; no query/body/session defaults.
+			auth, tenant := r.Header.Values("Authorization"), r.Header.Values("X-Mifos-Tenant-Id")
+			if len(auth) != 1 || len(tenant) != 1 {
+				http.Error(w, "caller Authorization and tenant headers are required", http.StatusUnauthorized)
+				return
+			}
+			ctx, err := adapter.WithCallerContext(r.Context(), auth[0], tenant[0])
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusUnauthorized)
+				return
+			}
+			r = r.WithContext(ctx)
+		}
 		mux.ServeHTTP(w, r)
 	})
+	return handler
+}
 
+func (s *MifosHTTPServer) Serve() error {
 	log.Printf("Starting Headless MCP Server on http://localhost:%s", s.Port)
 	log.Printf("SSE Endpoint: http://localhost:%s/sse", s.Port)
 	log.Printf("REST API Base: http://localhost:%s/api/", s.Port)
 
-	return http.ListenAndServe(":"+s.Port, handler)
+	return http.ListenAndServe(":"+s.Port, s.Handler())
 }
 
 func (s *MifosHTTPServer) handleRESTToolCall(w http.ResponseWriter, r *http.Request, def tools.BaseToolDef) {
 	body := make(map[string]interface{})
-	queryParams := make(map[string]string)
 
 	if r.Method == "POST" || r.Method == "PUT" {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -84,7 +103,6 @@ func (s *MifosHTTPServer) handleRESTToolCall(w http.ResponseWriter, r *http.Requ
 	}
 
 	for k, v := range r.URL.Query() {
-		queryParams[k] = v[0]
 		body[k] = v[0]
 	}
 
@@ -114,36 +132,5 @@ func (s *MifosHTTPServer) handleRESTToolCall(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	endpoint := def.EndpointURL
-
-	for _, p := range def.Params {
-		if p.IsPathVar {
-			val, ok := body[p.Name]
-			if !ok {
-				val = queryParams[p.Name]
-			}
-			if val != nil {
-				endpoint = strings.Replace(endpoint, "%v", fmt.Sprintf("%v", val), 1)
-				delete(body, p.Name)
-				delete(queryParams, p.Name)
-			}
-		}
-	}
-
-	respData, err := s.McpServer.Registry.Fineract.DoRequest(def.Method, endpoint, body, queryParams)
-	if err != nil {
-		log.Printf("[REST Error] Tool: %s, Endpoint: %s, Error: %v", def.Name, endpoint, err)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusInternalServerError)
-		if len(respData) > 0 {
-			w.Write(respData)
-		} else {
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
-		}
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write(respData)
+	http.Error(w, "tool is not supported in caller-scoped HTTP mode", http.StatusForbidden)
 }

@@ -259,6 +259,31 @@ MIFOSX_PASSWORD=password
 ### 3. Initialize Server
 
 **Headless Cloud / Microservice (SSE):**
+
+HTTP is currently a caller-scoped, read-only pilot exposing **only `get_client`**
+(`GET /clients/{id}`). Send both `Authorization` and `X-Mifos-Tenant-Id` on
+every `/sse` connection and `/message` POST. The optional `/api/get_client`
+wrapper requires the same headers. Identity is never read from tool arguments,
+query parameters, or the MCP session. Missing, blank, or duplicate identity
+headers fail before any Fineract request; there is no HTTP tenant default.
+
+The adapter forwards the caller Authorization unchanged and maps
+`X-Mifos-Tenant-Id` to Fineract's `fineract-platform-tenantid`. Fineract validates
+the credentials and permissions. HTTP uses `MIFOSX_BASE_URL` and the configured
+transport settings, but never falls back to `MIFOSX_USERNAME`,
+`MIFOSX_PASSWORD`, or `MIFOSX_TENANT_ID`. Other banking tools are unavailable
+over HTTP in this pilot. Stdio retains the full tool catalog and configured
+credentials; the two execution paths do not fall back to each other.
+
+Caller requests refuse redirects and shared cookie jars. Downstream failures
+return only a sanitized error and HTTP status; successful responses containing
+recognizable caller credential material are refused. Basic usernames that also
+appear in client data can therefore cause a response to be refused.
+
+Use HTTPS at the deployment boundary to protect caller headers in transit.
+HTTP header presence is not a local authentication check. This pilot does not
+add permission-based tool discovery or bind SSE session ownership to a user.
+
 ```bash
 docker build -t mcp-go-mifosx .
 docker run -p 8080:8080 --env-file .env mcp-go-mifosx
