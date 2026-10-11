@@ -90,6 +90,87 @@ mcp = FastMCP("Mifos-Banking-Agent")
 
 # --- Shared helpers ---
 
+# Backend wording that only ever means "that record is absent". Deliberately
+# excludes "not available": a 503 whose developerMessage reads "Service not
+# available" is not a miss. The HTTP status the adapter now carries tells the
+# two apart far more reliably than wording ever can.
+_MISSING_MARKERS = (
+    "not found",
+    "does not exist",
+    "no such ",
+    # The adapter renders a 404 two ways (mcp_adapter.py:52,54) and a 404 is
+    # a miss whichever way it arrives, body parseable or not.
+    "http 404",
+    "error 404",
+)
+
+# Backend wording that proves the record's existence was never established,
+# so answering "not found" would be a claim we cannot support.
+_UNAVAILABLE_MARKERS = (
+    "connection failed",
+    "timed out",
+    "timeout",
+    "max retries",
+    "error 5",
+    "http 5",
+    "remote end closed",
+)
+
+
+def _prefetch_failure(result: Any, message: str) -> Dict[str, Any]:
+    """Explain a failed pre-fetch without hiding why it failed.
+
+    Several tools look a record up before acting on it so they can say
+    "Loan ID 42 does not exist" instead of showing raw backend output.
+    Swapping in that message unconditionally is what turned an outage into
+    "not found" (issue #570): an agent told the record is missing goes
+    hunting for data that was never queried.
+
+    The HTTP status decides first, because wording cannot be trusted to:
+    a 503 reading "Service not available" is not a miss, however much it
+    resembles one. Only when no status is available — a connection
+    failure, or a domain layer that built the dict itself — is the
+    wording consulted, and then only for phrases that cannot describe
+    anything else.
+
+    Parameters
+    ----------
+    result : Any
+        What the pre-fetch returned — normally ``{"error": ...}``, plus
+        ``status`` once the adapter has seen an HTTP response. Any other
+        value is handled without raising.
+    message : str
+        Friendly "not found" text to use when the record is genuinely
+        missing.
+
+    Returns
+    -------
+    Dict[str, Any]
+        ``{"error": message}`` for a real miss; `result` untouched when the
+        failure was something else; and ``{"error": "Unexpected pre-fetch
+        response."}`` when the shape proves nothing either way.
+    """
+    if not isinstance(result, dict) or "error" not in result:
+        # A null body, an array or any other stray shape says nothing about
+        # whether the record exists, so it must not be called "not found".
+        return {"error": "Unexpected pre-fetch response."}
+
+    status = result.get("status_code")
+    if isinstance(status, int) and not isinstance(status, bool):
+        if status == 404:
+            return {"error": message}
+        if status >= 500 or status in (401, 403, 408, 429):
+            return result
+        # Any other 4xx is ambiguous: Fineract reports some absent records
+        # as a 400, so fall through and let the wording make the call.
+
+    detail = str(result["error"]).lower()
+    if any(marker in detail for marker in _UNAVAILABLE_MARKERS):
+        return result
+    if any(marker in detail for marker in _MISSING_MARKERS):
+        return {"error": message}
+    return result
+
 def _fmt_date(d) -> str:
     """Format Fineract dates to '2 March 2026'. Handles list [YYYY,M,D] and string 'YYYY-M-D'."""
     months = ["","January","February","March","April","May","June",
@@ -169,7 +250,7 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
 
     result = get_client_accounts.func(int(actual_id))
     if not isinstance(result, dict) or "error" in result:
-        return {"error": f"Client ID {actual_id} not found. Call search_clients(name) first."}
+        return _prefetch_failure(result, f"Client ID {actual_id} not found. Call search_clients(name) first.")
 
     loans = result.get("loanAccounts", [])
     savings = result.get("savingsAccounts", [])
@@ -227,7 +308,7 @@ def update_existing_client(clientId: int, firstname: Optional[str] = None, lastn
     Validates clientId exists before executing."""
     check = get_client_details.func(clientId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Client ID {clientId} not found."}
+        return _prefetch_failure(check, f"Client ID {clientId} not found.")
 
     return update_client.func(clientId, firstname, lastname, mobileNo, externalId)
 
@@ -237,7 +318,7 @@ def delete_client_profile(clientId: int) -> dict:
     Validates clientId exists before executing."""
     check = get_client_details.func(clientId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Client ID {clientId} not found."}
+        return _prefetch_failure(check, f"Client ID {clientId} not found.")
     return delete_client.func(clientId)
 
 @mcp.tool()
@@ -410,7 +491,7 @@ def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
     """Approve and disburse a pending loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     status = check.get("status", {}).get("value", "")
     if "pending" not in status.lower() and "submitted" not in status.lower():
         return {
@@ -424,7 +505,7 @@ def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk prof
     """Reject a pending loan application. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     status = check.get("status", {}).get("value", "")
     if "pending" not in status.lower() and "submitted" not in status.lower():
         return {"error": f"Loan {loanId} is in status '{status}' and cannot be rejected. Only pending loans can be rejected."}
@@ -435,7 +516,7 @@ def make_repayment(loanId: int, amount: float) -> dict:
     """Make a repayment on an active loan. Validates loanId and status before executing."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Loan {loanId} is in status '{status}'. Only Active loans can receive repayments."}
@@ -446,7 +527,7 @@ def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
     """Apply a fee/charge to a loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     return apply_late_fee.func(loanId, feeAmount, 2)
 
 @mcp.tool()
@@ -454,7 +535,7 @@ def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized W
     """Waive interest on a loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     return waive_interest.func(loanId, amount, note)
 
 @mcp.tool()
@@ -528,7 +609,7 @@ def undo_approval(loanId: int) -> dict:
     """Undo a loan approval so terms can be modified. Only works on approved (not yet disbursed) loans."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found.")
     status = check.get("status", {}).get("value", "")
     if "approved" not in status.lower():
         return {"error": f"Loan {loanId} is in status '{status}'. Only approved loans can have their approval undone."}
@@ -539,7 +620,7 @@ def undo_disbursal(loanId: int) -> dict:
     """Undo a loan disbursal to reverse funds and return the loan to approved status."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Loan {loanId} is in status '{status}'. Only active (disbursed) loans can have their disbursal undone."}
@@ -560,7 +641,7 @@ def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: s
     At least one modification (adjustedDueDate, newInterestRate, graceOnPrincipal, or extraTerms) is required."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Loan {loanId} is in status '{status}'. Only active loans can be rescheduled."}
@@ -579,7 +660,7 @@ def update_existing_loan(
     Only principal, term (months), and productId can be updated."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found.")
 
     status = check.get("status", {}).get("value", "").lower()
     if "pending" not in status and "submitted" not in status:
@@ -594,7 +675,7 @@ def delete_loan_app(loanId: int) -> dict:
     Only pending/submitted loans can be deleted."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds."}
+        return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
 
     status = check.get("status", {}).get("value", "").lower()
     if "pending" not in status and "submitted" not in status:
@@ -665,7 +746,7 @@ def deposit(accountId: int, amount: float) -> dict:
     """Deposit money into a savings account. Validates accountId exists before executing."""
     check = get_savings_account.func(accountId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds."}
+        return _prefetch_failure(check, f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can accept deposits."}
@@ -676,7 +757,7 @@ def withdraw(accountId: int, amount: float) -> dict:
     """Withdraw money from a savings account. Validates accountId and balance before executing."""
     check = get_savings_account.func(accountId)
     if not isinstance(check, dict) or "error" in check:
-        return {"error": f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds."}
+        return _prefetch_failure(check, f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can be withdrawn from."}
