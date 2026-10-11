@@ -142,7 +142,7 @@ services:
   # Hands the shared bootstrap-state volume to uid 1000 (the Lightning and
   # bootstrap images), so neither needs to run as root.
   state-init:
-    image: busybox:1.37
+    image: busybox:1.38
     command: ["sh", "-c", "chown 1000:1000 /state && chmod 700 /state"]
     volumes:
       - bootstrap-state:/state
