@@ -17,7 +17,9 @@ def search_clients_by_name(name_query: str):
     """Answers: 'Find the client ID for John Doe' or 'Search for clients named Maria'"""
     print(f"[Tool] Searching for clients matching: '{name_query}'...")
     # Fineract's global search endpoint, filtered strictly to clients
-    return fineract_client.execute_get(f"search?query={name_query}&resource=clients&exactMatch=false")
+    return fineract_client.execute_get(
+        "search", params={"query": name_query, "resource": "clients", "exactMatch": "false"}
+    )
 
 @tool
 def get_client_details(client_id: int):
