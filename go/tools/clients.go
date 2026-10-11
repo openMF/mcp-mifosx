@@ -4,6 +4,45 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 package tools
 
+import (
+	"context"
+	"fmt"
+	"strconv"
+
+	"github.com/mark3labs/mcp-go/mcp"
+)
+
+// RegisterCallerScopedHTTPTools exposes only the audited read-only pilot.
+// It does not register any configured-credential handlers.
+func (r *Registry) RegisterCallerScopedHTTPTools() {
+	for _, def := range GetClientToolDefs() {
+		if def.Name != "get_client" {
+			continue
+		}
+		def.Handler = func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			args, ok := req.Params.Arguments.(map[string]interface{})
+			if !ok {
+				return mcp.NewToolResultError("clientId must be a positive integer"), nil
+			}
+			idText := fmt.Sprint(args["clientId"])
+			if number, ok := args["clientId"].(float64); ok {
+				idText = strconv.FormatFloat(number, 'f', -1, 64)
+			}
+			id, err := strconv.ParseInt(idText, 10, 64)
+			if err != nil || id <= 0 {
+				return mcp.NewToolResultError("clientId must be a positive integer"), nil
+			}
+			data, err := r.Fineract.DoCallerRequest(ctx, "clients/"+strconv.FormatInt(id, 10))
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(string(data)), nil
+		}
+		r.registerTools([]BaseToolDef{def})
+		return
+	}
+}
+
 func GetClientToolDefs() []BaseToolDef {
 	return []BaseToolDef{
 		{

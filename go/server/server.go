@@ -34,3 +34,12 @@ func NewMifosMcpServer(fineractClient *adapter.FineractClient) *MifosMcpServer {
 func (s *MifosMcpServer) Serve() error {
 	return mcpserver.ServeStdio(s.MCPServer)
 }
+
+// newCallerScopedHTTPServer uses a separate catalog so HTTP cannot reach
+// configured-credential tools, including handlers registered outside ToolDefs.
+func newCallerScopedHTTPServer(client *adapter.FineractClient) *MifosMcpServer {
+	appServer := mcpserver.NewMCPServer("Mifos-Banking-Agent-Go", "1.0.0")
+	registry := &tools.Registry{Server: appServer, Fineract: client}
+	registry.RegisterCallerScopedHTTPTools()
+	return &MifosMcpServer{MCPServer: appServer, Registry: registry}
+}
