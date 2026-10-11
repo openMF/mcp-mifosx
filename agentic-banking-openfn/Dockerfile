@@ -11,7 +11,7 @@ RUN mvn -q -B dependency:go-offline
 COPY src ./src
 RUN mvn -q -B package -DskipTests
 
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 LABEL org.opencontainers.image.title="Agentic Banking OpenFn Gateway" \
       org.opencontainers.image.description="Agentic loan origination gateway: REST API, case state and human review; OpenFn Lightning runs the underwriting jobs" \
       org.opencontainers.image.licenses="MPL-2.0" \
