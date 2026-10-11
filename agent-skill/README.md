@@ -8,6 +8,20 @@ Agent Skills for Pi Agent, Hermes Agent, Prime-Agent and any other harness that 
 | `mifos-agent/` | Fineract tool library | Python tools for the Apache Fineract REST API (AI-259) |
 | `mifos-x-ai-agent-customer-service-advisor/` | `mifos-x-ai-agent-customer-service-advisor` | First point of contact: greets, profiles and routes customers to Investment, Credit or Operations (AI-261) |
 
+## Install as a Pi package
+
+The repository is a [Pi package](https://pi.dev/docs/latest/packages): the root `package.json` lists the
+skills under `pi.skills`, so one command installs all of them from Git:
+
+```bash
+pi install git:github.com/openMF/mcp-mifosx          # latest main
+pi install git:github.com/openMF/mcp-mifosx@<tag>    # pinned to a tag or commit
+pi list                                              # shows the package and its skills
+```
+
+Use `pi install -l …` to install for the current project only. To uninstall, run
+`pi remove git:github.com/openMF/mcp-mifosx` (add `-l` for a project-only install). Other harnesses (Claude Code, Codex CLI, …) can link the individual skill folders instead.
+
 ## Customer Service Advisor skill
 
 The advisor receives individual or legal-entity customers, identifies their need, asks at most two

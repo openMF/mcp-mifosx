@@ -1,0 +1,25 @@
+{
+  "name": "mifos-x-agent-skills",
+  "version": "0.1.0",
+  "description": "Agent Skills for Mifos X / Apache Fineract (Pi package): Fineract tools and the specialized banking agents.",
+  "private": true,
+  "license": "MPL-2.0",
+  "keywords": [
+    "pi-package",
+    "agent-skills",
+    "mifos",
+    "fineract",
+    "banking"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/openMF/mcp-mifosx.git"
+  },
+  "homepage": "https://github.com/openMF/mcp-mifosx/tree/main/agent-skill",
+  "pi": {
+    "skills": [
+      "./agent-skill/mifos-agent",
+      "./agent-skill/mifos-x-ai-agent-customer-service-advisor"
+    ]
+  }
+}
