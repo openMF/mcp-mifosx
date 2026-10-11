@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+import math
 import os
 
 import requests
@@ -22,6 +23,10 @@ class FineractAdapter:
         self.tenant_id = os.getenv("MIFOSX_TENANT_ID", "default")
         self.username = os.getenv("MIFOSX_USERNAME")
         self.password = os.getenv("MIFOSX_PASSWORD")
+        self.timeout = (
+            self._timeout_seconds("MIFOSX_CONNECT_TIMEOUT_SECONDS", 10),
+            self._timeout_seconds("MIFOSX_READ_TIMEOUT_SECONDS", 60),
+        )
 
         # Default to False (secure) - SSL verification enabled by default
         # Set MIFOSX_SKIP_TLS_VERIFY=true only for local dev with self-signed certs
@@ -32,6 +37,13 @@ class FineractAdapter:
             requests.packages.urllib3.disable_warnings(
                 requests.packages.urllib3.exceptions.InsecureRequestWarning
             )
+
+    @staticmethod
+    def _timeout_seconds(name: str, default: float) -> float:
+        value = float(os.getenv(name, str(default)))
+        if not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be a finite positive number")
+        return value
 
     def _get_headers(self):
         """Builds the mandatory headers for Fineract."""
@@ -60,7 +72,7 @@ class FineractAdapter:
         try:
             response = requests.get(
                 url, headers=self._get_headers(), auth=(self.username, self.password),
-                params=params, verify=self.verify_ssl
+                params=params, verify=self.verify_ssl, timeout=self.timeout
             )
             response.raise_for_status()
             return response.json()
@@ -78,7 +90,7 @@ class FineractAdapter:
         try:
             response = requests.post(
                 url, headers=self._get_headers(), auth=(self.username, self.password),
-                json=payload, verify=self.verify_ssl
+                json=payload, verify=self.verify_ssl, timeout=self.timeout
             )
             response.raise_for_status()
             return response.json()
@@ -94,7 +106,7 @@ class FineractAdapter:
         try:
             response = requests.put(
                 url, headers=self._get_headers(), auth=(self.username, self.password),
-                json=payload, verify=self.verify_ssl
+                json=payload, verify=self.verify_ssl, timeout=self.timeout
             )
             response.raise_for_status()
             return response.json()
@@ -110,7 +122,7 @@ class FineractAdapter:
         try:
             response = requests.delete(
                 url, headers=self._get_headers(), auth=(self.username, self.password),
-                verify=self.verify_ssl
+                verify=self.verify_ssl, timeout=self.timeout
             )
             response.raise_for_status()
             return response.json()

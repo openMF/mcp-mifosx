@@ -405,3 +405,13 @@ Suggestion logic can be integrated into:
 - AI Assistants (LLM layer)
 - Chat-based banking copilots
 - Workflow automation systems
+
+### Fineract HTTP timeouts
+
+Every Fineract request has a 10-second connection timeout and a 60-second
+read timeout, preventing an unresponsive backend from blocking a tool indefinitely.
+Set `MIFOSX_CONNECT_TIMEOUT_SECONDS` and `MIFOSX_READ_TIMEOUT_SECONDS` to override
+these limits. Both values must be finite positive numbers; fractions are supported.
+The read timeout limits how long to wait between bytes, rather than the total
+request duration. Requests are not automatically retried, so a timeout during a
+write requires checking the operation's state before submitting it again.
