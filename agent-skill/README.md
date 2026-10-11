@@ -19,8 +19,8 @@ pi install git:github.com/openMF/mcp-mifosx@<tag>    # pinned to a tag or commit
 pi list                                              # shows the package and its skills
 ```
 
-Use `pi install -l …` to install for the current project only, and `pi remove git:github.com/openMF/mcp-mifosx`
-to uninstall. Other harnesses (Claude Code, Codex CLI, …) can link the individual skill folders instead.
+Use `pi install -l …` to install for the current project only. To uninstall, run
+`pi remove git:github.com/openMF/mcp-mifosx` (add `-l` for a project-only install). Other harnesses (Claude Code, Codex CLI, …) can link the individual skill folders instead.
 
 ## Customer Service Advisor skill
 
