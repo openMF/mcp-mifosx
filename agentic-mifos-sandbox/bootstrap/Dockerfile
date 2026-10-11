@@ -2,7 +2,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 #
 # One-shot sandbox bootstrap (see bootstrap.py).
-FROM python:3.13-alpine
+FROM python:3.14-alpine
 RUN pip install --no-cache-dir pyyaml==6.0.2
 WORKDIR /app
 COPY bootstrap.py .
