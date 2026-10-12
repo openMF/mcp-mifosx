@@ -13,16 +13,16 @@ nobody added a call site. These tests make it structural: a new HTTP
 method or a new environment variable cannot land without its timeout and
 its documentation.
 
-The scan works on tokens, not raw text: a ``timeout=`` written inside a
-string, a comment or a nested helper call is not a keyword argument of
-the ``requests`` call and must not be counted as one.
+The scan parses the source instead of matching text: only a call's own
+keyword arguments count, so a ``timeout=`` written inside a string, a
+comment, a nested helper, a dict, a list or a lambda default can never
+be mistaken for the request's timeout.
 
 No test here touches the network.
 """
 
-import io
+import ast
 import re
-import tokenize
 from pathlib import Path
 
 from tools.mcp_adapter import DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT, FineractAdapter
@@ -35,94 +35,47 @@ _ENV_EXAMPLE = _ROOT / ".env.example"
 _HTTP_METHODS = ("get", "post", "put", "delete")
 
 
-def _request_calls(source: str, method: str) -> list[list[tokenize.TokenInfo]]:
-    """Return the argument tokens of each ``requests.<method>(...)`` call.
+def _request_calls(source: str) -> list[tuple[str, ast.Call]]:
+    """Return every ``requests.<method>(...)`` call in the source.
 
-    The source is tokenized rather than scanned as text, so a ``)`` or a
-    ``timeout=`` occurring inside a string or a comment is a STRING or
-    COMMENT token: it cannot truncate the call, and it cannot masquerade
-    as a keyword argument. Calls are found the same way, which also makes
-    the scan independent of line wrapping and spacing.
+    The source is parsed instead of scanned as text. By construction a
+    ``timeout=`` inside a string, a comment, a nested call, a dict, a
+    list or a lambda default is not one of the call's own keyword
+    arguments, a ``)`` in a string cannot truncate the call, and line
+    wrapping or spacing cannot hide one.
 
     Parameters
     ----------
     source : str
         Full text of the adapter module, or a snippet of it.
-    method : str
-        HTTP method name, e.g. ``"get"``.
 
     Returns
     -------
-    list[list[tokenize.TokenInfo]]
-        One list per call, holding the tokens between the call's own
-        parentheses with nested parentheses excluded. Empty when the
-        method is not used.
+    list[tuple[str, ast.Call]]
+        ``(method, call)`` pairs in source order.
     """
-    if not source.endswith("\n"):
-        source += "\n"
-    tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    tree = ast.parse(source)
     calls = []
-    for index, token in enumerate(tokens):
-        if token.type != tokenize.NAME or token.string != "requests":
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
             continue
-        head = tokens[index + 1 : index + 4]
-        if len(head) < 3:
+        func = node.func
+        if not isinstance(func, ast.Attribute) or not isinstance(func.value, ast.Name):
             continue
-        if not (
-            head[0].type == tokenize.OP
-            and head[0].string == "."
-            and head[1].type == tokenize.NAME
-            and head[1].string == method
-            and head[2].type == tokenize.OP
-            and head[2].string == "("
-        ):
-            continue
-
-        depth = 0
-        arguments = []
-        for call_token in tokens[index + 3 :]:
-            if call_token.type == tokenize.OP and call_token.string == "(":
-                depth += 1
-                if depth > 1:
-                    continue
-            elif call_token.type == tokenize.OP and call_token.string == ")":
-                depth -= 1
-                if depth == 0:
-                    break
-                continue
-            if depth == 1:
-                arguments.append(call_token)
-        calls.append(arguments)
+        if func.value.id == "requests" and func.attr in _HTTP_METHODS:
+            calls.append((func.attr, node))
+    calls.sort(key=lambda item: item[1].lineno)
     return calls
-
-
-def _has_direct_timeout(arguments: list[tokenize.TokenInfo]) -> bool:
-    """Whether a call's own arguments contain a ``timeout=`` keyword.
-
-    Parameters
-    ----------
-    arguments : list[tokenize.TokenInfo]
-        Tokens returned by ``_request_calls`` for one call.
-
-    Returns
-    -------
-    bool
-        True only for ``timeout=`` written at the call's top level, not
-        inside a nested call, a string or a comment.
-    """
-    for index, token in enumerate(arguments[:-1]):
-        if (
-            token.type == tokenize.NAME
-            and token.string == "timeout"
-            and arguments[index + 1].type == tokenize.OP
-            and arguments[index + 1].string == "="
-        ):
-            return True
-    return False
 
 
 def _offenders(source: str) -> list[str]:
     """Names of ``requests`` calls that pass no timeout of their own.
+
+    Only the call's own keyword arguments are consulted
+    (``ast.Call.keywords``), so ``timeout=`` nested anywhere else never
+    satisfies the check. A ``**kwargs`` unpacking is deliberately not
+    counted either: the guard should fail loudly rather than assume what
+    was unpacked.
 
     Parameters
     ----------
@@ -136,9 +89,8 @@ def _offenders(source: str) -> list[str]:
     """
     return [
         f"requests.{method}"
-        for method in _HTTP_METHODS
-        for arguments in _request_calls(source, method)
-        if not _has_direct_timeout(arguments)
+        for method, call in _request_calls(source)
+        if not any(keyword.arg == "timeout" for keyword in call.keywords)
     ]
 
 
@@ -165,11 +117,9 @@ def test_a_timeout_on_a_nested_call_does_not_count() -> None:
 def test_a_timeout_in_a_string_or_comment_does_not_count() -> None:
     """``timeout=`` text inside a string or a comment is not a keyword.
 
-    Review flagged this after approval: raw text scanning let a string
-    literal such as ``"timeout=5"`` satisfy the check. A comment could do
-    the same, and an unbalanced parenthesis inside one could truncate the
-    scan entirely. Tokens keep strings and comments in their own
-    categories, so only a real keyword argument counts.
+    Review flagged this: raw text scanning let a string literal such as
+    ``"timeout=5"`` satisfy the check. A comment could do the same, and
+    an unbalanced parenthesis inside one could truncate the scan.
     """
     assert _offenders('requests.get(url, headers={"X": "timeout=5"})') == ["requests.get"]
     assert _offenders("requests.get(url, verify=v  # timeout= set on session\n)") == [
@@ -179,11 +129,25 @@ def test_a_timeout_in_a_string_or_comment_does_not_count() -> None:
     assert _offenders("requests.get(url, timeout=5)  # build(timeout=5") == []
 
 
+def test_a_timeout_inside_brackets_or_a_lambda_does_not_count() -> None:
+    """``timeout=`` in a dict, a list or a lambda default is not a keyword.
+
+    Review flagged this after the token scan: it tracked parentheses but
+    left ``{}`` and ``[]`` at call depth, so a lambda parameter default
+    inside a hook dict could pass a call that has no timeout at all.
+    """
+    assert _offenders('requests.get(url, hooks={"response": lambda r, timeout=5: r})') == [
+        "requests.get"
+    ]
+    assert _offenders("requests.get(url, params=[lambda timeout=5: 5])") == ["requests.get"]
+    assert _offenders("requests.get(url, timeout=5, hooks={})") == []
+
+
 def test_the_timeout_scan_finds_all_four_methods() -> None:
     """The scan sees every method it guards, so it cannot pass by finding nothing."""
     source = _ADAPTER.read_text(encoding="utf-8")
-    for method in _HTTP_METHODS:
-        assert _request_calls(source, method), f"requests.{method} not found"
+    found = {method for method, _ in _request_calls(source)}
+    assert found == set(_HTTP_METHODS), f"expected all of {_HTTP_METHODS}, found {sorted(found)}"
 
 
 def test_every_environment_variable_is_documented() -> None:
