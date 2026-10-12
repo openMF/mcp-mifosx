@@ -67,6 +67,132 @@ func callClient(c *client.Client, name string) (*mcp.CallToolResult, error) {
 	return c.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name, Arguments: map[string]interface{}{"clientId": 42}}})
 }
 
+func callSearch(c *client.Client, name string) (*mcp.CallToolResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "search_clients", Arguments: map[string]interface{}{"displayName": name}}})
+}
+
+func TestHTTPSearchClientsCallerIsolation(t *testing.T) {
+	var mu sync.Mutex
+	var seen []observedCall
+	h, configured := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, observedCall{r.Header.Get("Authorization"), r.Header.Get("fineract-platform-tenantid"), r.URL.RequestURI()})
+		mu.Unlock()
+		w.Write([]byte(`{"pageItems":[]}`))
+	})
+	a := connect(t, h.URL, "Bearer caller-A-secret", "tenant-A")
+	b := connect(t, h.URL, "Bearer caller-B-secret", "tenant-B")
+	var wg sync.WaitGroup
+	for _, tc := range []struct {
+		c    *client.Client
+		name string
+	}{{a, "Alice & Bob"}, {b, "Béatrice"}} {
+		for i := 0; i < 20; i++ {
+			wg.Add(1)
+			go func(c *client.Client, name string) {
+				defer wg.Done()
+				result, err := callSearch(c, name)
+				if err != nil || result.IsError {
+					t.Errorf("search failed: %v %v", result, err)
+				}
+			}(tc.c, tc.name)
+		}
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 40 {
+		t.Fatalf("got %d downstream calls", len(seen))
+	}
+	counts := map[string]int{}
+	for _, got := range seen {
+		want := map[string]struct{ tenant, path string }{
+			"Bearer caller-A-secret": {"tenant-A", "/clients?displayName=Alice+%26+Bob"},
+			"Bearer caller-B-secret": {"tenant-B", "/clients?displayName=B%C3%A9atrice"},
+		}[got.Authorization]
+		if want.tenant == "" || got.Tenant != want.tenant || got.Path != want.path {
+			t.Errorf("unexpected caller, tenant, or query: %+v", got)
+		}
+		counts[got.Authorization]++
+	}
+	if counts["Bearer caller-A-secret"] != 20 || counts["Bearer caller-B-secret"] != 20 {
+		t.Fatal(counts)
+	}
+	if configured.Registry.Fineract.Username != "configured-service" || configured.Registry.Fineract.TenantID != "configured-tenant" {
+		t.Fatal("shared client mutated")
+	}
+}
+
+func TestHTTPSearchClientsMissingIdentityAndPermissionFailure(t *testing.T) {
+	var calls atomic.Int32
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(old) })
+	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(r.Header.Get("Authorization") + " configured-password"))
+	})
+	for _, headers := range []map[string]string{
+		{"X-Mifos-Tenant-Id": "caller-tenant"},
+		{"Authorization": "Bearer caller-secret"},
+	} {
+		req, _ := http.NewRequest("POST", h.URL+"/api/search_clients", strings.NewReader(`{"displayName":"Alice"}`))
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || calls.Load() != 0 {
+			t.Fatalf("missing identity reached Fineract: status=%d calls=%d", resp.StatusCode, calls.Load())
+		}
+	}
+	c := connect(t, h.URL, "Bearer caller-secret", "caller-tenant")
+	result, err := callSearch(c, "Alice")
+	if err != nil || !result.IsError || calls.Load() != 1 {
+		t.Fatalf("403 became success or was retried: %v %v calls=%d", result, err, calls.Load())
+	}
+	encoded, _ := json.Marshal(result)
+	if !strings.Contains(string(encoded), "403") {
+		t.Fatal("permission status lost")
+	}
+	for _, secret := range []string{"caller-secret", "configured-password", "configured-service"} {
+		if strings.Contains(string(encoded)+logs.String(), secret) {
+			t.Fatal("credential disclosed")
+		}
+	}
+}
+
+func TestHTTPSearchClientsRESTUsesCaller(t *testing.T) {
+	var calls atomic.Int32
+	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get("Authorization") != "Bearer rest-secret" ||
+			r.Header.Get("fineract-platform-tenantid") != "rest-tenant" ||
+			r.URL.RequestURI() != "/clients?displayName=Alice+%26+Bob" {
+			t.Error("REST caller or search query changed")
+		}
+		w.Write([]byte(`{"pageItems":[]}`))
+	})
+	req, _ := http.NewRequest("POST", h.URL+"/api/search_clients", strings.NewReader(`{"displayName":"Alice & Bob"}`))
+	req.Header.Set("Authorization", "Bearer rest-secret")
+	req.Header.Set("X-Mifos-Tenant-Id", "rest-tenant")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || calls.Load() != 1 {
+		t.Fatalf("REST search failed: status=%d calls=%d", resp.StatusCode, calls.Load())
+	}
+}
+
 func TestHTTPCallerIsolation(t *testing.T) {
 	var mu sync.Mutex
 	var seen []observedCall
@@ -176,7 +302,7 @@ func TestHTTPPermissionFailureAndNoCredentialDisclosure(t *testing.T) {
 	}
 }
 
-func TestHTTPOnlyGetClientAndConfiguredModePreserved(t *testing.T) {
+func TestHTTPOnlyClientReadsAndConfiguredModePreserved(t *testing.T) {
 	var calls atomic.Int32
 	h, srv := pilot(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -188,8 +314,15 @@ func TestHTTPOnlyGetClientAndConfiguredModePreserved(t *testing.T) {
 	})
 	c := connect(t, h.URL, "Bearer caller", "caller-tenant")
 	list, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
-	if err != nil || len(list.Tools) != 1 || list.Tools[0].Name != "get_client" {
+	if err != nil || len(list.Tools) != 2 {
 		t.Fatalf("HTTP tools: %v %v", list, err)
+	}
+	names := map[string]bool{}
+	for _, tool := range list.Tools {
+		names[tool.Name] = true
+	}
+	if !names["get_client"] || !names["search_clients"] {
+		t.Fatalf("HTTP tools: %v", names)
 	}
 	result, err := callClient(c, "create_client")
 	if err == nil && !result.IsError {
@@ -226,6 +359,10 @@ func TestHTTPOnlyGetClientAndConfiguredModePreserved(t *testing.T) {
 	}
 	if calls.Load() != 1 {
 		t.Fatal("configured request not executed")
+	}
+	result, err = callSearch(local, "Alice")
+	if err != nil || result.IsError || calls.Load() != 2 {
+		t.Fatalf("configured search changed: %v %v calls=%d", result, err, calls.Load())
 	}
 }
 

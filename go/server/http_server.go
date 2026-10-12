@@ -65,7 +65,7 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 			return
 		}
 
-		if r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" {
+		if r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" || r.URL.Path == "/api/search_clients" {
 			// Exactly one value per identity header; no query/body/session defaults.
 			auth, tenant := r.Header.Values("Authorization"), r.Header.Values("X-Mifos-Tenant-Id")
 			if len(auth) != 1 || len(tenant) != 1 {
