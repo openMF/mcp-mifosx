@@ -1,38 +1,57 @@
-# This workflow will run tests using node and then publish a package to GitHub Packages when a release is created
-# For more information see: https://docs.github.com/en/actions/publishing-packages/publishing-nodejs-packages
+# Publish the Pi agent-skills package (mifos-x-agent-skills) to npm.
+# Skills are declared in package.json under "pi.skills".
+# See: https://pi.dev/docs/latest/packages and agent-skill/README.md
 
-name: Node.js Package
+name: Publish Pi Skills to npm
 
-on:  
-  # Triggers the workflow on push or pull request events for specific branches
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+on:
   release:
-    types: [created]
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional override of package.json version (leave empty to use package.json)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  id-token: write   # required for npm trusted publishing / provenance
 
 jobs:
-  build:
+  publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm ci
-      - run: npm run build
+      - name: Checkout
+        uses: actions/checkout@v4
 
-  publish-npm:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          node-version: 22
-          registry-url: https://registry.npmjs.org/
-      - run: npm ci
-      - run: npm publish
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify package is a AI Agent skills package
+        run: |
+          node -e '
+            const pkg = require("./package.json");
+            if (pkg.private) {
+              console.error("package.json still has \"private\": true — remove it before publishing");
+              process.exit(1);
+            }
+            if (!pkg.pi || !Array.isArray(pkg.pi.skills) || pkg.pi.skills.length === 0) {
+              console.error("package.json must declare pi.skills");
+              process.exit(1);
+            }
+            console.log("Publishing", pkg.name, "@", pkg.version);
+            console.log("Skills:", pkg.pi.skills.join(", "));
+          '
+
+      - name: Optional version override
+        if: ${{ github.event.inputs.version != '' }}
+        run: npm version "${{ github.event.inputs.version }}" --no-git-tag-version
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
         env:
-          NODE_AUTH_TOKEN: ${{secrets.npm_token}}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
