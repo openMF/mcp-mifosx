@@ -16,6 +16,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,19 +34,26 @@ type FineractClient struct {
 	HTTP     *http.Client
 }
 
-// DoCallerRequest is the HTTP pilot operation. It is deliberately limited to
-// GET clients/{id}; DoRequest remains the separate configured-credential mode.
-func (c *FineractClient) DoCallerRequest(ctx context.Context, endpoint string) ([]byte, error) {
+// DoCallerRequest is limited to the caller-scoped HTTP client reads.
+// DoRequest remains the separate configured-credential mode.
+func (c *FineractClient) DoCallerRequest(ctx context.Context, endpoint string, queryParams ...url.Values) ([]byte, error) {
 	call, err := callerContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if !regexp.MustCompile(`^clients/[1-9][0-9]*$`).MatchString(endpoint) {
+	getClient := regexp.MustCompile(`^clients/[1-9][0-9]*$`).MatchString(endpoint)
+	searchClients := endpoint == "clients" && len(queryParams) == 1 &&
+		len(queryParams[0]) == 1 && len(queryParams[0]["displayName"]) == 1 &&
+		strings.TrimSpace(queryParams[0].Get("displayName")) != ""
+	if !getClient && !searchClients || getClient && len(queryParams) != 0 {
 		return nil, fmt.Errorf("operation is not supported in caller-scoped HTTP mode")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/"+endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not construct Fineract request")
+	}
+	if searchClients {
+		req.URL.RawQuery = queryParams[0].Encode()
 	}
 	req.Header.Set("Authorization", call.authorization)
 	req.Header.Set("fineract-platform-tenantid", call.tenant)

@@ -7,7 +7,9 @@ package tools
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"strconv"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -16,30 +18,47 @@ import (
 // It does not register any configured-credential handlers.
 func (r *Registry) RegisterCallerScopedHTTPTools() {
 	for _, def := range GetClientToolDefs() {
-		if def.Name != "get_client" {
+		switch def.Name {
+		case "get_client":
+			def.Handler = func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				args, ok := req.Params.Arguments.(map[string]interface{})
+				if !ok {
+					return mcp.NewToolResultError("clientId must be a positive integer"), nil
+				}
+				idText := fmt.Sprint(args["clientId"])
+				if number, ok := args["clientId"].(float64); ok {
+					idText = strconv.FormatFloat(number, 'f', -1, 64)
+				}
+				id, err := strconv.ParseInt(idText, 10, 64)
+				if err != nil || id <= 0 {
+					return mcp.NewToolResultError("clientId must be a positive integer"), nil
+				}
+				data, err := r.Fineract.DoCallerRequest(ctx, "clients/"+strconv.FormatInt(id, 10))
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				return mcp.NewToolResultText(string(data)), nil
+			}
+		case "search_clients":
+			def.Handler = func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				args, ok := req.Params.Arguments.(map[string]interface{})
+				if !ok {
+					return mcp.NewToolResultError("displayName is required"), nil
+				}
+				name, ok := args["displayName"].(string)
+				if !ok || strings.TrimSpace(name) == "" {
+					return mcp.NewToolResultError("displayName is required"), nil
+				}
+				data, err := r.Fineract.DoCallerRequest(ctx, "clients", url.Values{"displayName": {name}})
+				if err != nil {
+					return mcp.NewToolResultError(err.Error()), nil
+				}
+				return mcp.NewToolResultText(string(data)), nil
+			}
+		default:
 			continue
 		}
-		def.Handler = func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			args, ok := req.Params.Arguments.(map[string]interface{})
-			if !ok {
-				return mcp.NewToolResultError("clientId must be a positive integer"), nil
-			}
-			idText := fmt.Sprint(args["clientId"])
-			if number, ok := args["clientId"].(float64); ok {
-				idText = strconv.FormatFloat(number, 'f', -1, 64)
-			}
-			id, err := strconv.ParseInt(idText, 10, 64)
-			if err != nil || id <= 0 {
-				return mcp.NewToolResultError("clientId must be a positive integer"), nil
-			}
-			data, err := r.Fineract.DoCallerRequest(ctx, "clients/"+strconv.FormatInt(id, 10))
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			return mcp.NewToolResultText(string(data)), nil
-		}
 		r.registerTools([]BaseToolDef{def})
-		return
 	}
 }
 
