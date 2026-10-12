@@ -17,6 +17,14 @@ logger = logging.getLogger(__name__)
 # Load variables from the .env file
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
+# Defaults for MIFOSX_CONNECT_TIMEOUT_SECONDS and MIFOSX_READ_TIMEOUT_SECONDS.
+# requests has no timeout of its own: without one it waits forever, so a
+# backend that accepts the connection and then goes quiet would block the
+# calling agent's tool call with nothing to interrupt it.
+DEFAULT_CONNECT_TIMEOUT = 10.0
+DEFAULT_READ_TIMEOUT = 60.0
+
+
 class FineractAdapter:
     def __init__(self):
         self.base_url = os.getenv("MIFOSX_BASE_URL")
@@ -24,8 +32,8 @@ class FineractAdapter:
         self.username = os.getenv("MIFOSX_USERNAME")
         self.password = os.getenv("MIFOSX_PASSWORD")
         self.timeout = (
-            self._timeout_seconds("MIFOSX_CONNECT_TIMEOUT_SECONDS", 10),
-            self._timeout_seconds("MIFOSX_READ_TIMEOUT_SECONDS", 60),
+            self._timeout_seconds("MIFOSX_CONNECT_TIMEOUT_SECONDS", DEFAULT_CONNECT_TIMEOUT),
+            self._timeout_seconds("MIFOSX_READ_TIMEOUT_SECONDS", DEFAULT_READ_TIMEOUT),
         )
 
         # Default to False (secure) - SSL verification enabled by default
