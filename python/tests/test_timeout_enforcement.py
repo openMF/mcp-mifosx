@@ -13,10 +13,16 @@ nobody added a call site. These tests make it structural: a new HTTP
 method or a new environment variable cannot land without its timeout and
 its documentation.
 
+The scan works on tokens, not raw text: a ``timeout=`` written inside a
+string, a comment or a nested helper call is not a keyword argument of
+the ``requests`` call and must not be counted as one.
+
 No test here touches the network.
 """
 
+import io
 import re
+import tokenize
 from pathlib import Path
 
 from tools.mcp_adapter import DEFAULT_CONNECT_TIMEOUT, DEFAULT_READ_TIMEOUT, FineractAdapter
@@ -29,66 +35,90 @@ _ENV_EXAMPLE = _ROOT / ".env.example"
 _HTTP_METHODS = ("get", "post", "put", "delete")
 
 
-def _call_sites(source: str, method: str) -> list[str]:
-    """Return the source of each ``requests.<method>(...)`` call.
+def _request_calls(source: str, method: str) -> list[list[tokenize.TokenInfo]]:
+    """Return the argument tokens of each ``requests.<method>(...)`` call.
 
-    Parentheses are matched by counting, so the result does not depend on
-    how a call is wrapped across lines.
+    The source is tokenized rather than scanned as text, so a ``)`` or a
+    ``timeout=`` occurring inside a string or a comment is a STRING or
+    COMMENT token: it cannot truncate the call, and it cannot masquerade
+    as a keyword argument. Calls are found the same way, which also makes
+    the scan independent of line wrapping and spacing.
 
     Parameters
     ----------
     source : str
-        Full text of the adapter module.
+        Full text of the adapter module, or a snippet of it.
     method : str
         HTTP method name, e.g. ``"get"``.
 
     Returns
     -------
-    list[str]
-        One entry per call, from ``requests.<method>(`` to its closing
-        parenthesis. Empty when the method is not used.
+    list[list[tokenize.TokenInfo]]
+        One list per call, holding the tokens between the call's own
+        parentheses with nested parentheses excluded. Empty when the
+        method is not used.
     """
-    sites = []
-    for match in re.finditer(rf"requests\.{method}\(", source):
+    if not source.endswith("\n"):
+        source += "\n"
+    tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    calls = []
+    for index, token in enumerate(tokens):
+        if token.type != tokenize.NAME or token.string != "requests":
+            continue
+        head = tokens[index + 1 : index + 4]
+        if len(head) < 3:
+            continue
+        if not (
+            head[0].type == tokenize.OP
+            and head[0].string == "."
+            and head[1].type == tokenize.NAME
+            and head[1].string == method
+            and head[2].type == tokenize.OP
+            and head[2].string == "("
+        ):
+            continue
+
         depth = 0
-        for index in range(match.end() - 1, len(source)):
-            if source[index] == "(":
+        arguments = []
+        for call_token in tokens[index + 3 :]:
+            if call_token.type == tokenize.OP and call_token.string == "(":
                 depth += 1
-            elif source[index] == ")":
+                if depth > 1:
+                    continue
+            elif call_token.type == tokenize.OP and call_token.string == ")":
                 depth -= 1
                 if depth == 0:
-                    sites.append(source[match.start() : index + 1])
                     break
-    return sites
+                continue
+            if depth == 1:
+                arguments.append(call_token)
+        calls.append(arguments)
+    return calls
 
 
-def _direct_arguments(call: str) -> str:
-    """Return only a call's own arguments, dropping nested calls.
-
-    ``requests.get(url, headers=build(timeout=5))`` has no request
-    timeout: the ``timeout=`` belongs to ``build``, not to the request.
-    Text inside any nested parenthesis is therefore skipped.
+def _has_direct_timeout(arguments: list[tokenize.TokenInfo]) -> bool:
+    """Whether a call's own arguments contain a ``timeout=`` keyword.
 
     Parameters
     ----------
-    call : str
-        A complete call from ``requests.<method>(`` to its closing paren.
+    arguments : list[tokenize.TokenInfo]
+        Tokens returned by ``_request_calls`` for one call.
 
     Returns
     -------
-    str
-        Argument text at the outermost level only.
+    bool
+        True only for ``timeout=`` written at the call's top level, not
+        inside a nested call, a string or a comment.
     """
-    depth = 0
-    direct = []
-    for char in call[call.index("(") + 1 : -1]:
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-        elif depth == 0:
-            direct.append(char)
-    return "".join(direct)
+    for index, token in enumerate(arguments[:-1]):
+        if (
+            token.type == tokenize.NAME
+            and token.string == "timeout"
+            and arguments[index + 1].type == tokenize.OP
+            and arguments[index + 1].string == "="
+        ):
+            return True
+    return False
 
 
 def _offenders(source: str) -> list[str]:
@@ -107,8 +137,8 @@ def _offenders(source: str) -> list[str]:
     return [
         f"requests.{method}"
         for method in _HTTP_METHODS
-        for site in _call_sites(source, method)
-        if "timeout=" not in _direct_arguments(site).replace(" ", "")
+        for arguments in _request_calls(source, method)
+        if not _has_direct_timeout(arguments)
     ]
 
 
@@ -129,14 +159,31 @@ def test_a_timeout_on_a_nested_call_does_not_count() -> None:
     ``requests`` call itself satisfies it.
     """
     assert _offenders("requests.get(url, headers=build(timeout=5))") == ["requests.get"]
-    assert _offenders('requests.get(url, verify=self.v, timeout=self.timeout)') == []
+    assert _offenders("requests.get(url, verify=self.v, timeout=self.timeout)") == []
+
+
+def test_a_timeout_in_a_string_or_comment_does_not_count() -> None:
+    """``timeout=`` text inside a string or a comment is not a keyword.
+
+    Review flagged this after approval: raw text scanning let a string
+    literal such as ``"timeout=5"`` satisfy the check. A comment could do
+    the same, and an unbalanced parenthesis inside one could truncate the
+    scan entirely. Tokens keep strings and comments in their own
+    categories, so only a real keyword argument counts.
+    """
+    assert _offenders('requests.get(url, headers={"X": "timeout=5"})') == ["requests.get"]
+    assert _offenders("requests.get(url, verify=v  # timeout= set on session\n)") == [
+        "requests.get"
+    ]
+    assert _offenders("requests.get(url, verify=v  # build(timeout\n)") == ["requests.get"]
+    assert _offenders("requests.get(url, timeout=5)  # build(timeout=5") == []
 
 
 def test_the_timeout_scan_finds_all_four_methods() -> None:
     """The scan sees every method it guards, so it cannot pass by finding nothing."""
     source = _ADAPTER.read_text(encoding="utf-8")
     for method in _HTTP_METHODS:
-        assert _call_sites(source, method), f"requests.{method} not found"
+        assert _request_calls(source, method), f"requests.{method} not found"
 
 
 def test_every_environment_variable_is_documented() -> None:
