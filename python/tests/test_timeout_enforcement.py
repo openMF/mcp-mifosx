@@ -62,6 +62,56 @@ def _call_sites(source: str, method: str) -> list[str]:
     return sites
 
 
+def _direct_arguments(call: str) -> str:
+    """Return only a call's own arguments, dropping nested calls.
+
+    ``requests.get(url, headers=build(timeout=5))`` has no request
+    timeout: the ``timeout=`` belongs to ``build``, not to the request.
+    Text inside any nested parenthesis is therefore skipped.
+
+    Parameters
+    ----------
+    call : str
+        A complete call from ``requests.<method>(`` to its closing paren.
+
+    Returns
+    -------
+    str
+        Argument text at the outermost level only.
+    """
+    depth = 0
+    direct = []
+    for char in call[call.index("(") + 1 : -1]:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+        elif depth == 0:
+            direct.append(char)
+    return "".join(direct)
+
+
+def _offenders(source: str) -> list[str]:
+    """Names of ``requests`` calls that pass no timeout of their own.
+
+    Parameters
+    ----------
+    source : str
+        Full text of the adapter module (or a snippet of it).
+
+    Returns
+    -------
+    list[str]
+        One entry per call missing a direct ``timeout=`` argument.
+    """
+    return [
+        f"requests.{method}"
+        for method in _HTTP_METHODS
+        for site in _call_sites(source, method)
+        if "timeout=" not in _direct_arguments(site).replace(" ", "")
+    ]
+
+
 def test_every_request_call_site_sets_a_timeout() -> None:
     """Each ``requests.<verb>`` call in the adapter passes ``timeout=``.
 
@@ -69,13 +119,17 @@ def test_every_request_call_site_sets_a_timeout() -> None:
     source so a regression is caught even if the linter is skipped again.
     """
     source = _ADAPTER.read_text(encoding="utf-8")
-    offenders = [
-        f"requests.{method}"
-        for method in _HTTP_METHODS
-        for site in _call_sites(source, method)
-        if "timeout=" not in site
-    ]
-    assert offenders == [], f"requests calls without timeout: {offenders}"
+    assert _offenders(source) == [], f"requests calls without timeout: {_offenders(source)}"
+
+
+def test_a_timeout_on_a_nested_call_does_not_count() -> None:
+    """``timeout=`` inside a helper's arguments is not a request timeout.
+
+    Pins the check against a false pass: only ``timeout=`` written on the
+    ``requests`` call itself satisfies it.
+    """
+    assert _offenders("requests.get(url, headers=build(timeout=5))") == ["requests.get"]
+    assert _offenders('requests.get(url, verify=self.v, timeout=self.timeout)') == []
 
 
 def test_the_timeout_scan_finds_all_four_methods() -> None:
