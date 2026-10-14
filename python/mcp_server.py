@@ -619,12 +619,37 @@ def make_repayment(loanId: int, amount: float) -> dict:
 
 @mcp.tool()
 @safe_tool("apply_loan_fee")
-def apply_loan_fee(loanId: int, feeAmount: float) -> dict:
-    """Apply a fee/charge to a loan. Validates loanId exists before executing."""
+def apply_loan_fee(loanId: int, feeAmount: float, chargeId: int = None) -> dict:
+    """Apply a fee/charge to a loan, due today. Validates loanId exists before executing.
+    chargeId is the charge to apply (a loan charge with a specified due date). If it is
+    missing, nothing is charged and the error lists the available charges
+    (id = name (default amount)) so you can ask the user which one applies."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
-    return apply_late_fee.func(loanId, feeAmount, 2)
+    if chargeId is None:
+        return _loan_charge_required()
+    return apply_late_fee.func(loanId, feeAmount, chargeId)
+
+
+def _loan_charge_required() -> dict:
+    """Error for a fee without a chargeId, listing the charges that can be applied this way."""
+    charges = list_charges_domain.func()
+    if not isinstance(charges, list):
+        reason = charges.get("error") if isinstance(charges, dict) else charges
+        return {"error": f"chargeId is required, and the available charges could not be loaded: {reason}"}
+    options = [
+        {"id": c.get("id"), "name": c.get("name"), "amount": c.get("amount")}
+        for c in charges
+        if c.get("active")
+        and (c.get("chargeAppliesTo") or {}).get("value") == "Loan"
+        and (c.get("chargeTimeType") or {}).get("value") == "Specified due date"
+    ]
+    if not options:
+        return {"error": "chargeId is required, but no active loan charge with a specified due date exists."}
+    # safe_tool passes on only the message, so the options have to be in it
+    listed = "; ".join(f"{o['id']} = {o['name']} ({o['amount']})" for o in options)
+    return {"error": f"chargeId is required. Ask the user which charge applies: {listed}.", "loan_charges": options}
 
 @mcp.tool()
 @safe_tool("waive_loan_interest")
