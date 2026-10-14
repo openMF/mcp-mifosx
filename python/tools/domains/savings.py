@@ -44,21 +44,53 @@ def create_savings_account(client_id: int, product_id: int = 1):
     }
     return fineract_client.execute_post("savingsaccounts", payload)
 
+def _savings_status(account_id: int):
+    """The account's status as Fineract reports it now, or None if it can't be read."""
+    account = fineract_client.execute_get(f"savingsaccounts/{account_id}")
+    if not isinstance(account, dict) or "error" in account:
+        return None
+    return account.get("status", {}).get("value")
+
 @tool
-def approve_and_activate_savings(account_id: int):
-    """Answers: 'Approve and activate this pending savings account'"""
+def approve_and_activate_savings(account_id: int, already_approved: bool = False):
+    """Answers: 'Approve and activate this pending savings account'
+    With already_approved=True only the activation is done (finishing an earlier
+    call whose approval succeeded but whose activation failed)."""
     print(f"[Tool] Approving & Activating Savings Account #{account_id}...")
     today = get_fineract_today()
     base_payload = {"dateFormat": "dd MMMM yyyy", "locale": "en"}
 
     # Step 1: Approve
-    approve_payload = {**base_payload, "approvedOnDate": today}
-    approval = fineract_client.execute_post(f"savingsaccounts/{account_id}?command=approve", approve_payload)
-    if "error" in approval: return approval
+    if not already_approved:
+        approve_payload = {**base_payload, "approvedOnDate": today}
+        approval = fineract_client.execute_post(f"savingsaccounts/{account_id}?command=approve", approve_payload)
+        if "error" in approval: return approval
 
     # Step 2: Activate
     activate_payload = {**base_payload, "activatedOnDate": today}
-    return fineract_client.execute_post(f"savingsaccounts/{account_id}?command=activate", activate_payload)
+    activation = fineract_client.execute_post(f"savingsaccounts/{account_id}?command=activate", activate_payload)
+    if "error" not in activation:
+        return activation
+    # A timeout or server error can follow an activation Fineract did make, so read
+    # the account's status instead of assuming it is still 'Approved'
+    status = _savings_status(account_id)
+    if status == "Active":
+        return {"savingsId": account_id, "status": status,
+                "note": f"The activation call returned an error ({activation['error']}), but savings account "
+                        f"{account_id} is now Active, so it was activated."}
+    if status is None:
+        return {
+            **activation,
+            "error": f"The activation of savings account {account_id} failed: {activation['error']} Its current "
+                     "status could not be read, so check it with get_savings_account before calling this tool again.",
+        }
+    if not already_approved and status == "Approved":
+        return {
+            **activation,
+            "error": f"Savings account {account_id} was approved, but the activation failed: {activation['error']} "
+                     "The account is now 'Approved'. Fix the cause and call this tool again to activate it.",
+        }
+    return activation
 
 @tool
 def close_savings_account(account_id: int):
