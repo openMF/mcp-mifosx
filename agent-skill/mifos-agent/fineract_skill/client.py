@@ -101,18 +101,37 @@ class FineractClient:
 
     @staticmethod
     def _parse_error(response: httpx.Response) -> str:
-        """Extract a human-readable error message from a Fineract error response."""
+        """Extract a human-readable error message from a Fineract error response.
+
+        Fineract puts a generic ``developerMessage`` at the top ("validation errors
+        which are provided", "The requested resource is not available.") and the
+        specific reason in ``errors[]`` ("The parameter `lastname` is mandatory.",
+        "Loan with identifier 7 does not exist"). The specific reasons are what a
+        caller can act on, so they are used first, all of them, in order.
+        """
         try:
             body = response.json()
-            if "developerMessage" in body:
-                return body["developerMessage"]
-            if "errors" in body and body["errors"]:
-                return body["errors"][0].get("defaultUserMessage", "Unknown validation error")
-            if "defaultUserMessage" in body:
-                return body["defaultUserMessage"]
-            return response.text[:500]
-        except Exception:
+        except ValueError:
             return f"HTTP {response.status_code}: {response.text[:300]}"
+        if not isinstance(body, dict):
+            return response.text[:500]
+
+        errors = body.get("errors")
+        details = [
+            detail
+            for detail in (
+                err.get("developerMessage") or err.get("defaultUserMessage")
+                for err in (errors if isinstance(errors, list) else [])
+                if isinstance(err, dict)
+            )
+            if detail
+        ]
+        if details:
+            return "; ".join(details)
+        for key in ("developerMessage", "defaultUserMessage"):
+            if body.get(key):
+                return body[key]
+        return response.text[:500]
 
     def _request(
         self,
