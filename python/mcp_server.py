@@ -574,7 +574,8 @@ def get_loan_hist(loanId: int) -> dict:
 @mcp.tool()
 @safe_tool("create_new_loan")
 def create_new_loan(clientId: int, principal: float, months: int, productId: int = 1) -> dict:
-    """Create a new loan application"""
+    """Create a new loan application, repaid monthly over the given number of months.
+    The interest rate and method come from the loan product (productId)."""
     return create_loan.func(clientId, principal, months, productId)
 
 @mcp.tool()
@@ -670,7 +671,8 @@ def get_overdue_loans_for_client(clientId: int) -> dict:
 @mcp.tool()
 @safe_tool("create_group_loan_app")
 def create_group_loan_app(groupId: int, principal: float, months: int, productId: int = 1) -> dict:
-    """Create a group loan application for an existing lending group"""
+    """Create a group loan application for an existing lending group, repaid monthly over the
+    given number of months. The interest rate and method come from the loan product (productId)."""
     return create_group_loan.func(groupId, principal, months, productId)
 
 @mcp.tool()

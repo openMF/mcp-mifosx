@@ -114,10 +114,42 @@ def get_overdue_loans(client_id: int):
 
 # --- LOAN LIFECYCLE OPERATIONS (WRITE) ---
 
+def _product_terms(template_query: str, product_id: int) -> dict:
+    """Interest and schedule terms of a loan product, read from the Fineract loan template.
+
+    A new loan must be priced by its product. Hardcoding a rate or interest method
+    (as these tools used to, with 5% declining balance) creates loans on terms the
+    product never offered, and Fineract accepts them when the product sets no limits.
+    """
+    template = fineract_client.execute_get(f"loans/template?{template_query}")
+    if not isinstance(template, dict) or "error" in template:
+        reason = template.get("error") if isinstance(template, dict) else template
+        return {"error": f"Could not load the terms of loan product {product_id}: {reason}"}
+
+    def option_id(name):
+        value = template.get(name)
+        return value.get("id") if isinstance(value, dict) else value
+
+    terms = {
+        "interestRatePerPeriod": template.get("interestRatePerPeriod"),
+        "interestType": option_id("interestType"),
+        "amortizationType": option_id("amortizationType"),
+        "interestCalculationPeriodType": option_id("interestCalculationPeriodType"),
+        "transactionProcessingStrategyCode": template.get("transactionProcessingStrategyCode"),
+    }
+    missing = [name for name, value in terms.items() if value is None]
+    if missing:
+        return {"error": f"Loan product {product_id} has no default for: {', '.join(missing)}."}
+    return terms
+
+
 @tool
 def create_loan(client_id: int, principal: float, months: int, product_id: int = 1):
     """Answers: 'Create a new loan for Client X for MXN 20,000 over 12 months'"""
     print(f"[Tool] Creating {principal} loan for Client #{client_id}...")
+    terms = _product_terms(f"templateType=individual&clientId={client_id}&productId={product_id}", product_id)
+    if "error" in terms:
+        return terms
     today = get_fineract_today()
 
     payload = {
@@ -129,11 +161,7 @@ def create_loan(client_id: int, principal: float, months: int, product_id: int =
         "numberOfRepayments": months,
         "repaymentEvery": 1,
         "repaymentFrequencyType": 2,
-        "interestRatePerPeriod": 5.0,
-        "amortizationType": 1,       # Equal installments
-        "interestType": 0,
-        "interestCalculationPeriodType": 1,
-        "transactionProcessingStrategyCode": "mifos-standard-strategy",
+        **terms,
         "expectedDisbursementDate": today,
         "submittedOnDate": today,
         "locale": "en",
@@ -146,6 +174,9 @@ def create_loan(client_id: int, principal: float, months: int, product_id: int =
 def create_group_loan(group_id: int, principal: float, months: int, product_id: int = 1):
     """Answers: 'Create a group loan for Group #5 for $10,000 over 6 months'"""
     print(f"[Tool] Creating {principal} group loan for Group #{group_id}...")
+    terms = _product_terms(f"templateType=group&groupId={group_id}&productId={product_id}", product_id)
+    if "error" in terms:
+        return terms
     today = get_fineract_today()
 
     payload = {
@@ -157,11 +188,7 @@ def create_group_loan(group_id: int, principal: float, months: int, product_id: 
         "numberOfRepayments": months,
         "repaymentEvery": 1,
         "repaymentFrequencyType": 2,
-        "interestRatePerPeriod": 5.0,
-        "amortizationType": 1,
-        "interestType": 0,
-        "interestCalculationPeriodType": 1,
-        "transactionProcessingStrategyCode": "mifos-standard-strategy",
+        **terms,
         "expectedDisbursementDate": today,
         "submittedOnDate": today,
         "locale": "en",
