@@ -1,6 +1,13 @@
 # Publish the Pi agent-skills package (mifos-x-agent-skills) to npm.
 # Skills are declared in package.json under "pi.skills".
 # See: https://pi.dev/docs/latest/packages and agent-skill/README.md
+#
+# Uses npm Trusted Publishing (OIDC) — no long-lived NPM_TOKEN required.
+# Configure the trusted publisher on npmjs.com for this workflow first:
+#   Organization/user: openMF
+#   Repository: mcp-mifosx
+#   Workflow filename: npm-publish.yml
+# Docs: https://docs.npmjs.com/trusted-publishers
 
 name: Publish Pi Skills to npm
 
@@ -16,11 +23,13 @@ on:
 
 permissions:
   contents: read
-  id-token: write   # required for npm trusted publishing / provenance
+  id-token: write   # required for OIDC trusted publishing
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Optional: pin to a GitHub Environment for protection rules / reviewers
+    # environment: npm-publish
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -28,10 +37,11 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v7
         with:
-          node-version: "24"
+          node-version: "24"   # ships npm ≥ 11.5.1 (required for trusted publishing)
           registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false  # never cache in release builds
 
-      - name: Verify package is a AI Agent skills package
+      - name: Verify package is an AI Agent skills package
         run: |
           node -e '
             const pkg = require("./package.json");
@@ -51,7 +61,7 @@ jobs:
         if: ${{ github.event.inputs.version != '' }}
         run: npm version "${{ github.event.inputs.version }}" --no-git-tag-version
 
-      - name: Publish to npm
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm (OIDC trusted publishing)
+        # No NODE_AUTH_TOKEN / secrets.NPM_TOKEN — npm uses the OIDC token.
+        # With trusted publishing, provenance is generated automatically.
+        run: npm publish --access public
