@@ -7,6 +7,7 @@ Agent Skills for Pi Agent, Hermes Agent, Prime-Agent and any other harness that 
 |---|---|---|
 | `mifos-agent/` | Fineract tool library | Python tools for the Apache Fineract REST API (AI-259) |
 | `mifos-x-ai-agent-customer-service-advisor/` | `mifos-x-ai-agent-customer-service-advisor` | First point of contact: greets, profiles and routes customers to Investment, Credit or Operations (AI-261) |
+| `mifos-x-ai-agent-investment-sales-advisor/` | `mifos-x-ai-agent-investment-sales-advisor` | Profiles investors, simulates the Promissory Note and CEDE +D60, hands the case to the Commercial Executive (AI-262) |
 
 ## Install as a Pi package
 
@@ -74,3 +75,54 @@ pytest agent-skill/tests/test_customer_service_advisor.py -v
 
 The tests check the skill format, that every referenced file exists, that the handoff examples match
 the schema, and that the schema rejects ID or account numbers in free-text fields.
+
+## Investment Sales Advisor skill
+
+The advisor receives investors (directly or from the Customer Service Advisor's handoff), profiles them,
+chooses between Total Investment (Promissory Note) and Total Investment +D60 (CEDE), and simulates gross
+rate, estimated ISR, net interest, net rate and total at maturity. Every figure comes from
+`scripts/simulate_investment.py`, which implements the Investment Simulator V12 formulas with the rate and
+tax tables in `assets/simulator-v12.json`; the model never calculates. It applies the eight AI-262 filters,
+explains the account-opening documents, and, after the customer agrees, outputs a handover JSON for the
+Commercial Executive (`assets/handover.schema.json`) inside a fenced block labelled `handover`, which the
+harness should intercept and not show in the customer chat. It never negotiates, formalizes or accepts funds.
+
+```
+mifos-x-ai-agent-investment-sales-advisor/
+├── SKILL.md        # rules, fixed phrases, filters, workflow, reply format, documents, handover template
+├── scripts/        # simulate_investment.py: Simulator V12 formulas, stdlib only, JSON output
+├── assets/         # rate and tax tables, handover JSON Schema and examples, institution profile template
+└── references/     # simulation rules and decisions, placeholders
+```
+
+### Install and use
+
+Same as the Customer Service Advisor (link the folder into `~/.pi/agent/skills/`, load it explicitly):
+
+```text
+/skill:mifos-x-ai-agent-investment-sales-advisor I want to invest 500,000 pesos for six months
+```
+
+The agent needs `python3` and a shell tool to run the simulator. In a customer-facing deployment, restrict
+the shell to this one command, or wrap `simulate()` from the script as a single tool (for example an MCP
+tool), since the model builds the command from the conversation. The script only accepts digits and ISO
+dates. Without the tool the advisor escalates instead of simulating.
+
+### Keeping the rates current
+
+Rates, tax years and the 14% campaign switch (`campaign.active`) live only in `assets/simulator-v12.json`.
+Update that file when the simulator changes and run the tests. The opening year must be present in
+`tax_years`, otherwise the simulator escalates. The $1,000 minimum is marked "see pending items" in the
+ticket; confirm it before production. Decisions on fiscal-year crossing, cumulative ISR, rounding and
+brackets are in `references/simulation-rules.md`.
+
+### Validate and test
+
+```bash
+python3 agent-skill/mifos-agent/scripts/validate-skill.py agent-skill/mifos-x-ai-agent-investment-sales-advisor
+pytest agent-skill/tests/test_investment_sales_advisor.py -v
+```
+
+The tests check the skill format and size, every rate and tax cell against the ticket, the ticket's worked
+examples to the cent, every filter and boundary, the command-line input validation, and the handover schema
+and privacy guard.

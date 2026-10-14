@@ -1,0 +1,73 @@
+{
+  "source": "Investment Simulator V12",
+  "table_date": "2026-04-28",
+  "currency": "MXN",
+  "day_count_basis": 360,
+  "minimum_amount": 1000,
+  "amount_brackets": [
+    {"label": "$1,000 to $99,999", "min": 1000},
+    {"label": "$100,000 to $249,999", "min": 100000},
+    {"label": "$250,000 to $499,999", "min": 250000},
+    {"label": "$500,000 to $999,999", "min": 500000},
+    {"label": "$1,000,000 and above", "min": 1000000}
+  ],
+  "products": {
+    "promissory": {
+      "name": "Total Investment (Promissory Note)",
+      "scheme": "Fixed term: principal and interest at maturity.",
+      "interest_periods_days": null,
+      "min_days": 7,
+      "term_ranges": [
+        {"label": "7 to 29 days", "min": 7, "max_reinvestments": 51},
+        {"label": "30 to 59 days", "min": 30, "max_reinvestments": 12},
+        {"label": "60 to 89 days", "min": 60, "max_reinvestments": 6},
+        {"label": "90 to 179 days", "min": 90, "max_reinvestments": 4},
+        {"label": "180 to 359 days", "min": 180, "max_reinvestments": 2},
+        {"label": "360 days or more", "min": 360, "max_reinvestments": 0}
+      ],
+      "rates_percent": [
+        ["8.00", "8.25", "8.75", "9.25", "10.00", "11.25"],
+        ["8.50", "8.75", "9.25", "10.00", "10.75", "11.75"],
+        ["9.00", "9.25", "10.25", "11.25", "12.00", "12.75"],
+        ["9.45", "9.70", "10.70", "11.70", "12.45", "13.20"],
+        ["10.00", "10.25", "11.25", "12.25", "13.25", "14.00"]
+      ]
+    },
+    "cede": {
+      "name": "Total Investment +D60 (CEDE)",
+      "scheme": "Principal at maturity. Interest is calculated for monthly (30-day) periods; the final period is proportional.",
+      "interest_periods_days": 30,
+      "min_days": 60,
+      "term_ranges": [
+        {"label": "60 to 89 days", "min": 60, "max_reinvestments": null},
+        {"label": "90 to 179 days", "min": 90, "max_reinvestments": null},
+        {"label": "180 to 359 days", "min": 180, "max_reinvestments": null},
+        {"label": "360 days or more", "min": 360, "max_reinvestments": null}
+      ],
+      "rates_percent": [
+        ["8.50", "9.00", "9.75", "11.00"],
+        ["9.00", "9.75", "10.50", "11.50"],
+        ["10.00", "11.00", "11.75", "12.50"],
+        ["10.45", "11.45", "12.20", "12.95"],
+        ["11.00", "12.00", "13.00", "13.75"]
+      ]
+    }
+  },
+  "campaign": {
+    "name": "Special campaign 360 days",
+    "active": true,
+    "min_days": 360,
+    "rate_percent": "14.00",
+    "products": ["promissory", "cede"],
+    "note": "Any investment of 360 days or more may receive 14% until General Management ends the campaign. Set active to false when it ends."
+  },
+  "tax_years": {
+    "2022": {"withholding_rate_percent": "0.08", "exempt_amount": "175505.40"},
+    "2023": {"withholding_rate_percent": "0.15", "exempt_amount": "189222.00"},
+    "2024": {"withholding_rate_percent": "0.50", "exempt_amount": "198031.80"},
+    "2025": {"withholding_rate_percent": "0.50", "exempt_amount": "206367.60"},
+    "2026": {"withholding_rate_percent": "0.90", "exempt_amount": "213973.20"}
+  },
+  "uma_2026": {"daily": "117.31", "monthly": "3566.22", "annual": "42794.64"},
+  "timezone": "America/Mexico_City"
+}

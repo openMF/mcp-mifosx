@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0",
+  "handover_id": "5f0c2a7e-3b1d-4c8e-9a52-1d7e6b4f9c01",
+  "created_at": "2026-10-12T11:42:00-06:00",
+  "source_agent": "mifos-x-ai-agent-investment-sales-advisor",
+  "destination": "COMMERCIAL_EXECUTIVE",
+  "reason": "READY_TO_FORMALIZE",
+  "customer": {
+    "entity_type": "INDIVIDUAL",
+    "existing_customer": "YES",
+    "fineract_client_id": null,
+    "preferred_channel": "WHATSAPP",
+    "liquidity_need": "No periodic income needed; funds not needed for six months",
+    "other_active_investments": "NO"
+  },
+  "simulations": [
+    {
+      "product": "PROMISSORY_NOTE",
+      "amount": 500000,
+      "currency": "MXN",
+      "days": 180,
+      "opening_date": "2026-10-12",
+      "maturity_date": "2027-04-10",
+      "simulation_date": "2026-10-12",
+      "rate_table": "Investment Simulator V12 (2026-04-28)",
+      "gross_rate_percent": 12.45,
+      "gross_interest": 31125.00,
+      "estimated_isr": 1287.12,
+      "net_interest": 29837.88,
+      "net_rate_percent": 11.94,
+      "total_at_maturity": 529837.88,
+      "campaign_rate_shown": false,
+      "fiscal_year_crossing": true,
+      "cumulative_isr_unverified": false,
+      "chosen": true
+    }
+  ],
+  "documents": [
+    {"type": "OFFICIAL_ID", "status": "CUSTOMER_HAS_IT"},
+    {"type": "CURP", "status": "CUSTOMER_HAS_IT"},
+    {"type": "TAX_STATUS_CERTIFICATE", "status": "PENDING"},
+    {"type": "PROOF_OF_ADDRESS", "status": "CUSTOMER_HAS_IT"},
+    {"type": "BENEFICIARY_AND_PAYOUT_ACCOUNT", "status": "UNKNOWN"}
+  ],
+  "filters_triggered": [],
+  "escalation_required": false,
+  "handoff_timing": "Today after 4 pm",
+  "customer_confirmed_transfer": true,
+  "conversation_summary": "Existing client wants to invest 500,000 pesos for 180 days with no periodic income. Chose the Promissory Note at the table rate; the term crosses into 2027, so ISR must be confirmed with the fiscal-year simulation.",
+  "next_step": "Confirm the fiscal-year ISR, collect the updated Tax Status Certificate and formalize the Promissory Note."
+}

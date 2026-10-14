@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "handover_id": "c2e8b5f1-7a3d-4e60-b914-3f5d9a2c7e48",
+  "created_at": "2026-10-12T09:15:00-06:00",
+  "source_agent": "mifos-x-ai-agent-investment-sales-advisor",
+  "destination": "COMMERCIAL_EXECUTIVE",
+  "reason": "ESCALATION",
+  "customer": {
+    "entity_type": "INDIVIDUAL",
+    "existing_customer": "YES",
+    "fineract_client_id": null,
+    "preferred_channel": "PHONE",
+    "liquidity_need": null,
+    "other_active_investments": "UNKNOWN"
+  },
+  "simulations": [],
+  "documents": [],
+  "filters_triggered": [{"id": 8, "name": "Minor or person with legal representation", "escalate": true}],
+  "escalation_required": true,
+  "handoff_timing": "As soon as possible",
+  "customer_confirmed_transfer": true,
+  "conversation_summary": "Parent wants to open a 90-day investment of about 50,000 pesos in the name of a minor child. Paused before simulating, as the holder would be a minor.",
+  "next_step": "Review the legal representation requirements for a minor account holder and contact the parent."
+}

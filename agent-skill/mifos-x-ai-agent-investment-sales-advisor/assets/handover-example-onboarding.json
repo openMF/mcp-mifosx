@@ -1,0 +1,71 @@
+{
+  "schema_version": "1.0",
+  "handover_id": "9a41d6c3-0e7f-4b25-8d19-6c2f0a8e5b72",
+  "created_at": "2026-10-12T16:05:00-06:00",
+  "source_agent": "mifos-x-ai-agent-investment-sales-advisor",
+  "destination": "COMMERCIAL_EXECUTIVE",
+  "reason": "ONBOARDING",
+  "customer": {
+    "entity_type": "LEGAL_ENTITY",
+    "existing_customer": "NO",
+    "fineract_client_id": null,
+    "preferred_channel": "EMAIL",
+    "liquidity_need": "Monthly interest to cover company expenses",
+    "other_active_investments": "UNKNOWN"
+  },
+  "simulations": [
+    {
+      "product": "CEDE",
+      "amount": 1000000,
+      "currency": "MXN",
+      "days": 360,
+      "opening_date": "2026-10-12",
+      "maturity_date": "2027-10-07",
+      "simulation_date": "2026-10-12",
+      "rate_table": "Investment Simulator V12 (2026-04-28)",
+      "gross_rate_percent": 13.75,
+      "gross_interest": 137500.00,
+      "estimated_isr": 7074.24,
+      "net_interest": 130425.76,
+      "net_rate_percent": 13.04,
+      "total_at_maturity": 1130425.76,
+      "campaign_rate_shown": false,
+      "fiscal_year_crossing": true,
+      "cumulative_isr_unverified": true,
+      "chosen": false
+    },
+    {
+      "product": "CEDE",
+      "amount": 1000000,
+      "currency": "MXN",
+      "days": 360,
+      "opening_date": "2026-10-12",
+      "maturity_date": "2027-10-07",
+      "simulation_date": "2026-10-12",
+      "rate_table": "Investment Simulator V12 (2026-04-28)",
+      "gross_rate_percent": 14.00,
+      "gross_interest": 140000.00,
+      "estimated_isr": 7074.24,
+      "net_interest": 132925.76,
+      "net_rate_percent": 13.29,
+      "total_at_maturity": 1132925.76,
+      "campaign_rate_shown": true,
+      "fiscal_year_crossing": true,
+      "cumulative_isr_unverified": true,
+      "chosen": true
+    }
+  ],
+  "documents": [
+    {"type": "ARTICLES_OF_INCORPORATION", "status": "CUSTOMER_HAS_IT"},
+    {"type": "POWER_OF_ATTORNEY", "status": "CUSTOMER_HAS_IT"},
+    {"type": "REPRESENTATIVE_AND_SHAREHOLDER_IDS", "status": "PENDING"},
+    {"type": "TAX_STATUS_CERTIFICATE", "status": "CUSTOMER_HAS_IT"},
+    {"type": "COMPANY_PROOF_OF_ADDRESS", "status": "PENDING"}
+  ],
+  "filters_triggered": [{"id": 6, "name": "Not an active client", "escalate": false}],
+  "escalation_required": false,
+  "handoff_timing": "Tomorrow morning by email",
+  "customer_confirmed_transfer": true,
+  "conversation_summary": "New corporate prospect, through its legal representative, wants 1,000,000 pesos with monthly interest for one year. Chose CEDE +D60 for 360 days at the 14% campaign rate; did not say whether it holds other investments with us.",
+  "next_step": "Register the company as a client, confirm the campaign is still active, rerun fiscal-year and cumulative ISR, and formalize."
+}
