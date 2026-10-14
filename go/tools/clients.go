@@ -19,7 +19,7 @@ import (
 func (r *Registry) RegisterCallerScopedHTTPTools() {
 	for _, def := range GetClientToolDefs() {
 		switch def.Name {
-		case "get_client":
+		case "get_client", "get_client_accounts":
 			def.Handler = func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 				args, ok := req.Params.Arguments.(map[string]interface{})
 				if !ok {
@@ -33,7 +33,11 @@ func (r *Registry) RegisterCallerScopedHTTPTools() {
 				if err != nil || id <= 0 {
 					return mcp.NewToolResultError("clientId must be a positive integer"), nil
 				}
-				data, err := r.Fineract.DoCallerRequest(ctx, "clients/"+strconv.FormatInt(id, 10))
+				endpoint := "clients/" + strconv.FormatInt(id, 10)
+				if def.Name == "get_client_accounts" {
+					endpoint += "/accounts"
+				}
+				data, err := r.Fineract.DoCallerRequest(ctx, endpoint)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}

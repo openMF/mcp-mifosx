@@ -67,10 +67,141 @@ func callClient(c *client.Client, name string) (*mcp.CallToolResult, error) {
 	return c.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name, Arguments: map[string]interface{}{"clientId": 42}}})
 }
 
+func callAccounts(c *client.Client, id int) (*mcp.CallToolResult, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	return c.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "get_client_accounts", Arguments: map[string]interface{}{"clientId": id}}})
+}
+
 func callSearch(c *client.Client, name string) (*mcp.CallToolResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return c.CallTool(ctx, mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "search_clients", Arguments: map[string]interface{}{"displayName": name}}})
+}
+
+func TestHTTPClientAccountsCallerIsolation(t *testing.T) {
+	var mu sync.Mutex
+	var seen []observedCall
+	h, configured := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		seen = append(seen, observedCall{r.Header.Get("Authorization"), r.Header.Get("fineract-platform-tenantid"), r.URL.Path})
+		mu.Unlock()
+		w.Write([]byte(`{"loanAccounts":[],"savingsAccounts":[]}`))
+	})
+	a := connect(t, h.URL, "Bearer accounts-A-secret", "accounts-tenant-A")
+	b := connect(t, h.URL, "Bearer accounts-B-secret", "accounts-tenant-B")
+	var wg sync.WaitGroup
+	for _, tc := range []struct {
+		c  *client.Client
+		id int
+	}{{a, 42}, {b, 73}} {
+		for i := 0; i < 20; i++ {
+			wg.Add(1)
+			go func(c *client.Client, id int) {
+				defer wg.Done()
+				result, err := callAccounts(c, id)
+				if err != nil || result.IsError {
+					t.Errorf("accounts call failed: %v %v", result, err)
+				}
+			}(tc.c, tc.id)
+		}
+	}
+	wg.Wait()
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 40 {
+		t.Fatalf("got %d downstream calls", len(seen))
+	}
+	counts := map[string]int{}
+	for _, got := range seen {
+		want := map[string]struct{ tenant, path string }{
+			"Bearer accounts-A-secret": {"accounts-tenant-A", "/clients/42/accounts"},
+			"Bearer accounts-B-secret": {"accounts-tenant-B", "/clients/73/accounts"},
+		}[got.Authorization]
+		if want.tenant == "" || got.Tenant != want.tenant || got.Path != want.path {
+			t.Errorf("unexpected caller, tenant, or path: %+v", got)
+		}
+		counts[got.Authorization]++
+	}
+	if counts["Bearer accounts-A-secret"] != 20 || counts["Bearer accounts-B-secret"] != 20 {
+		t.Fatal(counts)
+	}
+	if configured.Registry.Fineract.Username != "configured-service" || configured.Registry.Fineract.TenantID != "configured-tenant" {
+		t.Fatal("shared client mutated")
+	}
+}
+
+func TestHTTPClientAccountsMissingIdentityAndPermissionFailure(t *testing.T) {
+	var calls atomic.Int32
+	var logs bytes.Buffer
+	old := log.Writer()
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(old) })
+	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+		w.Write([]byte(r.Header.Get("Authorization") + " configured-password"))
+	})
+	for _, headers := range []map[string]string{
+		{"X-Mifos-Tenant-Id": "caller-tenant"},
+		{"Authorization": "Bearer accounts-secret"},
+	} {
+		req, _ := http.NewRequest("POST", h.URL+"/api/get_client_accounts", strings.NewReader(`{"clientId":42}`))
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusUnauthorized || calls.Load() != 0 {
+			t.Fatalf("missing identity reached Fineract: status=%d calls=%d", resp.StatusCode, calls.Load())
+		}
+	}
+	c := connect(t, h.URL, "Bearer accounts-secret", "caller-tenant")
+	result, err := callAccounts(c, 42)
+	if err != nil || !result.IsError || calls.Load() != 1 {
+		t.Fatalf("403 became success or was retried: %v %v calls=%d", result, err, calls.Load())
+	}
+	encoded, _ := json.Marshal(result)
+	if !strings.Contains(string(encoded), "403") {
+		t.Fatal("permission status lost")
+	}
+	for _, secret := range []string{"accounts-secret", "configured-password", "configured-service"} {
+		if strings.Contains(string(encoded)+logs.String(), secret) {
+			t.Fatal("credential disclosed")
+		}
+	}
+}
+
+func TestHTTPClientAccountsRESTUsesCaller(t *testing.T) {
+	var calls atomic.Int32
+	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		if r.Header.Get("Authorization") != "Bearer accounts-rest-secret" ||
+			r.Header.Get("fineract-platform-tenantid") != "accounts-rest-tenant" ||
+			r.URL.Path != "/clients/1000000/accounts" {
+			t.Error("REST caller or account path changed")
+		}
+		w.Write([]byte(`{"loanAccounts":[]}`))
+	})
+	for _, id := range []string{"1000000", "", "-1", "1.5", "../loans", "42?command=delete"} {
+		req, _ := http.NewRequest("POST", h.URL+"/api/get_client_accounts", strings.NewReader(`{"clientId":"`+id+`","Authorization":"forged","tenant":"forged"}`))
+		req.Header.Set("Authorization", "Bearer accounts-rest-secret")
+		req.Header.Set("X-Mifos-Tenant-Id", "accounts-rest-tenant")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if id == "1000000" && resp.StatusCode != http.StatusOK || id != "1000000" && resp.StatusCode == http.StatusOK {
+			t.Errorf("unexpected status %d for id %q", resp.StatusCode, id)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatal("invalid IDs reached Fineract")
+	}
 }
 
 func TestHTTPSearchClientsCallerIsolation(t *testing.T) {
@@ -305,23 +436,26 @@ func TestHTTPPermissionFailureAndNoCredentialDisclosure(t *testing.T) {
 func TestHTTPOnlyClientReadsAndConfiguredModePreserved(t *testing.T) {
 	var calls atomic.Int32
 	h, srv := pilot(t, func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		call := calls.Add(1)
 		u, p, ok := r.BasicAuth()
 		if !ok || u != "configured-service" || p != "configured-password" || r.Header.Get("fineract-platform-tenantid") != "configured-tenant" {
 			t.Error("configured mode changed")
+		}
+		if call == 3 && r.URL.Path != "/clients/42/accounts" {
+			t.Error("configured accounts path changed")
 		}
 		w.Write([]byte(`{"id":42}`))
 	})
 	c := connect(t, h.URL, "Bearer caller", "caller-tenant")
 	list, err := c.ListTools(context.Background(), mcp.ListToolsRequest{})
-	if err != nil || len(list.Tools) != 2 {
+	if err != nil || len(list.Tools) != 3 {
 		t.Fatalf("HTTP tools: %v %v", list, err)
 	}
 	names := map[string]bool{}
 	for _, tool := range list.Tools {
 		names[tool.Name] = true
 	}
-	if !names["get_client"] || !names["search_clients"] {
+	if !names["get_client"] || !names["search_clients"] || !names["get_client_accounts"] {
 		t.Fatalf("HTTP tools: %v", names)
 	}
 	result, err := callClient(c, "create_client")
@@ -363,6 +497,10 @@ func TestHTTPOnlyClientReadsAndConfiguredModePreserved(t *testing.T) {
 	result, err = callSearch(local, "Alice")
 	if err != nil || result.IsError || calls.Load() != 2 {
 		t.Fatalf("configured search changed: %v %v calls=%d", result, err, calls.Load())
+	}
+	result, err = callAccounts(local, 42)
+	if err != nil || result.IsError || calls.Load() != 3 {
+		t.Fatalf("configured accounts changed: %v %v calls=%d", result, err, calls.Load())
 	}
 }
 
