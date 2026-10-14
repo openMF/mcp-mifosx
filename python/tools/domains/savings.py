@@ -115,7 +115,6 @@ def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1):
     payload = {
         "chargeId": charge_id,
         "amount": amount,
-        "feeOnMonthDay": today[:5],  # Usually expects MM-DD or similar depending on charge setup
         "dueDate": today,
         "dateFormat": "dd MMMM yyyy",
         "locale": "en"
