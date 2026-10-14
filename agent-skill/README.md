@@ -12,16 +12,22 @@ Agent Skills for Pi Agent, Hermes Agent, Prime-Agent and any other harness that 
 ## Install as a Pi package
 
 The repository is a [Pi package](https://pi.dev/docs/latest/packages): the root `package.json` lists the
-skills under `pi.skills`, so one command installs all of them from Git:
+skills under `pi.skills`, so one command installs all of them from npm or from Git:
 
 ```bash
+pi install npm:mifos-x-agent-skills                  # from npm (published from GitHub Releases)
 pi install git:github.com/openMF/mcp-mifosx          # latest main
 pi install git:github.com/openMF/mcp-mifosx@<tag>    # pinned to a tag or commit
 pi list                                              # shows the package and its skills
 ```
 
+The npm package contains only the skill folders (see `files` in `package.json`; new `mifos-x-ai-agent-*`
+skills are included automatically). It is published by `.github/workflows/npm-publish.yml` when a GitHub
+Release is created.
+
 Use `pi install -l …` to install for the current project only. To uninstall, run
-`pi remove git:github.com/openMF/mcp-mifosx` (add `-l` for a project-only install). Other harnesses (Claude Code, Codex CLI, …) can link the individual skill folders instead.
+`pi remove git:github.com/openMF/mcp-mifosx` (add `-l` for a project-only install). Other harnesses that use the same
+SKILL.md format (Claude Code, Codex CLI, Hermes Agent, OpenClaw, …) can copy or link the individual skill folders instead.
 
 ## Customer Service Advisor skill
 
