@@ -708,10 +708,14 @@ def get_loan_app_template(clientId: int, productId: int = None) -> dict:
 @safe_tool("reschedule_loan_app")
 def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: str = None,
                          newInterestRate: float = None, graceOnPrincipal: int = None,
-                         extraTerms: int = None, reason: str = "Rescheduled via AI Agent") -> dict:
+                         extraTerms: int = None, reason: str = "Rescheduled via AI Agent",
+                         rescheduleReasonId: int = None) -> dict:
     """Submit a loan reschedule request. Use when a client needs modified repayment terms.
     Dates must be in 'dd MMMM yyyy' format (e.g. '15 March 2026').
-    At least one modification (adjustedDueDate, newInterestRate, graceOnPrincipal, or extraTerms) is required."""
+    At least one modification (adjustedDueDate, newInterestRate, graceOnPrincipal, or extraTerms) is required.
+    rescheduleReasonId is required by Fineract (a LoanRescheduleReason code value). If it is
+    missing, nothing is submitted and the error lists the configured reasons
+    (id = name) so you can ask the user which one applies."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Loan ID {loanId} not found.")
@@ -719,7 +723,8 @@ def reschedule_loan_app(loanId: int, rescheduleFromDate: str, adjustedDueDate: s
     if "active" not in status.lower():
         return {"error": f"Loan {loanId} is in status '{status}'. Only active loans can be rescheduled."}
     return reschedule_loan.func(loanId, rescheduleFromDate, adjustedDueDate,
-                            newInterestRate, graceOnPrincipal, extraTerms, reason)
+                            newInterestRate, graceOnPrincipal, extraTerms, reason,
+                            rescheduleReasonId)
 
 @mcp.tool()
 @safe_tool("update_existing_loan")
