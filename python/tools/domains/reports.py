@@ -3,6 +3,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+from urllib.parse import quote
+
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
@@ -31,12 +33,18 @@ def get_report(report_id: int):
 def run_report(report_name: str, params: dict = None):
     """Answers: 'Run the Active Loans Summary report' or 'Generate a client portfolio report'.
     Pass report_name exactly as it appears in Fineract (e.g. 'Active Loans - Summary').
-    Pass any required parameters as a dict, e.g. {'officeId': '1', 'currencyId': 'USD'}."""
+    Pass any required parameters as a dict, e.g. {'officeId': '1', 'currencyId': 'USD'};
+    the R_ prefix Fineract expects is added for you."""
     print(f"[Tool] Running report: '{report_name}'...")
-    query_params = params or {}
-    # Fineract requires R_ prefix for parameterized reports, handled server-side.
+    # Fineract only reads report parameters whose names start with R_ (for example
+    # R_officeId) and ignores the rest, so add the prefix where it is missing.
+    query_params = {
+        (key if key.startswith("R_") else f"R_{key}"): value
+        for key, value in (params or {}).items()
+    }
+    # Report names contain spaces and can contain '/', so encode the path segment.
     # exportCSV=true returns raw CSV; omit it to get JSON.
-    return fineract_client.execute_get(f"runreports/{report_name}", params=query_params)
+    return fineract_client.execute_get(f"runreports/{quote(report_name, safe='')}", params=query_params)
 
 
 # --- REPORT WRITE OPERATIONS ---
