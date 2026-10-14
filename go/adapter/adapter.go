@@ -41,7 +41,7 @@ func (c *FineractClient) DoCallerRequest(ctx context.Context, endpoint string, q
 	if err != nil {
 		return nil, err
 	}
-	getClient := regexp.MustCompile(`^clients/[1-9][0-9]*$`).MatchString(endpoint)
+	getClient := regexp.MustCompile(`^clients/[1-9][0-9]*(/accounts)?$`).MatchString(endpoint)
 	searchClients := endpoint == "clients" && len(queryParams) == 1 &&
 		len(queryParams[0]) == 1 && len(queryParams[0]["displayName"]) == 1 &&
 		strings.TrimSpace(queryParams[0].Get("displayName")) != ""
