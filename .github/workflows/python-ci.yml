@@ -84,6 +84,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pytest jsonschema ruff
+          pip install ./agent-skill/mifos-agent
 
       - name: Lint skill scripts and tests
         run: ruff check agent-skill/mifos-x-ai-agent-*/ agent-skill/tests/
