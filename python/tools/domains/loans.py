@@ -282,20 +282,47 @@ def get_loan_template(client_id: int, product_id: int = None):
         params += f"&productId={product_id}"
     return fineract_client.execute_get(f"loans/template?{params}")
 
+def _reschedule_reason_required() -> dict:
+    """Error for a reschedule request without a reason, listing the reasons Fineract offers."""
+    template = fineract_client.execute_get("rescheduleloans/template")
+    if not isinstance(template, dict) or "error" in template:
+        return {"error": "reschedule_reason_id is required, and the available reschedule reasons "
+                         f"could not be loaded: {template.get('error') if isinstance(template, dict) else template}"}
+    reasons = [
+        {"id": r.get("id"), "name": r.get("name")}
+        for r in template.get("rescheduleReasons") or []
+        if r.get("active", True)
+    ]
+    if not reasons:
+        return {"error": "reschedule_reason_id is required, but no reschedule reasons are configured. "
+                         "Add a value to the 'LoanRescheduleReason' code in Fineract first."}
+    # The MCP wrapper (safe_tool) passes on only the message, so the reasons have to be in it
+    listed = "; ".join(f"{r['id']} = {r['name']}" for r in reasons)
+    return {"error": f"reschedule_reason_id is required. Ask the user which reason applies: {listed}.",
+            "reschedule_reasons": reasons}
+
+
 @tool
 def reschedule_loan(loan_id: int, reschedule_from_date: str, adjusted_due_date: str = None,
                     new_interest_rate: float = None, grace_on_principal: int = None,
-                    extra_terms: int = None, reason: str = "Rescheduled via AI Agent"):
+                    extra_terms: int = None, reason: str = "Rescheduled via AI Agent",
+                    reschedule_reason_id: int = None):
     """Answers: 'Reschedule loan 123 starting from 15 March 2026' or 'Give client 2 extra months on their loan'
     Submits a loan reschedule request. Dates must be in 'dd MMMM yyyy' format (e.g. '15 March 2026').
-    At least one modification (adjusted_due_date, new_interest_rate, grace_on_principal, or extra_terms) is required."""
+    At least one modification (adjusted_due_date, new_interest_rate, grace_on_principal, or extra_terms) is required.
+    Fineract requires a reschedule reason (a LoanRescheduleReason code value). Without
+    reschedule_reason_id nothing is submitted; the reasons configured in Fineract are
+    returned so the user can pick one."""
     print(f"[Tool] Submitting reschedule request for Loan #{loan_id}...")
+    if reschedule_reason_id is None:
+        return _reschedule_reason_required()
     today = get_fineract_today()
 
     payload = {
         "loanId": loan_id,
         "rescheduleFromDate": reschedule_from_date,
         "submittedOnDate": today,
+        "rescheduleReasonId": reschedule_reason_id,
         "rescheduleReasonComment": reason,
         "dateFormat": "dd MMMM yyyy",
         "locale": "en"
