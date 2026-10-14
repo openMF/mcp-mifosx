@@ -1,0 +1,356 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/openMF/mcp-mifosx/agent-skill/mifos-x-ai-agent-investment-sales-advisor/assets/handover.schema.json",
+  "title": "Investment Sales Advisor handover",
+  "description": "Case handover from the Investment Sales Advisor to the Commercial Executive: what was simulated (parameters and date), which documents the customer has or still needs, and when to make contact. Never contains ID numbers, account numbers or document contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "handover_id",
+    "created_at",
+    "source_agent",
+    "destination",
+    "reason",
+    "customer",
+    "simulations",
+    "documents",
+    "filters_triggered",
+    "escalation_required",
+    "handoff_timing",
+    "customer_confirmed_transfer",
+    "conversation_summary",
+    "next_step"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "handover_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier, for example a UUID. One handover per case."
+    },
+    "created_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time",
+      "description": "Copied from the simulator's generated_at; null when no simulation was run (the gateway stamps it)."
+    },
+    "source_agent": {
+      "const": "mifos-x-ai-agent-investment-sales-advisor"
+    },
+    "destination": {
+      "const": "COMMERCIAL_EXECUTIVE"
+    },
+    "reason": {
+      "enum": [
+        "READY_TO_FORMALIZE",
+        "ESCALATION",
+        "ONBOARDING"
+      ]
+    },
+    "customer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entity_type",
+        "existing_customer",
+        "preferred_channel",
+        "liquidity_need",
+        "other_active_investments"
+      ],
+      "properties": {
+        "entity_type": {
+          "enum": [
+            "INDIVIDUAL",
+            "LEGAL_ENTITY",
+            "UNKNOWN"
+          ]
+        },
+        "existing_customer": {
+          "enum": [
+            "YES",
+            "NO",
+            "UNKNOWN"
+          ]
+        },
+        "fineract_client_id": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Copied from the Customer Service Advisor handoff when present."
+        },
+        "preferred_channel": {
+          "enum": [
+            "WHATSAPP",
+            "PHONE",
+            "EMAIL",
+            "CHAT",
+            "BRANCH",
+            "VOICE",
+            "UNKNOWN"
+          ]
+        },
+        "liquidity_need": {
+          "anyOf": [
+            {
+              "type": "null"
+            },
+            {
+              "allOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Need for liquidity or monthly income, as stated."
+                },
+                {
+                  "$ref": "#/$defs/safeText"
+                }
+              ]
+            }
+          ]
+        },
+        "other_active_investments": {
+          "enum": [
+            "YES",
+            "NO",
+            "UNKNOWN"
+          ]
+        }
+      }
+    },
+    "simulations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "product",
+          "amount",
+          "currency",
+          "days",
+          "opening_date",
+          "maturity_date",
+          "simulation_date",
+          "rate_table",
+          "gross_rate_percent",
+          "gross_interest",
+          "estimated_isr",
+          "net_interest",
+          "net_rate_percent",
+          "total_at_maturity",
+          "campaign_rate_shown",
+          "fiscal_year_crossing",
+          "cumulative_isr_unverified",
+          "chosen"
+        ],
+        "properties": {
+          "product": {
+            "enum": [
+              "PROMISSORY_NOTE",
+              "CEDE"
+            ]
+          },
+          "amount": {
+            "type": "number",
+            "minimum": 1000,
+            "description": "Investment amount, from the simulator output."
+          },
+          "currency": {
+            "const": "MXN"
+          },
+          "days": {
+            "type": "integer",
+            "minimum": 7
+          },
+          "opening_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "maturity_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "simulation_date": {
+            "type": "string",
+            "format": "date"
+          },
+          "rate_table": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Rate table version, for example 'Investment Simulator V12 (2026-04-28)'."
+          },
+          "gross_rate_percent": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Annual gross rate in percent."
+          },
+          "gross_interest": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Gross interest."
+          },
+          "estimated_isr": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Estimated ISR withholding."
+          },
+          "net_interest": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Net interest."
+          },
+          "net_rate_percent": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Annual net rate in percent."
+          },
+          "total_at_maturity": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Amount plus net interest."
+          },
+          "campaign_rate_shown": {
+            "type": "boolean",
+            "description": "True when this simulation uses the 14% campaign rate."
+          },
+          "fiscal_year_crossing": {
+            "type": "boolean",
+            "description": "Term crosses a fiscal year: the Commercial Executive must rerun the fiscal-year simulation."
+          },
+          "cumulative_isr_unverified": {
+            "type": "boolean",
+            "description": "Other active investments may exist: the Commercial Executive must rerun the cumulative ISR simulation."
+          },
+          "chosen": {
+            "type": "boolean",
+            "description": "The option the customer chose to formalize."
+          }
+        }
+      },
+      "description": "Every simulation shown to the customer, copied from the simulator output. Empty when none was possible."
+    },
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "status"
+        ],
+        "properties": {
+          "type": {
+            "enum": [
+              "OFFICIAL_ID",
+              "CURP",
+              "TAX_STATUS_CERTIFICATE",
+              "PROOF_OF_ADDRESS",
+              "BENEFICIARY_AND_PAYOUT_ACCOUNT",
+              "ARTICLES_OF_INCORPORATION",
+              "POWER_OF_ATTORNEY",
+              "REPRESENTATIVE_AND_SHAREHOLDER_IDS",
+              "COMPANY_PROOF_OF_ADDRESS"
+            ]
+          },
+          "status": {
+            "enum": [
+              "CUSTOMER_HAS_IT",
+              "PENDING",
+              "UNKNOWN"
+            ],
+            "description": "As declared by the customer; the advisor never collects documents in chat."
+          }
+        }
+      }
+    },
+    "filters_triggered": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "escalate"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 8
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "escalate": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "escalation_required": {
+      "type": "boolean"
+    },
+    "handoff_timing": {
+      "anyOf": [
+        {
+          "type": "null"
+        },
+        {
+          "allOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "description": "When the customer expects to be contacted, for example 'today after 4 pm' or 'as soon as possible'; null when the customer did not say."
+            },
+            {
+              "$ref": "#/$defs/safeText"
+            }
+          ]
+        }
+      ]
+    },
+    "customer_confirmed_transfer": {
+      "type": "boolean"
+    },
+    "conversation_summary": {
+      "allOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "Two or three sentences: need, options discussed, open points. No ID or account numbers."
+        },
+        {
+          "$ref": "#/$defs/safeText"
+        }
+      ]
+    },
+    "next_step": {
+      "allOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "description": "What the Commercial Executive should do next."
+        },
+        {
+          "$ref": "#/$defs/safeText"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "safeText": {
+      "type": "string",
+      "description": "Free text that must not contain sensitive identifiers: no sequences of 8+ digits, including digits separated by spaces or hyphens (ISO dates such as 2026-10-10 are allowed), and no RFC/CURP-style codes (3-4 letters followed by 6 digits).",
+      "not": {
+        "pattern": "(\\d{8,}|(?!\\d{4}-\\d{2}-\\d{2}(?!\\d))\\d(?:[\\s-]?\\d){7,}|[A-Za-z]{3,4}\\d{6})"
+      }
+    }
+  }
+}
