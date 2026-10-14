@@ -927,7 +927,9 @@ def get_report_definition(reportId: int) -> dict:
 @safe_tool("run_fineract_report")
 def run_fineract_report(reportName: str, params: dict = None) -> dict:
     """Run a Fineract report by its exact name and return the results.
-    Example: run_fineract_report('Active Loans - Summary', {'officeId': '1'})"""
+    Pass report parameters by name (the R_ prefix Fineract expects is added for you);
+    get_report_definition lists the parameters a report needs.
+    Example: run_fineract_report('Client Listing', {'officeId': '1'})"""
     return run_report.func(reportName, params)
 
 @mcp.tool()
