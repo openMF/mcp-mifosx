@@ -9,16 +9,29 @@
 #   open http://localhost:4000   OpenFn Lightning (LIGHTNING_ADMIN_* in .env)
 #   curl http://localhost:8080/actuator/health   Agentic gateway (loan API)
 #
+# Local models (optional, several GB to download on first start):
+#   docker compose --profile ollama up -d
+# Without the profile the OpenFn jobs fall back to rule-based decisions, or
+# set OLLAMA_URL in .env to an Ollama server you already run.
+#
 # Networks
 #   edge    - published ports (bound to 127.0.0.1) and outbound internet
 #   core    - internal: Fineract and its database, no route to the internet
 #   openfn  - internal: Lightning, its worker, the bootstrap and the gateway
+#   llm     - internal: the Ollama API, reachable only from the OpenFn worker
+#   llm-egress - Ollama alone, to download models
 
 # Webhook trigger ids of the OpenFn project. The bootstrap provisions the
 # triggers with exactly these ids, so the gateway's webhook URLs are fixed.
 x-openfn-triggers:
   loan-submit: &trigger-loan-submit 8c5f206e-6510-4bc1-87cd-cd71554e9335
   loan-review: &trigger-loan-review bde8f76a-5f61-4183-ac6f-0ec0ce8d9ff4
+
+# Models the OpenFn jobs ask for: the decision job (text) and the identity
+# document job (vision). ollama-pull downloads both.
+x-ollama:
+  model: &ollama-model ${OLLAMA_MODEL:-llama3.2:3b}
+  vision-model: &ollama-vision-model ${OLLAMA_VISION_MODEL:-qwen2.5vl:3b}
 
 services:
   fineract-db:
@@ -256,7 +269,12 @@ services:
       NODE_OPTIONS: --dns-result-order=ipv4first
     # edge: adaptors are installed from npm at run time.
     # core: the Fineract write-back job calls Fineract directly.
-    networks: [openfn, edge, core]
+    # llm: the decision and document jobs call Ollama.
+    networks: [openfn, edge, core, llm]
+    # Lets OLLAMA_URL point at an Ollama server on the Docker host (Linux;
+    # Docker Desktop provides this name already).
+    extra_hosts:
+      - host.docker.internal:host-gateway
     mem_limit: 1g
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
@@ -287,11 +305,57 @@ services:
     security_opt: [no-new-privileges:true]
     restart: "no"
 
+  # Local LLM server, started only with `--profile ollama`.
+  ollama:
+    image: &ollama-image ${OLLAMA_IMAGE:-ollama/ollama:0.35.0}
+    profiles: [ollama]
+    environment:
+      # The text and vision models take turns in memory instead of both
+      # staying loaded; one request at a time keeps CPU-only hosts usable.
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_NUM_PARALLEL: 1
+      OLLAMA_KEEP_ALIVE: 10m
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [llm, llm-egress]
+    mem_limit: ${OLLAMA_MEM_LIMIT:-6g}
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  # Downloads the models into the ollama-data volume. Models already there are
+  # only checked for updates, so it is safe to run on every `up`.
+  ollama-pull:
+    image: *ollama-image
+    profiles: [ollama]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: *ollama-model
+      OLLAMA_VISION_MODEL: *ollama-vision-model
+    entrypoint: ["/bin/sh", "-c"]
+    command: ['ollama pull "$$OLLAMA_MODEL" && ollama pull "$$OLLAMA_VISION_MODEL"']
+    networks: [llm]
+    mem_limit: 128m
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
   gateway:
     build: ../agentic-banking-openfn
     depends_on:
       bootstrap:
         condition: service_completed_successfully
+      # Only with `--profile ollama`: wait until the models are present.
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
     environment:
       # Spring resolves the ${...} placeholders below from these two variables.
       OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
@@ -302,9 +366,12 @@ services:
       # Where OpenFn jobs (run by the worker) call back into the gateway.
       OPENFN_GATEWAY_BASE_URL: http://gateway:8080
       OPENFN_CALLBACK_SECRET: ${OPENFN_CALLBACK_SECRET:?run scripts/gen-secrets.sh}
-      # No Ollama service yet: the decision job falls back to its rule-based
-      # decision when this host does not resolve.
-      OPENFN_OLLAMA_URL: http://ollama:11434
+      # Passed to the OpenFn jobs, which call Ollama from the worker. Without
+      # the ollama profile this host does not resolve and the decision job
+      # falls back to its rule-based decision.
+      OPENFN_OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      OLLAMA_MODEL: *ollama-model
+      OLLAMA_VISION_MODEL: *ollama-vision-model
       # Surface OpenFn failures instead of underwriting inside the gateway.
       LOAN_LOCAL_FALLBACK: "false"
     healthcheck:
@@ -326,8 +393,12 @@ networks:
     internal: true
   openfn:
     internal: true
+  llm:
+    internal: true
+  llm-egress: {}
 
 volumes:
   fineract-db-data: {}
   lightning-db-data: {}
   bootstrap-state: {}
+  ollama-data: {}
