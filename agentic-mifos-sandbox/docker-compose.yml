@@ -307,7 +307,7 @@ services:
 
   # Local LLM server, started only with `--profile ollama`.
   ollama:
-    image: &ollama-image ${OLLAMA_IMAGE:-ollama/ollama:0.35.0}
+    image: &ollama-image ${OLLAMA_IMAGE:-ollama/ollama:0.40.4}
     profiles: [ollama]
     environment:
       # The text and vision models take turns in memory instead of both
