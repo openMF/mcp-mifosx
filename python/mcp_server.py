@@ -581,15 +581,19 @@ def create_new_loan(clientId: int, principal: float, months: int, productId: int
 @mcp.tool()
 @safe_tool("approve_disburse_loan")
 def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
-    """Approve and disburse a pending loan. Validates loanId exists before executing."""
+    """Approve and disburse a pending loan. Validates loanId exists before executing.
+    If the loan is already approved (an earlier call's disbursement failed), only the
+    disbursement is done."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     status = check.get("status", {}).get("value", "")
+    if status.lower() == "approved":
+        return approve_and_disburse_loan.func(loanId, amount, already_approved=True)
     if "pending" not in status.lower() and "submitted" not in status.lower():
         return {
             "error": f"Loan {loanId} is in status '{status}' and cannot be approved. "
-            "Only 'Submitted and pending approval' loans can be approved."
+            "Only 'Submitted and pending approval' or 'Approved' loans can be disbursed with this tool."
         }
     return approve_and_disburse_loan.func(loanId, amount)
 
@@ -844,7 +848,19 @@ def create_savings(clientId: int, productId: int = 1) -> dict:
 @mcp.tool()
 @safe_tool("approve_activate_savings")
 def approve_activate_savings(accountId: int) -> dict:
-    """Approve and activate a savings account"""
+    """Approve and activate a savings account. If it is already approved (an earlier
+    call's activation failed), only the activation is done."""
+    check = get_savings_account.func(accountId)
+    if not isinstance(check, dict) or "error" in check:
+        return _prefetch_failure(check, f"Savings account {accountId} not found.")
+    status = check.get("status", {}).get("value", "")
+    if status.lower() == "approved":
+        return approve_and_activate_savings.func(accountId, already_approved=True)
+    if "pending" not in status.lower() and "submitted" not in status.lower():
+        return {
+            "error": f"Savings account {accountId} is in status '{status}'. Only 'Submitted and pending approval' "
+            "or 'Approved' accounts can be activated with this tool."
+        }
     return approve_and_activate_savings.func(accountId)
 
 @mcp.tool()

@@ -197,24 +197,57 @@ def create_group_loan(group_id: int, principal: float, months: int, product_id: 
     }
     return fineract_client.execute_post("loans", payload)
 
+def _loan_status(loan_id: int) -> Optional[str]:
+    """The loan's status as Fineract reports it now, or None if it can't be read."""
+    loan = fineract_client.execute_get(f"loans/{loan_id}")
+    if not isinstance(loan, dict) or "error" in loan:
+        return None
+    return loan.get("status", {}).get("value")
+
 @tool
-def approve_and_disburse_loan(loan_id: int, amount: float = None):
-    """Answers: 'Approve this loan and disburse today'"""
+def approve_and_disburse_loan(loan_id: int, amount: float = None, already_approved: bool = False):
+    """Answers: 'Approve this loan and disburse today'
+    With already_approved=True only the disbursement is done (finishing an earlier
+    call whose approval succeeded but whose disbursement failed)."""
     today = get_fineract_today()
     base_payload = {"dateFormat": "dd MMMM yyyy", "locale": "en"}
 
     # Step 1: Approve
-    print(f"[Tool] Approving Loan #{loan_id}...")
-    approve_payload = {**base_payload, "approvedOnDate": today, "note": "AI Approved"}
-    approval = fineract_client.execute_post(f"loans/{loan_id}?command=approve", approve_payload)
-    if "error" in approval: return approval
+    if not already_approved:
+        print(f"[Tool] Approving Loan #{loan_id}...")
+        approve_payload = {**base_payload, "approvedOnDate": today, "note": "AI Approved"}
+        approval = fineract_client.execute_post(f"loans/{loan_id}?command=approve", approve_payload)
+        if "error" in approval: return approval
 
     # Step 2: Disburse
     print(f"[Tool] Disbursing Loan #{loan_id}...")
     disburse_payload = {**base_payload, "actualDisbursementDate": today}
     if amount: disburse_payload["transactionAmount"] = amount
 
-    return fineract_client.execute_post(f"loans/{loan_id}?command=disburse", disburse_payload)
+    disbursal = fineract_client.execute_post(f"loans/{loan_id}?command=disburse", disburse_payload)
+    if "error" not in disbursal:
+        return disbursal
+    # A timeout or server error can follow a disbursement Fineract did make, so read
+    # the loan's status instead of assuming it is still 'Approved'
+    status = _loan_status(loan_id)
+    if status == "Active":
+        return {"loanId": loan_id, "status": status,
+                "note": f"The disbursement call returned an error ({disbursal['error']}), but loan {loan_id} "
+                        "is now Active, so it was disbursed."}
+    if status is None:
+        return {
+            **disbursal,
+            "error": f"The disbursement of loan {loan_id} failed: {disbursal['error']} Its current status could "
+                     "not be read, so check it with get_loan_details before calling this tool again.",
+        }
+    if not already_approved and status == "Approved":
+        # The approval stays: say so, or the agent reports a plain failure for a loan that changed state
+        return {
+            **disbursal,
+            "error": f"Loan {loan_id} was approved, but the disbursement failed: {disbursal['error']} "
+                     "The loan is now 'Approved'. Fix the cause and call this tool again to disburse it.",
+        }
+    return disbursal
 
 @tool
 def reject_loan_application(loan_id: int, note: str = "Rejected via AI Agent due to risk profile"):
