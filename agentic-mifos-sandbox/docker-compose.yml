@@ -197,6 +197,10 @@ services:
       - /app/bin/lightning
       - eval
       - |
+        # `eval` does not start Lightning's applications. Since v2.19.2 the
+        # setup also starts the adaptor scheduler, which needs the time zone
+        # database: without it every run after the first crashes.
+        {:ok, _} = Application.ensure_all_started(:tzdata)
         Lightning.Release.migrate()
         email = System.fetch_env!("LIGHTNING_ADMIN_EMAIL")
         {:ok, _, _} =
