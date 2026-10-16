@@ -19,6 +19,7 @@ from inspect import signature
 from typing import Any, Callable, Dict
 
 from core.suggestion_engine import generate_suggestions
+from core.tool_profiles import ALL_TOOLS, ProfileError, apply_tool_profile, profile_check_lifespan
 from core.validation_engine import ValidationError, validate_input
 from tools.domains.accounting import create_journal_entry, get_journal_entries, list_gl_accounts
 from tools.domains.charges import create_charge as create_charge_domain
@@ -86,8 +87,9 @@ from tools.domains.savings import (
 )
 from tools.domains.staff import get_office_details, get_staff_details, list_offices, list_staff
 
-# 3. Initialize the FastMCP Server
-mcp = FastMCP("Mifos-Banking-Agent")
+# 3. Initialize the FastMCP Server. The lifespan refuses to start it when a
+# tool profile names a tool that is not registered below.
+mcp = FastMCP("Mifos-Banking-Agent", lifespan=profile_check_lifespan())
 
 # --- Shared helpers ---
 
@@ -1079,7 +1081,28 @@ def list_all_datatables() -> dict:
     return list_datatables_domain.func()
 
 
+# 4. Expose only the tools of the agent's profile (MCP_AGENT_PROFILE, see
+# profiles.toml). Applied on import so every way of starting the server is
+# covered; a bad configuration stops it instead of exposing more tools.
+try:
+    TOOL_PROFILE = apply_tool_profile(mcp)
+except ProfileError as e:
+    logger.error("%s", e)
+    raise SystemExit(1) from None
+
+if TOOL_PROFILE.name == ALL_TOOLS:
+    logger.warning("Tool profile 'all': every tool is exposed, including tools that change or delete data")
+elif TOOL_PROFILE.defaulted:
+    logger.warning("MCP_AGENT_PROFILE is not set: exposing the %d read-only tools only. "
+                   "Set it to a profile from profiles.toml, or to 'all' for every tool.", len(TOOL_PROFILE.tools))
+else:
+    logger.info("Tool profile '%s': %d tools exposed", TOOL_PROFILE.name, len(TOOL_PROFILE.tools))
+
 # 5. START SERVER
 if __name__ == "__main__":
     logger.info("Initializing Mifos FastMCP Server on STDIO Transport")
-    mcp.run()
+    try:
+        mcp.run()
+    except ProfileError as e:
+        logger.error("%s", e)
+        raise SystemExit(1) from None

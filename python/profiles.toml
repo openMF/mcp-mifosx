@@ -1,0 +1,124 @@
+# Copyright since 2026 Mifos Initiative
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+# Tool profiles: which MCP tools each agent may see and call.
+#
+# Set MCP_AGENT_PROFILE to one of the profile names below. The server hides
+# every tool, then exposes only the tools listed in that profile, so a tool
+# nobody listed (including one added to the code later) stays unreachable.
+#
+#   unset       -> "read-only"
+#   "all"       -> every tool (built in, not listed here)
+#   unknown     -> the server refuses to start
+#
+# A tool name that does not exist in mcp_server.py also stops the server, so a
+# typo or a renamed tool cannot silently take a tool away from an agent.
+
+# Tools that only read from Fineract (GET requests). The default profile.
+[profiles.read-only]
+tools = [
+    # Clients & groups
+    "search_clients",
+    "get_client",
+    "get_client_accts",
+    "get_group",
+    "list_all_groups",
+    "list_all_centers",
+    "get_center",
+    "get_identifiers",
+    "list_documents",
+    "list_client_charges",
+    "list_client_txns",
+    "get_addresses",
+    # Loans
+    "get_loan",
+    "get_repayment_sched",
+    "get_loan_hist",
+    "get_overdue_loans_for_client",
+    "get_loan_app_template",
+    # Savings
+    "get_savings",
+    "get_savings_txns",
+    # Staff & offices
+    "list_all_staff",
+    "get_staff",
+    "list_all_offices",
+    "get_office",
+    # Accounting
+    "list_accounts",
+    "list_journal_entries",
+    # Reports
+    "list_all_reports",
+    "get_report_definition",
+    "run_fineract_report",
+    # Products
+    "list_available_loan_products",
+    "get_loan_product_details",
+    "list_available_savings_products",
+    "get_savings_product_details",
+    # Charges
+    "list_all_charges",
+    "get_charge",
+    # Code tables
+    "list_system_codes",
+    "get_code_values",
+    "list_all_datatables",
+]
+
+# Agents of the agentic loan origination sandbox (agentic-mifos-sandbox).
+# Each starts with the least it needs; widen a profile in the PR that needs it.
+
+# Identity document agent: looks up the client and their identity documents.
+[profiles.identity]
+tools = [
+    "search_clients",
+    "get_client",
+    "get_identifiers",
+    "list_documents",
+    "list_system_codes",
+    "get_code_values",
+]
+
+# Decision support agent: reads the applicant's history; never writes.
+[profiles.decision]
+tools = [
+    "search_clients",
+    "get_client",
+    "get_client_accts",
+    "list_client_txns",
+    "get_loan",
+    "get_loan_hist",
+    "get_repayment_sched",
+    "get_overdue_loans_for_client",
+    "get_savings",
+    "get_savings_txns",
+    "list_available_loan_products",
+    "get_loan_product_details",
+]
+
+# Write-back agent: the only agent that writes, limited to creating the client,
+# their identity document and the loan application. Approval stays with a human.
+[profiles.writeback]
+tools = [
+    "search_clients",
+    "get_client",
+    "create_new_client",
+    "add_identifier",
+    "list_available_loan_products",
+    "get_loan_app_template",
+    "create_new_loan",
+    "get_loan",
+]
+
+# Intake agent (commercial flow): reads the client and the products on offer.
+[profiles.intake]
+tools = [
+    "search_clients",
+    "get_client",
+    "get_client_accts",
+    "list_available_loan_products",
+    "get_loan_product_details",
+    "get_loan_app_template",
+]

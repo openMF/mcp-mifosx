@@ -175,6 +175,8 @@ def my_new_tool(param_id: int, amount: float):
 
 ### Step 2: Register in MCP Server
 
+A new tool stays hidden until a profile in `python/profiles.toml` lists it. Add a tool that only reads (GET requests) to `read-only` (`tests/test_tool_profiles.py` fails until you do), and to any agent profile that needs it. See [Tool profiles](python/README.md#tool-profiles-enforced-by-the-server).
+
 In `python/mcp_server.py`, import your domain function and it will be **automatically wrapped** with centralized validation:
 
 ```python
