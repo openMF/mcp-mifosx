@@ -16,6 +16,10 @@ LABEL org.opencontainers.image.title="Agentic Banking OpenFn Gateway" \
       org.opencontainers.image.description="Agentic loan origination gateway: REST API, case state and human review; OpenFn Lightning runs the underwriting jobs" \
       org.opencontainers.image.licenses="MPL-2.0" \
       org.opencontainers.image.source="https://github.com/openMF/mcp-mifosx"
+# curl for the container healthcheck: the temurin 25 image no longer ships it.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends curl \
+ && rm -rf /var/lib/apt/lists/*
 RUN useradd -r -u 1001 gateway
 USER gateway
 WORKDIR /app
