@@ -164,7 +164,7 @@ services:
 
   # Shared settings for the Lightning server and its one-shot setup job.
   lightning-setup: &lightning
-    image: ${LIGHTNING_IMAGE:-openfn/lightning:v2.19.0}
+    image: ${LIGHTNING_IMAGE:-openfn/lightning:v2.19.2}
     depends_on:
       lightning-db:
         condition: service_healthy
