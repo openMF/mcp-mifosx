@@ -43,6 +43,9 @@ COPY docker/pi-mcp-config.json /home/pi/.pi/agent/mcp.json
 # Inject AGENTS.md for Fineract banking context
 COPY docker/AGENTS.md /home/pi/.pi/agent/AGENTS.md
 RUN chown -R pi:pi /home/pi/.pi
+# Tools the MCP server exposes to Pi (python/profiles.toml, or "all").
+# Always set, so mcp.json never passes an unexpanded ${MCP_AGENT_PROFILE}.
+ENV MCP_AGENT_PROFILE=read-only
 
 USER pi
 WORKDIR /workspace
