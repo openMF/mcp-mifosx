@@ -1048,7 +1048,7 @@ def create_new_charge(name: str, amount: float, currencyCode: str = "USD",
                       isActive: bool = True) -> dict:
     """Create a new charge definition.
     chargeAppliesTo: 1=Loan, 2=Savings, 3=Client
-    chargeTimeType: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee
+    chargeTimeType: 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee
     chargeCalculationType: 1=Flat, 2=% of Amount"""
     return create_charge_domain.func(name, amount, currencyCode, chargeAppliesTo,
                                      chargeTimeType, chargeCalculationType, isPenalty, isActive)
