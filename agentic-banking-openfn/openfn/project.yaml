@@ -91,23 +91,36 @@ workflows:
         adaptor: "@openfn/language-http@latest"
         enabled: true
         body: |
-          post(
-            `${$.gatewayBaseUrl}/api/openfn/callback/status`,
-            {
-              workflowId: $.application.workflowId,
-              phase: 'GATHERING_DATA'
-            },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                // Not $.callbackSecret: a $ anywhere in this argument makes the
-                // compiler wrap the whole options object in a function, which
-                // language-http's post() then spreads into nothing, dropping
-                // every header. A function per value keeps options an object.
-                'X-OpenFn-Secret': state => state.callbackSecret
+          // Retried with backoff: one failed request (a DNS or network blip)
+          // would otherwise stop the run and leave the case stuck in the
+          // gateway. Jobs cannot share code, so the retry loop is repeated in
+          // each callback job.
+          //
+          // The request is built from state inside fn() on purpose: passing
+          // $.callbackSecret straight to post() makes the compiler wrap the
+          // whole options object in a function, which language-http's post()
+          // then spreads into nothing, dropping every header.
+          fn(async state => {
+            const url = `${state.gatewayBaseUrl}/api/openfn/callback/status`;
+            const body = { workflowId: state.application.workflowId, phase: 'GATHERING_DATA' };
+            // Without a timeout a request over a dropped connection hangs until the
+            // network returns, and the retries below never get their turn.
+            const options = {
+              headers: { 'Content-Type': 'application/json', 'X-OpenFn-Secret': state.callbackSecret },
+              timeout: 15000
+            };
+            for (let attempt = 1; ; attempt++) {
+              try {
+                await post(url, body, options)(state);
+                return state;
+              } catch (e) {
+                if (attempt === 4) throw e;
+                const wait = 2000 * 2 ** (attempt - 1);
+                console.log(`Callback attempt ${attempt} failed (${e.message}); retrying in ${wait / 1000}s`);
+                await new Promise(resolve => setTimeout(resolve, wait));
               }
             }
-          );
+          });
 
       fetch-bank-and-credit:
         name: Fetch Bank + Credit (parallel simulation)
@@ -150,6 +163,21 @@ workflows:
           fn(async state => {
             const { application, ollamaUrl, visionModel, curpMaxIssueAgeDays } = state;
             const documents = state.documents || [];
+
+            // Best-effort progress update, so the gateway's deadline counts this
+            // (possibly minutes-long) step as activity. A failure only logs: the
+            // result callback is the one that must arrive, and it is retried.
+            const progress = async phase => {
+              try {
+                await post(
+                  `${state.gatewayBaseUrl}/api/openfn/callback/status`,
+                  { workflowId: state.application.workflowId, phase },
+                  { headers: { 'Content-Type': 'application/json', 'X-OpenFn-Secret': state.callbackSecret }, timeout: 5000 }
+                )(state);
+              } catch (e) {
+                console.log(`Progress update ${phase} not delivered (${e.message})`);
+              }
+            };
 
             const VISION_PROMPT = [
               'You are a document specialist for Mexican CURP constancias issued by RENAPO.',
@@ -266,6 +294,7 @@ workflows:
                 continue;
               }
               try {
+                await progress('GATHERING_DATA');
                 console.log(`Calling Ollama vision model=${visionModel} for ${d.path}`);
                 const res = await post(`${ollamaUrl}/api/chat`, {
                   model: visionModel,
@@ -345,6 +374,22 @@ workflows:
           // the rule-based decision below is used instead.
           fn(async state => {
             const { application, assessments, bankData, creditReport, docResults, ollamaUrl, ollamaModel } = state;
+
+            // Best-effort progress update, so the gateway's deadline counts this
+            // (possibly minutes-long) step as activity. A failure only logs: the
+            // result callback is the one that must arrive, and it is retried.
+            const progress = async phase => {
+              try {
+                await post(
+                  `${state.gatewayBaseUrl}/api/openfn/callback/status`,
+                  { workflowId: state.application.workflowId, phase },
+                  { headers: { 'Content-Type': 'application/json', 'X-OpenFn-Secret': state.callbackSecret }, timeout: 5000 }
+                )(state);
+              } catch (e) {
+                console.log(`Progress update ${phase} not delivered (${e.message})`);
+              }
+            };
+            await progress('LLM_DECISION');
 
             const fails = assessments.filter(a => a.verdict === 'FAIL').length;
             const refers = assessments.filter(a => a.verdict === 'REFER').length;
@@ -431,39 +476,52 @@ workflows:
         adaptor: "@openfn/language-http@latest"
         enabled: true
         body: |
-          post(
-            `${$.gatewayBaseUrl}/api/openfn/callback/underwriting-complete`,
-            {
-              workflowId: $.application.workflowId,
-              recommendation: $.aiDecision.recommendation,
-              confidence: $.aiDecision.confidence,
-              rationale: $.aiDecision.rationale,
-              assessments: $.assessments,
+          // Retried with backoff: one failed request (a DNS or network blip)
+          // would otherwise leave the case stuck in the gateway. Built from
+          // state inside fn(), so no $ reaches post()'s options (see the
+          // header note in notify-gathering). Jobs cannot share code, so the
+          // retry loop is repeated in each callback job.
+          fn(async state => {
+            const { aiDecision } = state;
+            const url = `${state.gatewayBaseUrl}/api/openfn/callback/underwriting-complete`;
+            const body = {
+              workflowId: state.application.workflowId,
+              recommendation: aiDecision.recommendation,
+              confidence: aiDecision.confidence,
+              rationale: aiDecision.rationale,
+              assessments: state.assessments,
               context: {
-                bank: $.bankData,
-                credit: $.creditReport,
-                documents: $.docResults,
+                bank: state.bankData,
+                credit: state.creditReport,
+                documents: state.docResults,
                 decision: {
-                  source: $.aiDecision.source,
-                  model: $.aiDecision.model,
-                  riskLevel: $.aiDecision.riskLevel,
-                  raw: $.aiDecision.raw,
-                  guardrail: $.aiDecision.guardrail,
-                  error: $.aiDecision.error
+                  source: aiDecision.source,
+                  model: aiDecision.model,
+                  riskLevel: aiDecision.riskLevel,
+                  raw: aiDecision.raw,
+                  guardrail: aiDecision.guardrail,
+                  error: aiDecision.error
                 }
               }
-            },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                // Not $.callbackSecret: a $ anywhere in this argument makes the
-                // compiler wrap the whole options object in a function, which
-                // language-http's post() then spreads into nothing, dropping
-                // every header. A function per value keeps options an object.
-                'X-OpenFn-Secret': state => state.callbackSecret
+            };
+            // Without a timeout a request over a dropped connection hangs until the
+            // network returns, and the retries below never get their turn.
+            const options = {
+              headers: { 'Content-Type': 'application/json', 'X-OpenFn-Secret': state.callbackSecret },
+              timeout: 15000
+            };
+            for (let attempt = 1; ; attempt++) {
+              try {
+                await post(url, body, options)(state);
+                return state;
+              } catch (e) {
+                if (attempt === 4) throw e;
+                const wait = 2000 * 2 ** (attempt - 1);
+                console.log(`Callback attempt ${attempt} failed (${e.message}); retrying in ${wait / 1000}s`);
+                await new Promise(resolve => setTimeout(resolve, wait));
               }
             }
-          );
+          });
 
     triggers:
       webhook-loan-submit:
@@ -792,23 +850,30 @@ workflows:
         adaptor: "@openfn/language-http@latest"
         enabled: true
         body: |
-          post(
-            `${$.gatewayBaseUrl}/api/openfn/callback/fineract-complete`,
-            {
-              workflowId: $.workflowId,
-              fineractLoan: $.fineractLoan
-            },
-            {
-              headers: {
-                'Content-Type': 'application/json',
-                // Not $.callbackSecret: a $ anywhere in this argument makes the
-                // compiler wrap the whole options object in a function, which
-                // language-http's post() then spreads into nothing, dropping
-                // every header. A function per value keeps options an object.
-                'X-OpenFn-Secret': state => state.callbackSecret
+          // Retried with backoff, like the other callback jobs (see
+          // notify-gathering): the loan is already written to Fineract here,
+          // so a lost callback would hide a completed write-back.
+          fn(async state => {
+            const url = `${state.gatewayBaseUrl}/api/openfn/callback/fineract-complete`;
+            const body = { workflowId: state.workflowId, fineractLoan: state.fineractLoan };
+            // Without a timeout a request over a dropped connection hangs until the
+            // network returns, and the retries below never get their turn.
+            const options = {
+              headers: { 'Content-Type': 'application/json', 'X-OpenFn-Secret': state.callbackSecret },
+              timeout: 15000
+            };
+            for (let attempt = 1; ; attempt++) {
+              try {
+                await post(url, body, options)(state);
+                return state;
+              } catch (e) {
+                if (attempt === 4) throw e;
+                const wait = 2000 * 2 ** (attempt - 1);
+                console.log(`Callback attempt ${attempt} failed (${e.message}); retrying in ${wait / 1000}s`);
+                await new Promise(resolve => setTimeout(resolve, wait));
               }
             }
-          );
+          });
 
     triggers:
       webhook-loan-review:

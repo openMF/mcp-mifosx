@@ -27,19 +27,41 @@ import org.community.mifos.agentic.loan.openfn.OpenFnClient.OpenFnException;
 import org.community.mifos.agentic.loan.openfn.OpenFnClient.OpenFnTriggerResult;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 @Service
 public class LoanOrchestrationService {
 
     private static final Logger log = LoggerFactory.getLogger(LoanOrchestrationService.class);
+
+    // Statuses of a case whose underwriting run has not reported its result yet, in run order.
+    private static final Set<LoanCaseState.Status> UNDERWRITING = EnumSet.of(
+            LoanCaseState.Status.STARTED,
+            LoanCaseState.Status.OPENFN_TRIGGERED,
+            LoanCaseState.Status.GATHERING_DATA,
+            LoanCaseState.Status.ASSESSING,
+            LoanCaseState.Status.LLM_DECISION);
+
+    // Statuses in which the case waits for an OpenFn run to call back.
+    private static final Set<LoanCaseState.Status> WAITING_ON_OPENFN = EnumSet.of(
+            LoanCaseState.Status.STARTED,
+            LoanCaseState.Status.OPENFN_TRIGGERED,
+            LoanCaseState.Status.GATHERING_DATA,
+            LoanCaseState.Status.ASSESSING,
+            LoanCaseState.Status.LLM_DECISION,
+            LoanCaseState.Status.WRITING_TO_FINERACT);
 
     private final LoanCaseStore store;
     private final OpenFnClient openFnClient;
@@ -83,6 +105,18 @@ public class LoanOrchestrationService {
 
         Map<String, Object> payload = buildSubmitPayload(app);
 
+        // The run's first callback can arrive before the trigger returns; it waits for this
+        // lock, so OPENFN_TRIGGERED below never overwrites progress it reports.
+        state.getLock().lock();
+        try {
+            return trigger(state, app, payload);
+        } finally {
+            state.getLock().unlock();
+        }
+    }
+
+    private Map<String, Object> trigger(LoanCaseState state, LoanApplication app, Map<String, Object> payload) {
+        String workflowId = state.getWorkflowId();
         try {
             OpenFnTriggerResult result = openFnClient.triggerLoanSubmit(payload);
             state.setOpenfnRunId(result.runId());
@@ -151,6 +185,28 @@ public class LoanOrchestrationService {
 
     public Map<String, Object> humanReview(String workflowId, HumanReviewRequest req) {
         LoanCaseState state = require(workflowId);
+        // Callbacks and the stall check change the same case; one at a time.
+        state.getLock().lock();
+        try {
+            if (state.getStatus() == LoanCaseState.Status.WRITING_TO_FINERACT) {
+                throw new IllegalStateException(
+                        "The approval is still being written to Fineract; wait for the result.");
+            }
+            // Once an approval has gone to Fineract, the loan may exist there whatever the
+            // gateway saw. Only APPROVE may follow: it retries the write-back, which reuses the
+            // client and loan if they were created, so the gateway and Fineract cannot disagree.
+            if ("APPROVE".equals(state.getHumanAction()) && !"APPROVE".equalsIgnoreCase(req.getAction())) {
+                throw new IllegalStateException("An approval was already sent to Fineract; "
+                        + "only APPROVE can be sent again, to retry the write-back.");
+            }
+            return review(state, req);
+        } finally {
+            state.getLock().unlock();
+        }
+    }
+
+    private Map<String, Object> review(LoanCaseState state, HumanReviewRequest req) {
+        String workflowId = state.getWorkflowId();
         if (state.getStatus() != LoanCaseState.Status.PENDING_HUMAN_REVIEW
                 && state.getStatus() != LoanCaseState.Status.FALLBACK_LOCAL) {
             // allow review also right after local fallback which already sets PENDING_HUMAN_REVIEW
@@ -221,11 +277,26 @@ public class LoanOrchestrationService {
     // Callbacks from OpenFn jobs (HTTP adaptor posts back here)
     // ------------------------------------------------------------------
 
-    @SuppressWarnings("unchecked")
     public void onUnderwritingComplete(Map<String, Object> body) {
         String workflowId = str(body.get("workflowId"));
         LoanCaseState state = require(workflowId);
+        state.getLock().lock();
+        try {
+            if (!awaitingUnderwriting(state)) {
+                // A retried callback whose first attempt was already processed, or a late one:
+                // the case has moved on (a human may have reviewed it), so leave it alone.
+                log.info("Ignoring underwriting callback for {} in status {}", workflowId, state.getStatus());
+                return;
+            }
+            applyUnderwriting(state, body);
+        } finally {
+            state.getLock().unlock();
+        }
+    }
 
+    @SuppressWarnings("unchecked")
+    private void applyUnderwriting(LoanCaseState state, Map<String, Object> body) {
+        String workflowId = state.getWorkflowId();
         LoanDecision decision = new LoanDecision();
         decision.setWorkflowId(workflowId);
         decision.setRecommendation(str(body.get("recommendation")));
@@ -242,16 +313,35 @@ public class LoanOrchestrationService {
         }
 
         state.setSummary(decision);
+        // A slow run may call back after the case was marked FAILED.
+        state.setErrorMessage(null);
         state.setStatus(LoanCaseState.Status.PENDING_HUMAN_REVIEW);
         log.info("Underwriting complete for {} → PENDING_HUMAN_REVIEW (rec={})",
                 workflowId, decision.getRecommendation());
     }
 
-    @SuppressWarnings("unchecked")
     public void onFineractComplete(Map<String, Object> body) {
         String workflowId = str(body.get("workflowId"));
         LoanCaseState state = require(workflowId);
+        state.getLock().lock();
+        try {
+            // Expected while the write-back runs, or late after it was marked FAILED. Anything
+            // else is a duplicate of a callback already applied.
+            boolean writeBackPending = state.getStatus() == LoanCaseState.Status.WRITING_TO_FINERACT
+                    || (state.getStatus() == LoanCaseState.Status.FAILED && "APPROVE".equals(state.getHumanAction()));
+            if (!writeBackPending) {
+                log.info("Ignoring Fineract callback for {} in status {}", workflowId, state.getStatus());
+                return;
+            }
+            applyFineractResult(state, body);
+        } finally {
+            state.getLock().unlock();
+        }
+    }
 
+    @SuppressWarnings("unchecked")
+    private void applyFineractResult(LoanCaseState state, Map<String, Object> body) {
+        String workflowId = state.getWorkflowId();
         LoanDecision decision = state.getSummary();
         if (decision == null) {
             decision = new LoanDecision();
@@ -284,20 +374,112 @@ public class LoanOrchestrationService {
         log.info("Fineract write-back complete for {}", workflowId);
     }
 
+    @SuppressWarnings("unchecked")
     public void onStatusUpdate(Map<String, Object> body) {
         String workflowId = str(body.get("workflowId"));
         LoanCaseState state = require(workflowId);
-        String phase = str(body.get("phase"));
-        if (phase != null) {
+        state.getLock().lock();
+        try {
+            if (!awaitingUnderwriting(state)) {
+                log.info("Ignoring progress update for {} in status {}", workflowId, state.getStatus());
+                return;
+            }
+            String phase = str(body.get("phase"));
+            LoanCaseState.Status next = parseStatus(phase);
+            boolean forward = next != null && UNDERWRITING.contains(next)
+                    && (state.getStatus() == LoanCaseState.Status.FAILED || next.compareTo(state.getStatus()) >= 0);
+            if (forward) {
+                state.setStatus(next);
+                state.setErrorMessage(null);
+            } else {
+                if (phase != null && next == null) {
+                    state.getIntermediate().put("lastPhase", phase);
+                }
+                // Any accepted update shows the run is alive, even when the status stays.
+                state.touch();
+            }
+            if (body.get("data") instanceof Map<?, ?> data) {
+                state.getIntermediate().putAll((Map<String, Object>) data);
+            }
+        } finally {
+            state.getLock().unlock();
+        }
+    }
+
+    /**
+     * True while the case still expects its underwriting result: it is in an underwriting
+     * status, or it was marked FAILED by the stall check before any result arrived.
+     */
+    private static boolean awaitingUnderwriting(LoanCaseState state) {
+        return UNDERWRITING.contains(state.getStatus())
+                || (state.getStatus() == LoanCaseState.Status.FAILED && state.getSummary() == null);
+    }
+
+    private static LoanCaseState.Status parseStatus(String phase) {
+        if (phase == null) {
+            return null;
+        }
+        try {
+            return LoanCaseState.Status.valueOf(phase);
+        } catch (IllegalArgumentException ex) {
+            return null;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Deadline for OpenFn runs
+    // ------------------------------------------------------------------
+
+    /**
+     * Runs {@link #failStalledCases(Duration)} every 30 seconds with the configured
+     * {@code loan.openfn-timeout-minutes}.
+     */
+    @Scheduled(fixedDelayString = "${loan.stall-check-interval-ms:30000}")
+    public void failStalledCases() {
+        failStalledCases(Duration.ofMinutes(loanProps.getOpenfnTimeoutMinutes()));
+    }
+
+    /**
+     * Marks FAILED every case that has waited on OpenFn for longer than {@code timeout}
+     * without any progress. A failed job stops the run without calling back, so without
+     * a deadline such a case would stay in flight forever. A late callback still moves
+     * the case on.
+     *
+     * @return how many cases were marked FAILED
+     */
+    public int failStalledCases(Duration timeout) {
+        Instant cutoff = Instant.now().minus(timeout);
+        int failed = 0;
+        for (LoanCaseState state : store.all()) {
+            // Check and mark under the case's lock, so a callback cannot slip in between. A case
+            // whose lock is held is being submitted, reviewed or updated right now, so it is
+            // active rather than stalled; skip it instead of waiting, because the holder may be
+            // in an OpenFn call (up to the client's read timeout) and every later case would wait
+            // too. The next scan looks at it again.
+            if (!state.getLock().tryLock()) {
+                continue;
+            }
             try {
-                state.setStatus(LoanCaseState.Status.valueOf(phase));
-            } catch (IllegalArgumentException ignored) {
-                state.getIntermediate().put("lastPhase", phase);
+                LoanCaseState.Status status = state.getStatus();
+                if (!WAITING_ON_OPENFN.contains(status) || state.getUpdatedAt().isAfter(cutoff)) {
+                    continue;
+                }
+                String retry = status == LoanCaseState.Status.WRITING_TO_FINERACT
+                        ? " POST the review again with APPROVE to retry; the write-back reuses the client"
+                                + " and loan if they were already created."
+                        : " Submit the application again.";
+                state.setErrorMessage(String.format(
+                        "No result from OpenFn after %d minutes in %s (run %s); check the run in Lightning.%s",
+                        timeout.toMinutes(), status, state.getOpenfnRunId(), retry));
+                state.setStatus(LoanCaseState.Status.FAILED);
+                log.warn("Case {} made no progress for {} minutes in {} (run {}); marked FAILED",
+                        state.getWorkflowId(), timeout.toMinutes(), status, state.getOpenfnRunId());
+                failed++;
+            } finally {
+                state.getLock().unlock();
             }
         }
-        if (body.get("data") instanceof Map<?, ?> data) {
-            state.getIntermediate().putAll((Map<String, Object>) data);
-        }
+        return failed;
     }
 
     // ------------------------------------------------------------------

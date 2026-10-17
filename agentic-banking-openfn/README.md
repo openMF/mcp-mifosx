@@ -287,6 +287,14 @@ Expected status sequence: `OPENFN_TRIGGERED → GATHERING_DATA → PENDING_HUMAN
 WRITING_TO_FINERACT → COMPLETED`. Every job's run and logs are visible in Lightning under
 the project's **History**.
 
+If a run stops without calling back (a job fails, or the gateway stays unreachable through
+the callback's four attempts), the case turns `FAILED` once it has made no progress for 15
+minutes (`LOAN_OPENFN_TIMEOUT_MINUTES`). The status response's `error` names the stuck
+step and the Lightning run, and says what to do: resubmit the application, or, for a stalled
+write-back, POST the review again with `APPROVE` (once an approval has gone to Fineract, a
+different decision is refused). The slow jobs send progress updates, so a long but healthy
+run is not mistaken for a stalled one.
+
 **Verify in Fineract** – the loan's `externalId` is the workflow ID, the client's
 `externalId` is the CURP clave (when the CURP was valid, otherwise `<workflowId>-client`),
 and the loan has two notes: the underwriting decision and the vision analysis:
