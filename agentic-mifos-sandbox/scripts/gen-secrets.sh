@@ -14,6 +14,10 @@ while IFS= read -r line; do
 done < .env.example
 
 password() { openssl rand -hex 24; }
+# Fineract's "strong" password policy: 12-50 characters with an upper and a
+# lower case letter, a digit and a special character, and no character twice
+# in a row (tr -s squeezes repeats; the fixed tail adds the missing classes).
+fineract_password() { printf '%s-Aa1\n' "$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | tr -s 'A-Za-z0-9' | cut -c1-28)"; }
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -27,6 +31,7 @@ generated() {
     FINERACT_DB_ADMIN_PASSWORD|FINERACT_DB_APP_PASSWORD) password ;;
     LIGHTNING_DB_ADMIN_PASSWORD|LIGHTNING_DB_APP_PASSWORD) password ;;
     LIGHTNING_ADMIN_PASSWORD|OPENFN_CALLBACK_SECRET) password ;;
+    FINERACT_AGENT_*_PASSWORD) fineract_password ;;
     LIGHTNING_SECRET_KEY_BASE) openssl rand -base64 64 | tr -d '\n' ;;
     LIGHTNING_PRIMARY_ENCRYPTION_KEY|LIGHTNING_WORKER_SECRET) openssl rand -base64 32 ;;
     LIGHTNING_WORKER_RUNS_PRIVATE_KEY) base64 -w0 < "$tmp/runs.pem" ;;
