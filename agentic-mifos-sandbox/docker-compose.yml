@@ -301,9 +301,16 @@ services:
       OPENFN_PROJECT_SPEC: /spec/project.yaml
       OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
       OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
+      # Agent service users and their roles (fineract-rbac.json).
+      FINERACT_AGENT_RBAC: /spec/fineract-rbac.json
+      FINERACT_AGENT_IDENTITY_PASSWORD: ${FINERACT_AGENT_IDENTITY_PASSWORD:?run scripts/gen-secrets.sh}
+      FINERACT_AGENT_DECISION_PASSWORD: ${FINERACT_AGENT_DECISION_PASSWORD:?run scripts/gen-secrets.sh}
+      FINERACT_AGENT_WRITEBACK_PASSWORD: ${FINERACT_AGENT_WRITEBACK_PASSWORD:?run scripts/gen-secrets.sh}
+      FINERACT_AGENT_INTAKE_PASSWORD: ${FINERACT_AGENT_INTAKE_PASSWORD:?run scripts/gen-secrets.sh}
     volumes:
       - bootstrap-state:/state:ro
       - ../agentic-banking-openfn/openfn/project.yaml:/spec/project.yaml:ro
+      - ./fineract-rbac.json:/spec/fineract-rbac.json:ro
     networks: [core, openfn]
     mem_limit: 128m
     security_opt: [no-new-privileges:true]

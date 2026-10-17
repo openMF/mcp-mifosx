@@ -4,9 +4,12 @@
 
 1. Fineract: create the loan product the agentic flow submits loans against
    (looked up by short name, created only if missing).
-2. Lightning: create the raw "fineract" credential the write-back job uses
+2. Fineract: one service user per agent, with a role granting exactly the
+   permissions in fineract-rbac.json, then check that each agent is allowed
+   inside its role and refused (HTTP 403) outside it.
+3. Lightning: create the raw "fineract" credential the write-back job uses
    (created only if missing).
-3. Lightning: provision the OpenFn project from project.yaml.
+4. Lightning: provision the OpenFn project from project.yaml.
 
 Every id in the provisioned project is derived from its key in project.yaml
 (UUID v5), and the two webhook trigger ids come from the compose file, so
@@ -82,6 +85,17 @@ def request(method, url, headers, body=None, insecure=False):
         sys.exit(f"bootstrap: {method} {url} failed with HTTP {err.code}: {err.read().decode(errors='replace')[:2000]}")
 
 
+def status(method, url, headers, body=None):
+    """HTTP status of a Fineract request, for the access checks (never exits)."""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={"Content-Type": "application/json", **headers})
+    try:
+        with urllib.request.urlopen(req, context=ssl._create_unverified_context(), timeout=60) as resp:
+            return resp.status
+    except urllib.error.HTTPError as err:
+        return err.code
+
+
 def stable_id(*parts):
     return str(uuid.uuid5(ID_NAMESPACE, "/".join(parts)))
 
@@ -89,8 +103,10 @@ def stable_id(*parts):
 # --- Fineract ----------------------------------------------------------------
 
 
-def fineract_headers():
-    auth = b64encode(f"{env('FINERACT_USERNAME')}:{env('FINERACT_PASSWORD')}".encode()).decode()
+def fineract_headers(username=None, password=None):
+    username = username or env("FINERACT_USERNAME")
+    password = password or env("FINERACT_PASSWORD")
+    auth = b64encode(f"{username}:{password}".encode()).decode()
     return {"Authorization": f"Basic {auth}", "Fineract-Platform-TenantId": env("FINERACT_TENANT")}
 
 
@@ -104,6 +120,92 @@ def ensure_loan_product():
     created = request("POST", f"{base}/loanproducts", fineract_headers(), LOAN_PRODUCT, insecure=True)
     log(f"created Fineract loan product {LOAN_PRODUCT['shortName']} (id {created['resourceId']})")
     return created["resourceId"]
+
+
+def ensure_role(base, name, description, wanted, known):
+    """Create the role if missing and make its permissions exactly `wanted`."""
+    unknown = sorted(set(wanted) - known)
+    if unknown:
+        sys.exit(f"bootstrap: role '{name}' lists permissions Fineract does not have: {', '.join(unknown)}")
+    roles = request("GET", f"{base}/roles", fineract_headers(), insecure=True)
+    role_id = next((r["id"] for r in roles if r["name"] == name), None)
+    if role_id is None:
+        role_id = request("POST", f"{base}/roles", fineract_headers(), {"name": name, "description": description}, insecure=True)[
+            "resourceId"
+        ]
+        log(f"created Fineract role '{name}' (id {role_id})")
+    current = request("GET", f"{base}/roles/{role_id}/permissions", fineract_headers(), insecure=True)
+    granted = {p["code"] for p in current["permissionUsageData"] if p.get("selected")}
+    if granted != set(wanted):
+        # Grant what is missing and revoke anything else, e.g. a permission
+        # added by hand in the web app.
+        changes = {code: code in wanted for code in granted | set(wanted)}
+        request("PUT", f"{base}/roles/{role_id}/permissions", fineract_headers(), {"permissions": changes}, insecure=True)
+        log(f"Fineract role '{name}': permissions set to {', '.join(sorted(wanted))}")
+    return role_id
+
+
+def ensure_agent_user(base, username, agent, role_id, password):
+    """Create the agent's service user, or bring its role and password in line."""
+    users = request("GET", f"{base}/users", fineract_headers(), insecure=True)
+    user = next((u for u in users if u["username"] == username), None)
+    if user is None:
+        body = {
+            "username": username,
+            "firstname": "Agent",
+            "lastname": agent,
+            "email": f"{username}@sandbox.local",
+            "officeId": int(os.environ.get("FINERACT_OFFICE_ID", "1")),
+            "roles": [role_id],
+            "sendPasswordToEmail": False,
+            "passwordNeverExpires": True,
+            "password": password,
+            "repeatPassword": password,
+        }
+        request("POST", f"{base}/users", fineract_headers(), body, insecure=True)
+        log(f"created Fineract user '{username}'")
+        return
+    changes = {}
+    if [r["id"] for r in user.get("selectedRoles", [])] != [role_id]:
+        changes["roles"] = [role_id]
+    # A password changed in .env since the user was created no longer logs in.
+    if status("GET", f"{base}/clients?limit=1", fineract_headers(username, password)) == 401:
+        changes.update(password=password, repeatPassword=password)
+    if changes:
+        request("PUT", f"{base}/users/{user['id']}", fineract_headers(), changes, insecure=True)
+        log(f"updated Fineract user '{username}' ({', '.join(k for k in changes if k != 'repeatPassword')})")
+    else:
+        log(f"Fineract user '{username}' is up to date")
+
+
+def check_agent_access(base, username, password, permissions):
+    """Prove the role is enforced: a read inside it works, requests outside it get 403."""
+    headers = fineract_headers(username, password)
+    allowed = status("GET", f"{base}/clients?limit=1", headers)
+    # Every agent is refused user administration; a read-only agent is also
+    # refused creating a client. An empty body would fail validation anyway,
+    # so a misconfigured role still creates nothing.
+    refused = {"GET /users": status("GET", f"{base}/users", headers)}
+    if "CREATE_CLIENT" not in permissions:
+        refused["POST /clients"] = status("POST", f"{base}/clients", headers, {})
+    if allowed != 200 or any(code != 403 for code in refused.values()):
+        details = ", ".join(f"{req} -> {code}" for req, code in refused.items())
+        sys.exit(f"bootstrap: '{username}' access check failed: GET /clients -> {allowed}, {details}")
+    log(f"  {username}: GET /clients -> 200, " + ", ".join(f"{req} -> 403" for req in refused))
+
+
+def ensure_agent_users():
+    base = env("FINERACT_URL")
+    spec = json.loads(Path(env("FINERACT_AGENT_RBAC")).read_text())
+    known = {p["code"] for p in request("GET", f"{base}/permissions", fineract_headers(), insecure=True)}
+    for agent, entry in spec["agents"].items():
+        username = f"agent-{agent}"
+        password = env(f"FINERACT_AGENT_{agent.upper()}_PASSWORD")
+        role_id = ensure_role(base, entry["role"], entry["description"], entry["permissions"], known)
+        ensure_agent_user(base, username, agent, role_id, password)
+    log("checking agent access")
+    for agent, entry in spec["agents"].items():
+        check_agent_access(base, f"agent-{agent}", env(f"FINERACT_AGENT_{agent.upper()}_PASSWORD"), entry["permissions"])
 
 
 # --- Lightning ---------------------------------------------------------------
@@ -218,6 +320,7 @@ def main():
         sys.exit(f"bootstrap: {token_file} was not written by lightning-setup")
 
     product_id = ensure_loan_product()
+    ensure_agent_users()
     provision_project(product_id)
     log("done")
 
