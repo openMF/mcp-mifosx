@@ -37,8 +37,8 @@ func (s *MifosMcpServer) Serve() error {
 
 // newCallerScopedHTTPServer uses a separate catalog so HTTP cannot reach
 // configured-credential tools, including handlers registered outside ToolDefs.
-func newCallerScopedHTTPServer(client *adapter.FineractClient) *MifosMcpServer {
-	appServer := mcpserver.NewMCPServer("Mifos-Banking-Agent-Go", "1.0.0")
+func newCallerScopedHTTPServer(client *adapter.FineractClient, hooks *mcpserver.Hooks) *MifosMcpServer {
+	appServer := mcpserver.NewMCPServer("Mifos-Banking-Agent-Go", "1.0.0", mcpserver.WithHooks(hooks))
 	registry := &tools.Registry{Server: appServer, Fineract: client}
 	registry.RegisterCallerScopedHTTPTools()
 	return &MifosMcpServer{MCPServer: appServer, Registry: registry}

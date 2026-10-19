@@ -6,6 +6,7 @@ package adapter
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"strings"
 )
@@ -39,4 +40,15 @@ func callerContext(ctx context.Context) (CallContext, error) {
 		return CallContext{}, errors.New("caller authentication context is required")
 	}
 	return call, nil
+}
+
+// CallerFingerprint identifies the exact authorization/tenant pair without
+// retaining credentials in session ownership metadata. Never expose this value.
+func CallerFingerprint(ctx context.Context) ([sha256.Size]byte, error) {
+	call, err := callerContext(ctx)
+	if err != nil {
+		return [sha256.Size]byte{}, err
+	}
+	// WithCallerContext rejects newlines, so this separator is unambiguous.
+	return sha256.Sum256([]byte(call.authorization + "\n" + call.tenant)), nil
 }
