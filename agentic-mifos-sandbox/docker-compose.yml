@@ -1,7 +1,7 @@
 # Agentic Mifos sandbox: a minimal, self-contained Mifos X environment for
 # agentic workflows. This file starts the system of record (Apache Fineract),
-# the Mifos X web app and the OpenFn Lightning orchestrator; the Pi agents and
-# the scoped MCP servers are added as separate services.
+# the Mifos X web app and the OpenFn Lightning orchestrator, plus the Pi agents
+# and their scoped MCP servers on request.
 #
 #   ./scripts/gen-secrets.sh   # creates .env with generated passwords and keys
 #   docker compose up -d
@@ -14,12 +14,20 @@
 # Without the profile the OpenFn jobs fall back to rule-based decisions, or
 # set OLLAMA_URL in .env to an Ollama server you already run.
 #
+# Agents (Pi, see pi-agent/), started one run at a time; they need the local
+# models:
+#   docker compose --profile ollama --profile agents run --rm agent-decision \
+#     -p "List the loan products with their interest rates"
+# From a script, add -T and close stdin (`< /dev/null`): without a terminal,
+# Pi reads stdin into the prompt and waits for it to end.
+#
 # Networks
 #   edge    - published ports (bound to 127.0.0.1) and outbound internet
 #   core    - internal: Fineract and its database, no route to the internet
 #   openfn  - internal: Lightning, its worker, the bootstrap and the gateway
-#   llm     - internal: the Ollama API, reachable only from the OpenFn worker
+#   llm     - internal: the Ollama API, reachable from the OpenFn worker and the agents
 #   llm-egress - Ollama alone, to download models
+#   agent-<name> - internal: one agent and its MCP server
 
 # Webhook trigger ids of the OpenFn project. The bootstrap provisions the
 # triggers with exactly these ids, so the gateway's webhook URLs are fixed.
@@ -398,6 +406,67 @@ services:
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
+  # Each agent is a Pi container paired with its own MCP server: the
+  # mcp-mifosx Python server, limited to the agent's tool profile
+  # (python/profiles.toml) and signed in to Fineract as the agent's service
+  # user (fineract-rbac.json). The agent holds no Fineract credentials and
+  # reaches only its MCP server and the LLM.
+  mcp-decision:
+    build: ../python
+    profiles: [agents]
+    depends_on:
+      # Creates the agent-decision user and its role.
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      MIFOSX_BASE_URL: https://fineract:8443/fineract-provider/api/v1
+      MIFOSX_TENANT_ID: default
+      MIFOSX_USERNAME: agent-decision
+      MIFOSX_PASSWORD: ${FINERACT_AGENT_DECISION_PASSWORD:?run scripts/gen-secrets.sh}
+      # The sandbox Fineract uses a self-signed certificate.
+      MIFOSX_SKIP_TLS_VERIFY: "true"
+      MCP_AGENT_PROFILE: decision
+      # FastMCP settings: streamable HTTP on :8000/mcp instead of stdio.
+      FASTMCP_TRANSPORT: http
+      FASTMCP_HOST: 0.0.0.0
+      FASTMCP_PORT: 8000
+      FASTMCP_SHOW_SERVER_BANNER: "false"
+      FASTMCP_CHECK_FOR_UPDATES: "off"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    # The Python image has no unprivileged user of its own.
+    user: "10001:10001"
+    networks: [core, agent-decision]
+    mem_limit: 256m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  agent-decision:
+    build: ./pi-agent
+    profiles: [agents]
+    depends_on:
+      mcp-decision:
+        condition: service_healthy
+      # Only with `--profile ollama`: wait until the models are present.
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
+    environment:
+      AGENT_MCP_URL: http://mcp-decision:8000/mcp
+      # The sandbox's Ollama: the agent networks have no route out, so an
+      # OLLAMA_URL outside the sandbox is not reachable from here.
+      AGENT_LLM_URL: http://ollama:11434/v1
+      AGENT_MODEL: *ollama-model
+    # Forwards signals to Pi and reaps its child processes.
+    init: true
+    networks: [agent-decision, llm]
+    mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
 networks:
   edge: {}
   core:
@@ -407,6 +476,8 @@ networks:
   llm:
     internal: true
   llm-egress: {}
+  agent-decision:
+    internal: true
 
 volumes:
   fineract-db-data: {}

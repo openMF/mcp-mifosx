@@ -6,6 +6,7 @@
 import logging
 from typing import Optional
 
+import fastmcp
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 
@@ -1100,7 +1101,8 @@ else:
 
 # 5. START SERVER
 if __name__ == "__main__":
-    logger.info("Initializing Mifos FastMCP Server on STDIO Transport")
+    # stdio unless FASTMCP_TRANSPORT says otherwise (see the README)
+    logger.info("Initializing Mifos FastMCP Server on %s transport", fastmcp.settings.transport)
     try:
         mcp.run()
     except ProfileError as e:
