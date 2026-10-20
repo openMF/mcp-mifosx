@@ -55,6 +55,8 @@ Authentication is selected at initialization:
 
 `NewHTTPServer` accepts only `*adapter.CallerClient`. This type holds no configured identity and has no configured-auth request methods. Both modes share base URL and TLS configuration.
 
+Client constructors return a client and an error. The optional `.env` file is loaded before mode selection and client construction. A missing file is allowed; unreadable or malformed files stop initialization with a diagnostic that omits file contents.
+
 ### Telemetry & Monitoring (Prometheus)
 The server exposes structured metrics via a native **Prometheus** `/metrics` endpoint. 
 - The server exposes a dedicated `/metrics` endpoint built natively with the **Prometheus Golang Client**. 
@@ -267,10 +269,16 @@ MIFOSX_PASSWORD=password
 
 **Headless Cloud / Microservice (SSE):**
 
-HTTP is currently a caller-scoped, read-only pilot exposing **only `get_client`**
-(`GET /clients/{id}`). Send both `Authorization` and `X-Mifos-Tenant-Id` on
-every `/sse` connection and `/message` POST. The optional `/api/get_client`
-wrapper requires the same headers. Identity is never read from tool arguments,
+HTTP is currently a caller-scoped, read-only pilot exposing three tools:
+
+- `get_client`: `GET /clients/{id}`
+- `search_clients`: `GET /clients?displayName={name}`
+- `get_client_accounts`: `GET /clients/{id}/accounts`
+
+Send both `Authorization` and `X-Mifos-Tenant-Id` on
+every `/sse` connection and `/message` POST. The optional `/api/get_client`,
+`/api/search_clients`, and `/api/get_client_accounts` wrappers
+require the same headers. Identity is never read from tool arguments,
 query parameters, or the MCP session. Missing, blank, or duplicate identity
 headers fail before any Fineract request; there is no HTTP tenant default.
 
@@ -288,8 +296,9 @@ recognizable caller credential material are refused. Basic usernames that also
 appear in client data can therefore cause a response to be refused.
 
 Use HTTPS at the deployment boundary to protect caller headers in transit.
-HTTP header presence is not a local authentication check. This pilot does not
-add permission-based tool discovery or bind SSE session ownership to a user.
+HTTP header presence is not a local authentication check. SSE sessions are bound
+to the exact Authorization/tenant pair that created them. This pilot does not
+add permission-based tool discovery.
 
 ```bash
 docker build -t mcp-go-mifosx .

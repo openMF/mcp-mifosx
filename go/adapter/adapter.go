@@ -22,8 +22,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
 // FineractClient executes as the configured identity in trusted stdio/local mode.
@@ -106,11 +104,14 @@ func (c *CallerClient) DoCallerRequest(ctx context.Context, endpoint string, que
 }
 
 // New preserves the configured-identity constructor for existing local users.
-func New() *FineractClient { return NewConfigured() }
+func New() (*FineractClient, error) { return NewConfigured() }
 
 // NewConfigured intentionally loads the banking identity for trusted local use.
-func NewConfigured() *FineractClient {
-	baseURL, httpClient := newConnection()
+func NewConfigured() (*FineractClient, error) {
+	baseURL, httpClient, err := newConnection()
+	if err != nil {
+		return nil, fmt.Errorf("initialize configured client: %w", err)
+	}
 
 	tenantID := os.Getenv("MIFOSX_TENANT_ID")
 	username := os.Getenv("MIFOSX_USERNAME")
@@ -129,18 +130,23 @@ func NewConfigured() *FineractClient {
 		Username: username,
 		Password: password,
 		HTTP:     httpClient,
-	}
+	}, nil
 }
 
 // NewCaller selects caller identity without reading configured banking identity.
-func NewCaller() *CallerClient {
-	baseURL, httpClient := newConnection()
-	return &CallerClient{baseURL: baseURL, http: httpClient}
+func NewCaller() (*CallerClient, error) {
+	baseURL, httpClient, err := newConnection()
+	if err != nil {
+		return nil, fmt.Errorf("initialize caller client: %w", err)
+	}
+	return &CallerClient{baseURL: baseURL, http: httpClient}, nil
 }
 
 // newConnection shares connection setup, never authentication selection.
-func newConnection() (string, *http.Client) {
-	_ = godotenv.Load()
+func newConnection() (string, *http.Client, error) {
+	if err := LoadEnvironment(); err != nil {
+		return "", nil, fmt.Errorf("initialize Fineract connection: %w", err)
+	}
 	baseURL := os.Getenv("MIFOSX_BASE_URL")
 	if baseURL == "" {
 		baseURL = "https://localhost:8443/fineract-provider/api/v1"
@@ -152,7 +158,7 @@ func newConnection() (string, *http.Client) {
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
 		},
-	}
+	}, nil
 }
 
 // DoRequest always uses the configured identity; it never selects caller mode.

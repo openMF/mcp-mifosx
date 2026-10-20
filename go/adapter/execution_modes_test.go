@@ -39,12 +39,19 @@ func TestExecutionModesUseSeparateIdentities(t *testing.T) {
 	t.Setenv("MIFOSX_BASE_URL", bank.URL)
 
 	// Both explicit local construction and the legacy constructor need no context.
-	for _, configured := range []*adapter.FineractClient{adapter.NewConfigured(), adapter.New()} {
+	for _, newClient := range []func() (*adapter.FineractClient, error){adapter.NewConfigured, adapter.New} {
+		configured, err := newClient()
+		if err != nil {
+			t.Fatal(err)
+		}
 		if _, err := configured.DoRequest(http.MethodGet, "clients/42", nil, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
-	caller := adapter.NewCaller()
+	caller, err := adapter.NewCaller()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := caller.DoCallerRequest(context.Background(), "clients/42"); err == nil {
 		t.Fatal("configured environment rescued a missing caller context")
 	}
@@ -63,7 +70,10 @@ func TestExecutionModesUseSeparateIdentities(t *testing.T) {
 func TestCallerCannotExecuteConfiguredRequests(t *testing.T) {
 	// Guard the public method set against future embedding or forwarding that
 	// would let an HTTP handler reach configured-auth execution.
-	caller := adapter.NewCaller()
+	caller, err := adapter.NewCaller()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, ok := any(caller).(interface {
 		DoRequest(string, string, interface{}, map[string]string) ([]byte, error)
 	}); ok {

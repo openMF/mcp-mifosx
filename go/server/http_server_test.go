@@ -33,7 +33,11 @@ func TestCallerCatalogHasNoConfiguredExecutor(t *testing.T) {
 	t.Setenv("MIFOSX_USERNAME", "configured-service")
 	t.Setenv("MIFOSX_PASSWORD", "configured-password")
 	t.Setenv("MIFOSX_TENANT_ID", "configured-tenant")
-	pilot := newCallerScopedHTTPServer(adapter.NewCaller(), &mcpserver.Hooks{})
+	caller, err := adapter.NewCaller()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pilot := newCallerScopedHTTPServer(caller, &mcpserver.Hooks{})
 	if pilot.Registry.Fineract != nil {
 		t.Fatal("HTTP catalog retained a configured executor")
 	}
@@ -57,8 +61,16 @@ func pilot(t *testing.T, downstream http.HandlerFunc) (*httptest.Server, *MifosM
 	bank := httptest.NewServer(downstream)
 	t.Cleanup(bank.Close)
 	t.Setenv("MIFOSX_BASE_URL", bank.URL)
-	srv := NewMifosMcpServer(adapter.NewConfigured())
-	httpSrv := httptest.NewServer(NewHTTPServer(adapter.NewCaller(), "").Handler())
+	configured, err := adapter.NewConfigured()
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller, err := adapter.NewCaller()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewMifosMcpServer(configured)
+	httpSrv := httptest.NewServer(NewHTTPServer(caller, "").Handler())
 	t.Cleanup(httpSrv.Close)
 	return httpSrv, srv
 }

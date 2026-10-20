@@ -5,26 +5,45 @@
 package main
 
 import (
+	"fmt"
+	"log"
 	"os"
 
-	"github.com/joho/godotenv"
 	"github.com/openMF/mcp-mifosx/go/adapter"
 	mifosserver "github.com/openMF/mcp-mifosx/go/server"
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Print(err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
 	// Load PORT before selecting the execution identity, including .env setups.
-	_ = godotenv.Load()
+	if err := adapter.LoadEnvironment(); err != nil {
+		return fmt.Errorf("initialize environment: %w", err)
+	}
 	port := os.Getenv("PORT")
 	if port != "" {
-		httpSrv := mifosserver.NewHTTPServer(adapter.NewCaller(), port)
+		caller, err := adapter.NewCaller()
+		if err != nil {
+			return fmt.Errorf("initialize HTTP server: %w", err)
+		}
+		httpSrv := mifosserver.NewHTTPServer(caller, port)
 		if err := httpSrv.Serve(); err != nil {
-			os.Exit(1)
+			return fmt.Errorf("serve HTTP: %w", err)
 		}
 	} else {
-		srv := mifosserver.NewMifosMcpServer(adapter.NewConfigured())
+		configured, err := adapter.NewConfigured()
+		if err != nil {
+			return fmt.Errorf("initialize stdio server: %w", err)
+		}
+		srv := mifosserver.NewMifosMcpServer(configured)
 		if err := srv.Serve(); err != nil {
-			os.Exit(1)
+			return fmt.Errorf("serve stdio: %w", err)
 		}
 	}
+	return nil
 }
