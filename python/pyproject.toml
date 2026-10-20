@@ -8,3 +8,6 @@ ignore = ["E203", "E402", "E701"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+    "live: sends requests to a real Fineract; skipped unless MIFOSX_LIVE_CONTRACT=1",
+]
