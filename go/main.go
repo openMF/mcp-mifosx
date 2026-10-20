@@ -7,22 +7,22 @@ package main
 import (
 	"os"
 
+	"github.com/joho/godotenv"
 	"github.com/openMF/mcp-mifosx/go/adapter"
 	mifosserver "github.com/openMF/mcp-mifosx/go/server"
 )
 
 func main() {
-	fineractClient := adapter.New()
-
-	srv := mifosserver.NewMifosMcpServer(fineractClient)
-
+	// Load PORT before selecting the execution identity, including .env setups.
+	_ = godotenv.Load()
 	port := os.Getenv("PORT")
 	if port != "" {
-		httpSrv := mifosserver.NewHTTPServer(srv, port)
+		httpSrv := mifosserver.NewHTTPServer(adapter.NewCaller(), port)
 		if err := httpSrv.Serve(); err != nil {
 			os.Exit(1)
 		}
 	} else {
+		srv := mifosserver.NewMifosMcpServer(adapter.NewConfigured())
 		if err := srv.Serve(); err != nil {
 			os.Exit(1)
 		}

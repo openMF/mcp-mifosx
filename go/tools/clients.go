@@ -12,11 +12,12 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/openMF/mcp-mifosx/go/adapter"
 )
 
 // RegisterCallerScopedHTTPTools exposes only the audited read-only pilot.
 // It does not register any configured-credential handlers.
-func (r *Registry) RegisterCallerScopedHTTPTools() {
+func (r *Registry) RegisterCallerScopedHTTPTools(client *adapter.CallerClient) {
 	for _, def := range GetClientToolDefs() {
 		switch def.Name {
 		case "get_client", "get_client_accounts":
@@ -37,7 +38,7 @@ func (r *Registry) RegisterCallerScopedHTTPTools() {
 				if def.Name == "get_client_accounts" {
 					endpoint += "/accounts"
 				}
-				data, err := r.Fineract.DoCallerRequest(ctx, endpoint)
+				data, err := client.DoCallerRequest(ctx, endpoint)
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}
@@ -53,7 +54,7 @@ func (r *Registry) RegisterCallerScopedHTTPTools() {
 				if !ok || strings.TrimSpace(name) == "" {
 					return mcp.NewToolResultError("displayName is required"), nil
 				}
-				data, err := r.Fineract.DoCallerRequest(ctx, "clients", url.Values{"displayName": {name}})
+				data, err := client.DoCallerRequest(ctx, "clients", url.Values{"displayName": {name}})
 				if err != nil {
 					return mcp.NewToolResultError(err.Error()), nil
 				}

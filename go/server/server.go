@@ -15,6 +15,7 @@ type MifosMcpServer struct {
 	Registry  *tools.Registry
 }
 
+// NewMifosMcpServer builds the trusted local catalog with configured identity.
 func NewMifosMcpServer(fineractClient *adapter.FineractClient) *MifosMcpServer {
 	appServer := mcpserver.NewMCPServer("Mifos-Banking-Agent-Go", "1.0.0")
 
@@ -37,9 +38,9 @@ func (s *MifosMcpServer) Serve() error {
 
 // newCallerScopedHTTPServer uses a separate catalog so HTTP cannot reach
 // configured-credential tools, including handlers registered outside ToolDefs.
-func newCallerScopedHTTPServer(client *adapter.FineractClient, hooks *mcpserver.Hooks) *MifosMcpServer {
+func newCallerScopedHTTPServer(client *adapter.CallerClient, hooks *mcpserver.Hooks) *MifosMcpServer {
 	appServer := mcpserver.NewMCPServer("Mifos-Banking-Agent-Go", "1.0.0", mcpserver.WithHooks(hooks))
-	registry := &tools.Registry{Server: appServer, Fineract: client}
-	registry.RegisterCallerScopedHTTPTools()
+	registry := &tools.Registry{Server: appServer}
+	registry.RegisterCallerScopedHTTPTools(client)
 	return &MifosMcpServer{MCPServer: appServer, Registry: registry}
 }

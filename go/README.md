@@ -48,6 +48,13 @@ This server is purpose-built to thrive in production container orchestration env
 - **Local Stdio Mode:** Runs seamlessly as a background daemon for secure, air-gapped development using Cursor, VSCode, or Claude Desktop.
 - **Headless Cloud Mode (SSE):** By simply defining the `PORT` environment variable, the server instantly transforms into an HTTP microservice utilizing Server-Sent Events (SSE). This is the *only* way to connect pure web apps (like an Angular frontend or n8n workflow) to the MCP ecosystem without running a local terminal.
 
+Authentication is selected at initialization:
+
+- Trusted stdio/local mode uses `adapter.NewConfigured()` with `MIFOSX_USERNAME`, `MIFOSX_PASSWORD`, and `MIFOSX_TENANT_ID` (`adapter.New()` remains a compatibility alias).
+- HTTP/SSE mode uses `adapter.NewCaller()`. Every banking request requires `Authorization` and `X-Mifos-Tenant-Id`; missing or invalid caller context fails without configured-credential fallback. Only `get_client`, `search_clients`, and `get_client_accounts` are exposed.
+
+`NewHTTPServer` accepts only `*adapter.CallerClient`. This type holds no configured identity and has no configured-auth request methods. Both modes share base URL and TLS configuration.
+
 ### Telemetry & Monitoring (Prometheus)
 The server exposes structured metrics via a native **Prometheus** `/metrics` endpoint. 
 - The server exposes a dedicated `/metrics` endpoint built natively with the **Prometheus Golang Client**. 
