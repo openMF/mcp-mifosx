@@ -27,9 +27,9 @@ def test_apply_savings_charge_payload() -> None:
 
 
 def test_apply_savings_charge_leaves_fee_month_day_to_the_charge() -> None:
-    # Fineract's add-charge validator parses feeOnMonthDay without a monthDayFormat,
-    # so any value fails with HTTP 500. Left out, Fineract uses the date set on the
-    # charge definition (needed only for annual fees).
+    # Fineract's add-charge validator requires monthDayFormat and locale whenever
+    # feeOnMonthDay is sent. Left out, Fineract uses the date set on the charge
+    # definition (needed only for annual fees).
     with patch.object(fineract_client, "execute_post", return_value={"resourceId": 1}) as post:
         apply_savings_charge.func(7, 15)
     assert "feeOnMonthDay" not in post.call_args.args[1]
