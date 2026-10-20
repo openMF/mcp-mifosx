@@ -1,0 +1,87 @@
+name: Sandbox LOS CI
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'agentic-mifos-sandbox/los/**'
+      - '.github/workflows/sandbox-los-ci.yml'
+  pull_request:
+    branches: ['main']
+    paths:
+      - 'agentic-mifos-sandbox/los/**'
+      - '.github/workflows/sandbox-los-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentic-mifos-sandbox/los
+
+    # The API tests run against a real Postgres (tests/conftest.py).
+    services:
+      postgres:
+        image: postgres:18.6-alpine
+        env:
+          POSTGRES_USER: los
+          POSTGRES_PASSWORD: los
+          POSTGRES_DB: los_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U los -d los_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      LOS_DB_HOST: localhost
+      LOS_DB_PORT: '5432'
+      LOS_DB_NAME: los_test
+      LOS_DB_USER: los
+      LOS_DB_PASSWORD: los
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.15'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Test with pytest
+        run: pytest -v
+
+  docker-build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      # Build only: catches a base image or dependency update that breaks the image.
+      - name: Build Docker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: agentic-mifos-sandbox/los
+          push: false
+          cache-from: type=gha,scope=sandbox-los
+          cache-to: type=gha,mode=max,scope=sandbox-los

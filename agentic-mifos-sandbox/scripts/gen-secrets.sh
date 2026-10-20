@@ -30,6 +30,7 @@ generated() {
   case "$1" in
     FINERACT_DB_ADMIN_PASSWORD|FINERACT_DB_APP_PASSWORD) password ;;
     LIGHTNING_DB_ADMIN_PASSWORD|LIGHTNING_DB_APP_PASSWORD) password ;;
+    LOS_DB_ADMIN_PASSWORD|LOS_DB_APP_PASSWORD) password ;;
     LIGHTNING_ADMIN_PASSWORD|OPENFN_CALLBACK_SECRET) password ;;
     FINERACT_AGENT_*_PASSWORD) fineract_password ;;
     LIGHTNING_SECRET_KEY_BASE) openssl rand -base64 64 | tr -d '\n' ;;

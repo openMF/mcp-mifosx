@@ -8,6 +8,7 @@
 #   open http://localhost:4200   Mifos X web app (mifos / password)
 #   open http://localhost:4000   OpenFn Lightning (LIGHTNING_ADMIN_* in .env)
 #   curl http://localhost:8080/actuator/health   Agentic gateway (loan API)
+#   open http://localhost:8090/docs   LOS: commercial opportunities (los/README.md)
 #
 # Local models (optional, several GB to download on first start):
 #   docker compose --profile ollama up -d
@@ -28,6 +29,8 @@
 #   llm     - internal: the Ollama API, reachable from the OpenFn worker and the agents
 #   llm-egress - Ollama alone, to download models
 #   agent-<name> - internal: one agent and its MCP server
+#   los     - internal: the LOS and its database (no route to Fineract)
+#   los-edge - the LOS alone, for its published port
 
 # Webhook trigger ids of the OpenFn project. The bootstrap provisions the
 # triggers with exactly these ids, so the gateway's webhook URLs are fixed.
@@ -406,6 +409,58 @@ services:
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
+  # Loan origination service (LOS): commercial opportunities, from first
+  # contact until they are registered in Fineract or discarded. It has its own
+  # database and no access to Fineract: the write-back agent registers a
+  # qualified opportunity there and records the Fineract ids in the LOS.
+  los-db:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: postgres
+      # Superuser, used only by the init script; the LOS never sees it.
+      POSTGRES_PASSWORD: ${LOS_DB_ADMIN_PASSWORD:?run scripts/gen-secrets.sh}
+      LOS_APP_DB_USER: los
+      LOS_APP_DB_PASSWORD: ${LOS_DB_APP_PASSWORD:?run scripts/gen-secrets.sh}
+    volumes:
+      - ./los/postgresql-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - los-db-data:/var/lib/postgresql
+    healthcheck:
+      # Over TCP: while the init script runs on first start, Postgres listens on
+      # its Unix socket only, so this passes once the los database exists.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d los"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [los]
+    mem_limit: 256m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  los:
+    build: ./los
+    depends_on:
+      los-db:
+        condition: service_healthy
+    environment:
+      LOS_DB_HOST: los-db
+      LOS_DB_NAME: los
+      # Non-superuser role created by los/postgresql-init.sh.
+      LOS_DB_USER: los
+      LOS_DB_PASSWORD: ${LOS_DB_APP_PASSWORD}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    ports:
+      - "127.0.0.1:${LOS_PORT:-8090}:8000"
+    # los-edge: only for the published port; no other service is on it.
+    networks: [los, los-edge]
+    mem_limit: 256m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
   # Each agent is a Pi container paired with its own MCP server: the
   # mcp-mifosx Python server, limited to the agent's tool profile
   # (python/profiles.toml) and signed in to Fineract as the agent's service
@@ -478,9 +533,13 @@ networks:
   llm-egress: {}
   agent-decision:
     internal: true
+  los:
+    internal: true
+  los-edge: {}
 
 volumes:
   fineract-db-data: {}
   lightning-db-data: {}
   bootstrap-state: {}
   ollama-data: {}
+  los-db-data: {}
