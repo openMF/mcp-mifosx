@@ -370,8 +370,11 @@ def update_mobile(clientId: int, newMobileNo: str) -> dict:
 
 @mcp.tool()
 @safe_tool("close_client_profile")
-def close_client_profile(clientId: int, closureReasonId: int = 17) -> dict:
-    """Close a client's profile"""
+def close_client_profile(clientId: int, closureReasonId: Optional[int] = None) -> dict:
+    """Close a client's profile.
+    closureReasonId is required by Fineract (a ClientClosureReason code value). If it is
+    missing, nothing is closed and the error lists the configured reasons
+    (id = name) so you can ask the user which one applies."""
     return close_client.func(clientId, closureReasonId)
 
 @mcp.tool()
