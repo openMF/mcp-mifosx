@@ -58,6 +58,15 @@ python mcp_server.py
 
 The server starts on **stdio transport** — MCP clients connect to it using standard input/output.
 
+To serve **streamable HTTP** instead, for a client in another container or on another host, set FastMCP's settings:
+
+```bash
+FASTMCP_TRANSPORT=http FASTMCP_HOST=0.0.0.0 FASTMCP_PORT=8000 python mcp_server.py
+# clients connect to http://<host>:8000/mcp
+```
+
+The HTTP endpoint has no authentication of its own: anyone who can reach it acts as the configured Fineract user. Keep it on a private network, as the agentic Mifos sandbox does (one network per agent and its MCP server).
+
 By default it exposes only the read-only tools. Set `MCP_AGENT_PROFILE` to choose which tools it exposes; see [Tool profiles](#tool-profiles-enforced-by-the-server).
 
 ### 4. (Optional) Run with Docker
@@ -263,6 +272,8 @@ By keeping this server "pure," you gain:
 | `MIFOSX_PASSWORD`  | Fineract API password                   | `password` |
 | `MCP_AGENT_PROFILE` | Tool profile to expose: a name from `profiles.toml`, or `all` | `read-only` |
 | `MCP_PROFILES_FILE` | Path to the tool profiles file          | `profiles.toml` |
+| `FASTMCP_TRANSPORT` | `stdio`, or `http` for streamable HTTP at `/mcp` | `stdio` |
+| `FASTMCP_HOST` / `FASTMCP_PORT` | Address the HTTP transport listens on | `127.0.0.1` / `8000` |
 
 ---
 
