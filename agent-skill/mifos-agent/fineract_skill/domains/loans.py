@@ -304,7 +304,7 @@ def reject_loan(
 
 
 def make_repayment(
-    client: FineractClient, loan_id: int, amount: float
+    client: FineractClient, loan_id: int, amount: float, payment_type_id: int | None = None
 ) -> dict[str, Any]:
     """Make a repayment on an active loan.
 
@@ -314,14 +314,21 @@ def make_repayment(
         Active loan ID.
     amount : float
         Repayment amount.
+    payment_type_id : int, optional
+        Id of one of this tenant's payment types, saying how the money arrived. Unlike a
+        savings transaction a loan repayment does not need one, so it is posted only when
+        supplied rather than guessed at.
     """
+    payload: dict[str, Any] = {
+        "transactionDate": fineract_today(),
+        "transactionAmount": amount,
+        "dateFormat": "dd MMMM yyyy",
+        "locale": "en",
+    }
+    if payment_type_id is not None:
+        payload["paymentTypeId"] = payment_type_id
     try:
-        result = client.post(f"loans/{loan_id}/transactions?command=repayment", {
-            "transactionDate": fineract_today(),
-            "transactionAmount": amount,
-            "dateFormat": "dd MMMM yyyy",
-            "locale": "en",
-        })
+        result = client.post(f"loans/{loan_id}/transactions?command=repayment", payload)
         return safe_result(result)
     except FineractError as exc:
         return safe_result(None, error=str(exc))
