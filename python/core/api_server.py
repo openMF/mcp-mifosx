@@ -90,6 +90,9 @@ class SavingsCreate(BaseModel):
 
 class Transaction(BaseModel):
     amount: float
+    # Optional here too: a repayment records no payment type when it is omitted, while a
+    # deposit or withdrawal gets a 400 listing the tenant's payment types.
+    paymentTypeId: Optional[int] = None
 
 class SavingsCharge(BaseModel):
     amount: float
@@ -310,7 +313,7 @@ def reject_loan(loan_id: int, payload: LoanReject):
 
 @app.post("/api/loans/{loan_id}/repayment", tags=["Loans"])
 def make_loan_repayment(loan_id: int, payload: Transaction):
-    return handle_response(loans.make_loan_repayment.func(loan_id=loan_id, amount=payload.amount))
+    return handle_response(loans.make_loan_repayment.func(loan_id=loan_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
 
 @app.post("/api/loans/{loan_id}/late-fee", tags=["Loans"])
 def apply_late_fee(loan_id: int, payload: LateFee):
@@ -357,11 +360,11 @@ def close_savings_account(account_id: int):
 
 @app.post("/api/savings/{account_id}/deposit", tags=["Savings"])
 def deposit_savings(account_id: int, payload: Transaction):
-    return handle_response(savings.deposit_savings.func(account_id=account_id, amount=payload.amount))
+    return handle_response(savings.deposit_savings.func(account_id=account_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
 
 @app.post("/api/savings/{account_id}/withdraw", tags=["Savings"])
 def withdraw_savings(account_id: int, payload: Transaction):
-    return handle_response(savings.withdraw_savings.func(account_id=account_id, amount=payload.amount))
+    return handle_response(savings.withdraw_savings.func(account_id=account_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
 
 @app.post("/api/savings/{account_id}/charge", tags=["Savings"])
 def apply_savings_charge(account_id: int, payload: SavingsCharge):

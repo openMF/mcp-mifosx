@@ -267,8 +267,11 @@ def reject_loan_application(loan_id: int, note: str = "Rejected via AI Agent due
 # --- LOAN TRANSACTION OPERATIONS ---
 
 @tool
-def make_loan_repayment(loan_id: int, amount: float):
-    """Answers: 'The client just paid $150 towards their loan.'"""
+def make_loan_repayment(loan_id: int, amount: float, payment_type_id: Optional[int] = None):
+    """Answers: 'The client just paid $150 towards their loan.'
+    payment_type_id records how the money arrived, when the caller knows it (payment types
+    are tenant-specific, so nothing is guessed). A repayment does not need one in Fineract,
+    so it is left out of the request when not given."""
     print(f"[Tool] Logging repayment of {amount} on Loan #{loan_id}...")
     today = get_fineract_today()
 
@@ -276,9 +279,10 @@ def make_loan_repayment(loan_id: int, amount: float):
         "transactionDate": today,
         "transactionAmount": amount,
         "dateFormat": "dd MMMM yyyy",
-        "locale": "en",
-        "paymentTypeId": 1  # Standard Cash Receipt
+        "locale": "en"
     }
+    if payment_type_id is not None:
+        payload["paymentTypeId"] = payment_type_id
     return fineract_client.execute_post(f"loans/{loan_id}/transactions?command=repayment", payload)
 
 @tool
