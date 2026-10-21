@@ -22,21 +22,48 @@
 # From a script, add -T and close stdin (`< /dev/null`): without a terminal,
 # Pi reads stdin into the prompt and waits for it to end.
 #
-# Networks
-#   edge    - published ports (bound to 127.0.0.1) and outbound internet
-#   core    - internal: Fineract and its database, no route to the internet
-#   openfn  - internal: Lightning, its worker, the bootstrap and the gateway
-#   llm     - internal: the Ollama API, reachable from the OpenFn worker and the agents
-#   llm-egress - Ollama alone, to download models
+# Hardening: every service runs with a read-only file system (writable paths
+# are tmpfs or volumes), no Linux capabilities, no privilege escalation, an
+# explicit non-root user and memory and process limits. The only exceptions are
+# the two one-shot jobs that hand a volume to an unprivileged user: they run as
+# root with only the capabilities that needs, and no network.
+# scripts/check-hardening.py checks all of this in CI.
+#
+# Networks. Internal ones have no route outside Docker; each of the others
+# carries one published port (bound to 127.0.0.1) or one service's downloads.
+#   fineract-db  - internal: Fineract and its database
+#   core         - internal: Fineract's API and its clients (web app, worker,
+#                  bootstrap, MCP servers)
+#   lightning-db - internal: Lightning and its database
+#   openfn       - internal: Lightning, its worker, the bootstrap and the gateway
+#   llm          - internal: Ollama for the OpenFn worker
+#   agents-llm   - internal: Ollama for the agents
 #   agent-<name> - internal: one agent and its MCP server
-#   los     - internal: the LOS and its database (no route to Fineract)
-#   los-edge - the LOS alone, for its published port
+#   los          - internal: the LOS and its database (no route to Fineract)
+#   web-app-edge, lightning-edge, gateway-edge, los-edge - one published port each
+#                  (lightning-edge also for the npm adaptor catalogue)
+#   worker-egress - the OpenFn worker, to install adaptors from npm
+#   llm-egress   - Ollama, to download models
 
 # Webhook trigger ids of the OpenFn project. The bootstrap provisions the
 # triggers with exactly these ids, so the gateway's webhook URLs are fixed.
 x-openfn-triggers:
   loan-submit: &trigger-loan-submit 8c5f206e-6510-4bc1-87cd-cd71554e9335
   loan-review: &trigger-loan-review bde8f76a-5f61-4183-ac6f-0ec0ce8d9ff4
+
+# Settings every service gets (see Hardening above).
+x-hardened: &hardened
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+
+# Postgres runs as its own user from the start, so the entrypoint needs no root
+# step; the socket and lock file live in /run/postgresql.
+x-postgres: &postgres
+  <<: *hardened
+  user: postgres
+  tmpfs: ["/run/postgresql:uid=70,gid=70,mode=0775,size=1m", "/tmp:size=16m"]
+  pids_limit: 512
 
 # Models the OpenFn jobs ask for: the decision job (text) and the identity
 # document job (vision). ollama-pull downloads both.
@@ -46,6 +73,7 @@ x-ollama:
 
 services:
   fineract-db:
+    <<: *postgres
     image: postgres:18.6-alpine
     environment:
       POSTGRES_USER: postgres
@@ -57,16 +85,18 @@ services:
       - ./fineract/postgresql-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
       - fineract-db-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      # Over TCP: while the init script runs on first start, Postgres listens on
+      # its Unix socket only, so this passes once Fineract's database exists.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d fineract_tenants"]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks: [core]
+    networks: [fineract-db]
     mem_limit: 768m
-    security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
   fineract:
+    <<: *hardened
     # Pinned by digest (same build as the web app's e2e suite): apache/fineract
     # publishes several tags a day and `latest` moves under you.
     image: ${FINERACT_IMAGE:-apache/fineract:7ac780192@sha256:c3722d8475e140949b6bbec505833f0b5e5a6c27f8f8bd8d2ac38ff7df20fa05}
@@ -102,12 +132,15 @@ services:
       timeout: 10s
       retries: 60
       start_period: 120s
-    networks: [core]
+    user: nobody
+    tmpfs: ["/tmp:size=128m"]
+    networks: [fineract-db, core]
     mem_limit: 2g
-    security_opt: [no-new-privileges:true]
+    pids_limit: 1024
     restart: unless-stopped
 
   web-app:
+    <<: *hardened
     image: ${WEBAPP_IMAGE:-openmf/web-app:1.14}
     depends_on:
       fineract:
@@ -129,20 +162,29 @@ services:
       - ./web-app/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
     # The image's own CMD renders env.js only; render the proxy config too.
     # Only $FINERACT_PROXY_TARGET is substituted so nginx variables survive.
+    # env.js goes to /run (the image is read-only); nginx serves it as
+    # /assets/env.js.
     command: >-
       /bin/sh -c "
       envsubst '$$FINERACT_PROXY_TARGET' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf &&
-      envsubst < /usr/share/nginx/html/assets/env.template.js > /usr/share/nginx/html/assets/env.js &&
+      envsubst < /usr/share/nginx/html/assets/env.template.js > /run/env.js &&
       exec nginx -g 'daemon off;'
       "
+    # The image's nginx user (uid 101), listening on 8080.
+    user: nginx
+    tmpfs:
+      - /run:uid=101,gid=101,size=1m
+      - /var/cache/nginx:uid=101,gid=101,size=16m
+      - /etc/nginx/conf.d:uid=101,gid=101,size=1m
     ports:
-      - "127.0.0.1:${WEBAPP_PORT:-4200}:80"
-    networks: [edge, core]
+      - "127.0.0.1:${WEBAPP_PORT:-4200}:8080"
+    networks: [web-app-edge, core]
     mem_limit: 256m
-    security_opt: [no-new-privileges:true]
+    pids_limit: 128
     restart: unless-stopped
 
   lightning-db:
+    <<: *postgres
     image: postgres:18-alpine
     environment:
       POSTGRES_USER: postgres
@@ -154,27 +196,34 @@ services:
       - ./lightning/postgresql-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
       - lightning-db-data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      # Over TCP, as for fineract-db: passes once Lightning's database exists.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d lightning"]
       interval: 5s
       timeout: 5s
       retries: 10
-    networks: [openfn]
+    networks: [lightning-db]
     mem_limit: 512m
-    security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
   # Hands the shared bootstrap-state volume to uid 1000 (the Lightning and
-  # bootstrap images), so neither needs to run as root.
+  # bootstrap images), so neither needs to run as root. FOWNER: on later runs
+  # the folder already belongs to 1000, and root needs it to chmod.
   state-init:
+    <<: *hardened
     image: busybox:1.38
     command: ["sh", "-c", "chown 1000:1000 /state && chmod 700 /state"]
+    user: root
+    cap_add: [CHOWN, FOWNER]
     volumes:
       - bootstrap-state:/state
     network_mode: none
+    mem_limit: 32m
+    pids_limit: 32
     restart: "no"
 
   # Shared settings for the Lightning server and its one-shot setup job.
   lightning-setup: &lightning
+    <<: *hardened
     image: ${LIGHTNING_IMAGE:-openfn/lightning:v2.19.2}
     depends_on:
       lightning-db:
@@ -201,6 +250,11 @@ services:
       ALLOW_SIGNUP: "false"
       LIGHTNING_ADMIN_EMAIL: ${LIGHTNING_ADMIN_EMAIL:?set LIGHTNING_ADMIN_EMAIL in .env}
       LIGHTNING_ADMIN_PASSWORD: ${LIGHTNING_ADMIN_PASSWORD:?run scripts/gen-secrets.sh}
+      # Keeps Lightning's writes out of its read-only release folder: Mnesia
+      # (rate limiter) and crash dumps go to /tmp, and the time zone data stays
+      # the one shipped with the release instead of updating itself in place.
+      ERL_FLAGS: -mnesia dir '"/tmp/mnesia"' -tzdata autoupdate disabled
+      ERL_CRASH_DUMP: /tmp/erl_crash.dump
     # Runs the migrations, creates the admin user if it does not exist yet, and
     # writes an API token for the bootstrap to /state (kept while it stays
     # valid). Safe to run on every `up`.
@@ -243,10 +297,16 @@ services:
           end)
     volumes:
       - bootstrap-state:/state
-    # edge: the adaptor catalogue is fetched from npm.
-    networks: [openfn, edge]
+    user: lightning
+    # HOME is /app: npm's cache, and the adaptor icons Lightning downloads.
+    tmpfs:
+      - /tmp:size=64m
+      - /app/.npm:uid=1000,gid=1000,size=32m
+      - /app/priv/adaptor_icons:uid=1000,gid=1000,size=8m
+    # lightning-edge: the adaptor catalogue is fetched from npm.
+    networks: [lightning-db, lightning-edge]
     mem_limit: 1g
-    security_opt: [no-new-privileges:true]
+    pids_limit: 512
     restart: "no"
 
   lightning:
@@ -268,10 +328,12 @@ services:
       start_period: 30s
     ports:
       - "127.0.0.1:${LIGHTNING_PORT:-4000}:4000"
+    networks: [lightning-db, openfn, lightning-edge]
     mem_limit: 1536m
     restart: unless-stopped
 
   lightning-worker:
+    <<: *hardened
     image: ${LIGHTNING_WORKER_IMAGE:-openfn/ws-worker:v1.29.5}
     depends_on:
       lightning:
@@ -282,19 +344,26 @@ services:
       WORKER_LIGHTNING_PUBLIC_KEY: ${LIGHTNING_WORKER_PUBLIC_KEY:?run scripts/gen-secrets.sh}
       WORKER_CAPACITY: ${LIGHTNING_WORKER_CAPACITY:-2}
       NODE_OPTIONS: --dns-result-order=ipv4first
-    # edge: adaptors are installed from npm at run time.
+    user: node
+    tmpfs: ["/tmp:size=64m"]
+    # The adaptors the worker installs at run time (~70 MB): on disk rather
+    # than in memory, and kept across restarts.
+    volumes:
+      - lightning-worker-home:/home/node
+    # worker-egress: adaptors are installed from npm at run time.
     # core: the Fineract write-back job calls Fineract directly.
     # llm: the decision and document jobs call Ollama.
-    networks: [openfn, edge, core, llm]
+    networks: [openfn, worker-egress, core, llm]
     # Lets OLLAMA_URL point at an Ollama server on the Docker host (Linux;
     # Docker Desktop provides this name already).
     extra_hosts:
       - host.docker.internal:host-gateway
     mem_limit: 1g
-    security_opt: [no-new-privileges:true]
+    pids_limit: 512
     restart: unless-stopped
 
   bootstrap:
+    <<: *hardened
     build: ./bootstrap
     depends_on:
       fineract:
@@ -322,37 +391,64 @@ services:
       - bootstrap-state:/state:ro
       - ../agentic-banking-openfn/openfn/project.yaml:/spec/project.yaml:ro
       - ./fineract-rbac.json:/spec/fineract-rbac.json:ro
+    user: "1000:1000"
     networks: [core, openfn]
     mem_limit: 128m
-    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    restart: "no"
+
+  # Hands the model volume to the unprivileged user Ollama runs as. Quick on
+  # every start (it changes ownership only), and converts a volume created
+  # when Ollama still ran as root.
+  ollama-init:
+    <<: *hardened
+    image: busybox:1.38
+    profiles: [ollama]
+    command: ["chown", "-R", "10002:10002", "/data"]
+    user: root
+    cap_add: [CHOWN]
+    volumes:
+      - ollama-data:/data
+    network_mode: none
+    mem_limit: 32m
+    pids_limit: 32
     restart: "no"
 
   # Local LLM server, started only with `--profile ollama`.
   ollama:
+    <<: *hardened
     image: &ollama-image ${OLLAMA_IMAGE:-ollama/ollama:0.40.5}
     profiles: [ollama]
+    depends_on:
+      ollama-init:
+        condition: service_completed_successfully
     environment:
       # The text and vision models take turns in memory instead of both
       # staying loaded; one request at a time keeps CPU-only hosts usable.
       OLLAMA_MAX_LOADED_MODELS: 1
       OLLAMA_NUM_PARALLEL: 1
       OLLAMA_KEEP_ALIVE: 10m
+      # Models and keys in $HOME/.ollama: the volume below.
+      HOME: /home/ollama
+    user: "10002:10002"
+    tmpfs: ["/tmp:size=64m"]
     volumes:
-      - ollama-data:/root/.ollama
+      - ollama-data:/home/ollama/.ollama
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 10s
-    networks: [llm, llm-egress]
+    networks: [llm, agents-llm, llm-egress]
     mem_limit: ${OLLAMA_MEM_LIMIT:-6g}
-    security_opt: [no-new-privileges:true]
+    pids_limit: 512
     restart: unless-stopped
 
   # Downloads the models into the ollama-data volume. Models already there are
   # only checked for updates, so it is safe to run on every `up`.
   ollama-pull:
+    <<: *hardened
     image: *ollama-image
     profiles: [ollama]
     depends_on:
@@ -362,14 +458,19 @@ services:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: *ollama-model
       OLLAMA_VISION_MODEL: *ollama-vision-model
+      # The client keeps its key in $HOME/.ollama.
+      HOME: /tmp
     entrypoint: ["/bin/sh", "-c"]
     command: ['ollama pull "$$OLLAMA_MODEL" && ollama pull "$$OLLAMA_VISION_MODEL"']
+    user: "10002:10002"
+    tmpfs: ["/tmp:size=16m"]
     networks: [llm]
     mem_limit: 128m
-    security_opt: [no-new-privileges:true]
+    pids_limit: 128
     restart: "no"
 
   gateway:
+    <<: *hardened
     build: ../agentic-banking-openfn
     depends_on:
       bootstrap:
@@ -402,11 +503,13 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
+    user: gateway
+    tmpfs: ["/tmp:size=64m"]
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
-    networks: [edge, openfn]
+    networks: [gateway-edge, openfn]
     mem_limit: 768m
-    security_opt: [no-new-privileges:true]
+    pids_limit: 512
     restart: unless-stopped
 
   # Loan origination service (LOS): commercial opportunities, from first
@@ -414,6 +517,7 @@ services:
   # database and no access to Fineract: the write-back agent registers a
   # qualified opportunity there and records the Fineract ids in the LOS.
   los-db:
+    <<: *postgres
     image: postgres:18.6-alpine
     environment:
       POSTGRES_USER: postgres
@@ -433,10 +537,10 @@ services:
       retries: 10
     networks: [los]
     mem_limit: 256m
-    security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
   los:
+    <<: *hardened
     build: ./los
     depends_on:
       los-db:
@@ -453,12 +557,14 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    user: los
+    tmpfs: ["/tmp:size=16m"]
     ports:
       - "127.0.0.1:${LOS_PORT:-8090}:8000"
     # los-edge: only for the published port; no other service is on it.
     networks: [los, los-edge]
     mem_limit: 256m
-    security_opt: [no-new-privileges:true]
+    pids_limit: 128
     restart: unless-stopped
 
   # Each agent is a Pi container paired with its own MCP server: the
@@ -467,6 +573,7 @@ services:
   # user (fineract-rbac.json). The agent holds no Fineract credentials and
   # reaches only its MCP server and the LLM.
   mcp-decision:
+    <<: *hardened
     build: ../python
     profiles: [agents]
     depends_on:
@@ -494,12 +601,14 @@ services:
       retries: 12
     # The Python image has no unprivileged user of its own.
     user: "10001:10001"
+    tmpfs: ["/tmp:size=16m"]
     networks: [core, agent-decision]
     mem_limit: 256m
-    security_opt: [no-new-privileges:true]
+    pids_limit: 128
     restart: unless-stopped
 
   agent-decision:
+    <<: *hardened
     build: ./pi-agent
     profiles: [agents]
     depends_on:
@@ -517,25 +626,37 @@ services:
       AGENT_MODEL: *ollama-model
     # Forwards signals to Pi and reaps its child processes.
     init: true
-    networks: [agent-decision, llm]
+    user: node
+    # Pi's configuration (written at start) in /home/node/.pi.
+    tmpfs: ["/tmp:size=32m", "/home/node/.pi:uid=1000,gid=1000,size=8m"]
+    networks: [agent-decision, agents-llm]
     mem_limit: 512m
-    security_opt: [no-new-privileges:true]
+    pids_limit: 256
     restart: "no"
 
 networks:
-  edge: {}
+  fineract-db:
+    internal: true
   core:
+    internal: true
+  lightning-db:
     internal: true
   openfn:
     internal: true
   llm:
     internal: true
-  llm-egress: {}
+  agents-llm:
+    internal: true
   agent-decision:
     internal: true
   los:
     internal: true
+  web-app-edge: {}
+  lightning-edge: {}
+  gateway-edge: {}
   los-edge: {}
+  worker-egress: {}
+  llm-egress: {}
 
 volumes:
   fineract-db-data: {}
@@ -543,3 +664,4 @@ volumes:
   bootstrap-state: {}
   ollama-data: {}
   los-db-data: {}
+  lightning-worker-home: {}

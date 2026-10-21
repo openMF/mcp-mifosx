@@ -1,0 +1,37 @@
+name: Sandbox CI
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'agentic-mifos-sandbox/**'
+      - '.github/workflows/sandbox-ci.yml'
+  pull_request:
+    branches: ['main']
+    paths:
+      - 'agentic-mifos-sandbox/**'
+      - '.github/workflows/sandbox-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hardening:
+    name: Compose hardening
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentic-mifos-sandbox
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The compose file requires its secrets: generate throwaway ones.
+      - name: Generate a throwaway .env
+        run: ./scripts/gen-secrets.sh
+
+      - name: Check the hardening baseline
+        run: |
+          docker compose --profile ollama --profile agents config --format json > "$RUNNER_TEMP/compose.json"
+          python3 scripts/check-hardening.py < "$RUNNER_TEMP/compose.json"
