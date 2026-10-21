@@ -54,6 +54,7 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 	mux.Handle("/sse", sseServer.SSEHandler())
 	mux.Handle("/message", sseServer.MessageHandler())
 	mux.Handle("/metrics", promhttp.Handler())
+	mux.HandleFunc("/api/capabilities", s.handleCapabilities)
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -74,13 +75,16 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Mifos-Tenant-Id")
+		if r.URL.Path == "/api/capabilities" {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
 
-		if r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" || r.URL.Path == "/api/search_clients" || r.URL.Path == "/api/get_client_accounts" {
+		if r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" || r.URL.Path == "/api/search_clients" || r.URL.Path == "/api/get_client_accounts" || r.URL.Path == "/api/capabilities" {
 			// Exactly one value per identity header; no query/body/session defaults.
 			auth, tenant := r.Header.Values("Authorization"), r.Header.Values("X-Mifos-Tenant-Id")
 			if len(auth) != 1 || len(tenant) != 1 {
@@ -105,6 +109,25 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 	return handler
+}
+
+func (s *MifosHTTPServer) handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	capabilities, err := tools.CallerCapabilities(r.Context(), s.caller)
+	if err != nil {
+		http.Error(w, "caller permissions could not be verified", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(struct {
+		Tools []tools.ToolCapability `json:"tools"`
+	}{Tools: capabilities}); err != nil {
+		log.Printf("[HTTP] encode capabilities response: %v", err)
+	}
 }
 
 func (s *MifosHTTPServer) Serve() error {
