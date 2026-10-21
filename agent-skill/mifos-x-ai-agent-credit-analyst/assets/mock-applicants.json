@@ -1,0 +1,1426 @@
+{
+  "description": "Mock applicants served by the bundled provider (see references/external-systems.md). Keys are case ids.",
+  "cases": {
+    "1001": {
+      "case_id": "1001",
+      "description": "Approve: good income, clean bureau (closed and excluded accounts ignored)",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1002": {
+      "case_id": "1002",
+      "description": "Reject: payments already exceed 30% capacity",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 50000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 12000
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 12000
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 12000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "personal_loan",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 4200
+        }
+      ],
+      "tax": {
+        "annual_return_income": null,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1003": {
+      "case_id": "1003",
+      "description": "Reject: bureau history worse than the allowed risk level",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "personal_loan",
+          "status": "closed",
+          "worst_risk_level": 5,
+          "monthly_payment": 0
+        },
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 900
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1004": {
+      "case_id": "1004",
+      "description": "Reject: national ID not valid",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "INVALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1005": {
+      "case_id": "1005",
+      "description": "Reject: income proof outdated (months 4-6)",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 4,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30000
+            }
+          ]
+        },
+        {
+          "month_offset": 5,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30000
+            }
+          ]
+        },
+        {
+          "month_offset": 6,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1006": {
+      "case_id": "1006",
+      "description": "Reject: income proof not consecutive (months 1, 2, 4)",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30000
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30000
+            }
+          ]
+        },
+        {
+          "month_offset": 4,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1007": {
+      "case_id": "1007",
+      "description": "Approve: large refunds, loan disbursement and reversal excluded from income",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 100000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 20000
+            },
+            {
+              "type": "credit_disbursement",
+              "amount": 50000
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 20000
+            },
+            {
+              "type": "refund",
+              "amount": 8000
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 20000
+            },
+            {
+              "type": "reversal",
+              "amount": 5000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": null,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1008": {
+      "case_id": "1008",
+      "description": "Approve: stamped payroll stubs only",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 60000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "payroll_stub",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 26000
+            }
+          ],
+          "stamped": true
+        },
+        {
+          "month_offset": 2,
+          "source": "payroll_stub",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 26000
+            }
+          ],
+          "stamped": true
+        },
+        {
+          "month_offset": 3,
+          "source": "payroll_stub",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 26000
+            }
+          ],
+          "stamped": true
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": null,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1009": {
+      "case_id": "1009",
+      "description": "Approve: tax income higher than bank flows",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 250000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 15000
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 15000
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 15000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 480000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1010": {
+      "case_id": "1010",
+      "description": "Incomplete: Tax Status Certificate missing",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": false,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1011": {
+      "case_id": "1011",
+      "description": "Refer: negative tax compliance opinion",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "negative",
+        "monthly_invoicing": []
+      }
+    },
+    "1012": {
+      "case_id": "1012",
+      "description": "Refer: no credit-bureau history",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1013": {
+      "case_id": "1013",
+      "description": "Approve after waiting: authorization pending on the first check",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 1
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1014": {
+      "case_id": "1014",
+      "description": "Reject: applicant refused the bureau/tax authorization",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "REFUSED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1015": {
+      "case_id": "1015",
+      "description": "Refer: legal entity (company)",
+      "entity_type": "LEGAL_ENTITY",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1016": {
+      "case_id": "1016",
+      "description": "Reject: no formal income proof",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1017": {
+      "case_id": "1017",
+      "description": "Reject: payroll stubs not stamped",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "payroll_stub",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 26000
+            }
+          ],
+          "stamped": false
+        },
+        {
+          "month_offset": 2,
+          "source": "payroll_stub",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 26000
+            }
+          ],
+          "stamped": false
+        },
+        {
+          "month_offset": 3,
+          "source": "payroll_stub",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 26000
+            }
+          ],
+          "stamped": false
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1018": {
+      "case_id": "1018",
+      "description": "Refer: documents uploaded but no structured income data",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": null,
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1019": {
+      "case_id": "1019",
+      "description": "Incomplete: authorization link expired",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 120000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "EXPIRED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    },
+    "1020": {
+      "case_id": "1020",
+      "description": "Approve capped: requested amount above the maximum",
+      "entity_type": "INDIVIDUAL",
+      "id_status": "VALID",
+      "requested_amount": 900000,
+      "income": [
+        {
+          "month_offset": 1,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31000
+            },
+            {
+              "type": "refund",
+              "amount": 2500
+            }
+          ]
+        },
+        {
+          "month_offset": 2,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 30500
+            }
+          ]
+        },
+        {
+          "month_offset": 3,
+          "source": "bank_statement",
+          "inflows": [
+            {
+              "type": "salary",
+              "amount": 31500
+            },
+            {
+              "type": "transfer_in",
+              "amount": 1000
+            }
+          ]
+        }
+      ],
+      "authorization": {
+        "result": "AUTHORIZED",
+        "pending_checks": 0
+      },
+      "bureau": [
+        {
+          "type": "credit_card",
+          "status": "open",
+          "worst_risk_level": 1,
+          "monthly_payment": 1500,
+          "revolving": true,
+          "balance": 12000
+        },
+        {
+          "type": "auto_loan",
+          "status": "closed",
+          "worst_risk_level": 2,
+          "monthly_payment": 0
+        },
+        {
+          "type": "communications",
+          "status": "open",
+          "worst_risk_level": 5,
+          "monthly_payment": 600
+        }
+      ],
+      "tax": {
+        "annual_return_income": 300000,
+        "tax_status_certificate": true,
+        "compliance_opinion": "positive",
+        "monthly_invoicing": []
+      }
+    }
+  }
+}

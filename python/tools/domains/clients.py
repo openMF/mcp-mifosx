@@ -84,15 +84,37 @@ def update_client_mobile(client_id: int, new_mobile_no: str):
     # Notice this uses PUT instead of POST for updates
     return fineract_client.execute_put(f"clients/{client_id}", payload)
 
+def _closure_reason_required() -> dict:
+    """Error for a close request without a reason, listing the reasons Fineract offers."""
+    template = fineract_client.execute_get("clients/template?commandParam=close")
+    if not isinstance(template, dict) or "error" in template:
+        return {"error": "closure_reason_id is required, and the available closure reasons "
+                         f"could not be loaded: {template.get('error') if isinstance(template, dict) else template}"}
+    # Fineract returns only the active ClientClosureReason code values here
+    reasons = [{"id": r.get("id"), "name": r.get("name")} for r in template.get("narrations") or []]
+    if not reasons:
+        return {"error": "closure_reason_id is required, but no closure reasons are configured. "
+                         "Add a value to the 'ClientClosureReason' code in Fineract first."}
+    # The MCP wrapper (safe_tool) passes on only the message, so the reasons have to be in it
+    listed = "; ".join(f"{r['id']} = {r['name']}" for r in reasons)
+    return {"error": f"closure_reason_id is required. Ask the user which reason applies: {listed}.",
+            "closure_reasons": reasons}
+
+
 @tool
-def close_client(client_id: int, closure_reason_id: int = 17):
-    """Answers: 'Close this client's profile, they are leaving the bank'"""
+def close_client(client_id: int, closure_reason_id: Optional[int] = None):
+    """Answers: 'Close this client's profile, they are leaving the bank'
+    Fineract requires a closure reason (a ClientClosureReason code value). Without
+    closure_reason_id nothing is submitted; the reasons configured in Fineract are
+    returned so the user can pick one."""
+    if closure_reason_id is None:
+        return _closure_reason_required()
     print(f"[Tool] Closing Client #{client_id}...")
     today = get_fineract_today()
 
     payload = {
         "closureDate": today,
-        "closureReasonId": closure_reason_id,  # Requires a valid code table ID from Fineract
+        "closureReasonId": closure_reason_id,
         "dateFormat": "dd MMMM yyyy",
         "locale": "en"
     }
