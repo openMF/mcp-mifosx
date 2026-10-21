@@ -47,7 +47,8 @@ type ToolParam struct {
 }
 
 type Registry struct {
-	Server   *server.MCPServer
+	Server *server.MCPServer
+	// Fineract is for configured stdio/local tools; nil in the HTTP catalog.
 	Fineract *adapter.FineractClient
 	ToolDefs map[string]BaseToolDef
 }
