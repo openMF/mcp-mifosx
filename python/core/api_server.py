@@ -47,7 +47,7 @@ class ClientMobileUpdate(BaseModel):
     new_mobile_no: str
 
 class ClientClose(BaseModel):
-    closure_reason_id: int = 17
+    closure_reason_id: Optional[int] = None
 
 class ClientIdentifierCreate(BaseModel):
     document_type_id: int
