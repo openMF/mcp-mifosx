@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fineract_skill.client import FineractClient, FineractError
-from fineract_skill.helpers import fineract_today, fmt_date, safe_result
+from fineract_skill.helpers import fineract_today, fmt_date, invalid_payment_type, safe_result
 
 # ── Read ───────────────────────────────────────────────────────────────
 
@@ -211,6 +211,9 @@ def deposit(client: FineractClient, account_id: int, amount: float, payment_type
     """
     if payment_type_id is None:
         return _payment_type_required(client, "deposit")
+    invalid = invalid_payment_type(payment_type_id)
+    if invalid is not None:
+        return safe_result(None, error=invalid)
     try:
         result = client.post(f"savingsaccounts/{account_id}/transactions?command=deposit", {
             "transactionDate": fineract_today(),
@@ -240,6 +243,9 @@ def withdraw(client: FineractClient, account_id: int, amount: float, payment_typ
     """
     if payment_type_id is None:
         return _payment_type_required(client, "withdrawal")
+    invalid = invalid_payment_type(payment_type_id)
+    if invalid is not None:
+        return safe_result(None, error=invalid)
     try:
         result = client.post(f"savingsaccounts/{account_id}/transactions?command=withdrawal", {
             "transactionDate": fineract_today(),

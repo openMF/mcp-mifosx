@@ -142,3 +142,46 @@ def test_the_registry_tells_the_agent_the_field_is_required_on_savings() -> None
         parameter = {p.name: p for p in spec.parameters}["payment_type_id"]
         assert "Fineract requires one" in parameter.description
         assert "this tenant's payment types" in parameter.description
+
+
+def test_deposit_rejects_a_zero_payment_type(fineract: FineractClient, posted: list[dict[str, Any]]) -> None:
+    # Fineract rejects paymentTypeId with integerGreaterThanZero, so posting it is a
+    # pointless round trip with an opaque message.
+    result = deposit(fineract, 1, 500.0, payment_type_id=0)
+
+    assert result["ok"] is False
+    assert "greater than zero" in result["error"]
+    assert posted == []
+
+
+def test_withdraw_rejects_a_negative_payment_type(fineract: FineractClient, posted: list[dict[str, Any]]) -> None:
+    result = withdraw(fineract, 1, 100.0, payment_type_id=-1)
+
+    assert result["ok"] is False
+    assert "greater than zero" in result["error"]
+    assert posted == []
+
+
+def test_repayment_rejects_a_non_positive_payment_type(fineract: FineractClient, posted: list[dict[str, Any]]) -> None:
+    result = make_repayment(fineract, 7, 250.0, payment_type_id=0)
+
+    assert result["ok"] is False
+    assert "greater than zero" in result["error"]
+    assert posted == []
+
+
+def test_the_rejection_tells_the_agent_how_to_fix_it(fineract: FineractClient, posted: list[dict[str, Any]]) -> None:
+    result = deposit(fineract, 1, 500.0, payment_type_id=0)
+
+    # An id of 0 is not a hint that the field should be dropped, so the message has to
+    # say what to do instead.
+    assert "leave it out to be told the configured ones" in result["error"]
+
+
+def test_one_is_still_accepted(fineract: FineractClient, posted: list[dict[str, Any]]) -> None:
+    # 1 is a real payment type on a stock Fineract, so the guard must not be a range
+    # check that lets anything through.
+    result = deposit(fineract, 1, 500.0, payment_type_id=1)
+
+    assert result["ok"] is True
+    assert posted[0]["paymentTypeId"] == 1

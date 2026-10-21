@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fineract_skill.client import FineractClient, FineractError
-from fineract_skill.helpers import fineract_today, fmt_date, safe_result
+from fineract_skill.helpers import fineract_today, fmt_date, invalid_payment_type, safe_result
 
 # ── Read ───────────────────────────────────────────────────────────────
 
@@ -319,6 +319,9 @@ def make_repayment(
         savings transaction a loan repayment does not need one, so it is posted only when
         supplied rather than guessed at.
     """
+    invalid = invalid_payment_type(payment_type_id)
+    if invalid is not None:
+        return safe_result(None, error=invalid)
     payload: dict[str, Any] = {
         "transactionDate": fineract_today(),
         "transactionAmount": amount,
