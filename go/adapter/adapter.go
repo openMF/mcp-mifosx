@@ -22,10 +22,9 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/joho/godotenv"
 )
 
+// FineractClient executes as the configured identity in trusted stdio/local mode.
 type FineractClient struct {
 	BaseURL  string
 	TenantID string
@@ -34,9 +33,15 @@ type FineractClient struct {
 	HTTP     *http.Client
 }
 
+// CallerClient executes only with identity from CallContext. It deliberately
+// holds no configured credentials and exposes no configured request methods.
+type CallerClient struct {
+	baseURL string
+	http    *http.Client
+}
+
 // DoCallerRequest is limited to the caller-scoped HTTP client reads.
-// DoRequest remains the separate configured-credential mode.
-func (c *FineractClient) DoCallerRequest(ctx context.Context, endpoint string, queryParams ...url.Values) ([]byte, error) {
+func (c *CallerClient) DoCallerRequest(ctx context.Context, endpoint string, queryParams ...url.Values) ([]byte, error) {
 	call, err := callerContext(ctx)
 	if err != nil {
 		return nil, err
@@ -48,7 +53,7 @@ func (c *FineractClient) DoCallerRequest(ctx context.Context, endpoint string, q
 	if !getClient && !searchClients || getClient && len(queryParams) != 0 {
 		return nil, fmt.Errorf("operation is not supported in caller-scoped HTTP mode")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/"+endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/"+endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("could not construct Fineract request")
 	}
@@ -58,10 +63,10 @@ func (c *FineractClient) DoCallerRequest(ctx context.Context, endpoint string, q
 	req.Header.Set("Authorization", call.authorization)
 	req.Header.Set("fineract-platform-tenantid", call.tenant)
 	req.Header.Set("Accept", "application/json")
-	// Copy the client, not its shared credentials or transport. Do not forward
-	// caller credentials to redirects, including redirects on the same host.
-	httpClient := *c.HTTP
-	httpClient.Jar = nil // Never share configured-mode banking session cookies.
+	// Do not forward caller credentials to redirects, including on the same host,
+	// or share banking session cookies across callers.
+	httpClient := *c.http
+	httpClient.Jar = nil
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := httpClient.Do(req)
 	if err != nil {
@@ -98,18 +103,20 @@ func (c *FineractClient) DoCallerRequest(ctx context.Context, endpoint string, q
 	return data, nil
 }
 
-func New() *FineractClient {
-	_ = godotenv.Load()
+// New preserves the configured-identity constructor for existing local users.
+func New() (*FineractClient, error) { return NewConfigured() }
 
-	baseURL := os.Getenv("MIFOSX_BASE_URL")
+// NewConfigured intentionally loads the banking identity for trusted local use.
+func NewConfigured() (*FineractClient, error) {
+	baseURL, httpClient, err := newConnection()
+	if err != nil {
+		return nil, fmt.Errorf("initialize configured client: %w", err)
+	}
+
 	tenantID := os.Getenv("MIFOSX_TENANT_ID")
 	username := os.Getenv("MIFOSX_USERNAME")
 	password := os.Getenv("MIFOSX_PASSWORD")
-	skipTLSVerify := os.Getenv("MIFOSX_SKIP_TLS_VERIFY")
 
-	if baseURL == "" {
-		baseURL = "https://localhost:8443/fineract-provider/api/v1"
-	}
 	if tenantID == "" {
 		tenantID = "default"
 	}
@@ -117,23 +124,44 @@ func New() *FineractClient {
 		username = "mifos"
 	}
 
-	// Default to false for security, only skip verification if explicitly set
-	insecureSkipVerify := strings.ToLower(skipTLSVerify) == "true"
-
 	return &FineractClient{
-		BaseURL:  strings.TrimRight(baseURL, "/"),
+		BaseURL:  baseURL,
 		TenantID: tenantID,
 		Username: username,
 		Password: password,
-		HTTP: &http.Client{
-			Timeout: 45 * time.Second,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
-			},
-		},
-	}
+		HTTP:     httpClient,
+	}, nil
 }
 
+// NewCaller selects caller identity without reading configured banking identity.
+func NewCaller() (*CallerClient, error) {
+	baseURL, httpClient, err := newConnection()
+	if err != nil {
+		return nil, fmt.Errorf("initialize caller client: %w", err)
+	}
+	return &CallerClient{baseURL: baseURL, http: httpClient}, nil
+}
+
+// newConnection shares connection setup, never authentication selection.
+func newConnection() (string, *http.Client, error) {
+	if err := LoadEnvironment(); err != nil {
+		return "", nil, fmt.Errorf("initialize Fineract connection: %w", err)
+	}
+	baseURL := os.Getenv("MIFOSX_BASE_URL")
+	if baseURL == "" {
+		baseURL = "https://localhost:8443/fineract-provider/api/v1"
+	}
+	// Default to false for security, only skip verification if explicitly set.
+	insecureSkipVerify := strings.EqualFold(os.Getenv("MIFOSX_SKIP_TLS_VERIFY"), "true")
+	return strings.TrimRight(baseURL, "/"), &http.Client{
+		Timeout: 45 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: insecureSkipVerify},
+		},
+	}, nil
+}
+
+// DoRequest always uses the configured identity; it never selects caller mode.
 func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, queryParams map[string]string) ([]byte, error) {
 	isAttachment := strings.Contains(endpoint, "/attachment") || strings.Contains(endpoint, "/download")
 	endpoint = strings.TrimPrefix(endpoint, "/")
