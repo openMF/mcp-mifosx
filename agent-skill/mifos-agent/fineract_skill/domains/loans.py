@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fineract_skill.client import FineractClient, FineractError
-from fineract_skill.helpers import fineract_today, fmt_date, safe_result
+from fineract_skill.helpers import fineract_today, fmt_date, invalid_payment_type, safe_result
 
 # ── Read ───────────────────────────────────────────────────────────────
 
@@ -303,8 +303,18 @@ def reject_loan(
         return safe_result(None, error=str(exc))
 
 
+# A loan repayment posts without a payment type (LoanTransactionValidatorImpl uses
+# ignoreIfNull), so leaving the field out succeeds and records no payment detail. It must
+# not be told to leave it out "to be told the configured ones": nothing lists them here,
+# unlike the savings handlers.
+_LOAN_RECOVERY = (
+    "Omit the field and the repayment is recorded with no payment type, or supply the id "
+    "of one of this tenant's payment types to record how the money arrived."
+)
+
+
 def make_repayment(
-    client: FineractClient, loan_id: int, amount: float
+    client: FineractClient, loan_id: int, amount: float, payment_type_id: int | None = None
 ) -> dict[str, Any]:
     """Make a repayment on an active loan.
 
@@ -314,14 +324,24 @@ def make_repayment(
         Active loan ID.
     amount : float
         Repayment amount.
+    payment_type_id : int, optional
+        Id of one of this tenant's payment types, saying how the money arrived. Unlike a
+        savings transaction a loan repayment does not need one, so it is posted only when
+        supplied rather than guessed at.
     """
+    invalid = invalid_payment_type(payment_type_id, _LOAN_RECOVERY)
+    if invalid is not None:
+        return safe_result(None, error=invalid)
+    payload: dict[str, Any] = {
+        "transactionDate": fineract_today(),
+        "transactionAmount": amount,
+        "dateFormat": "dd MMMM yyyy",
+        "locale": "en",
+    }
+    if payment_type_id is not None:
+        payload["paymentTypeId"] = payment_type_id
     try:
-        result = client.post(f"loans/{loan_id}/transactions?command=repayment", {
-            "transactionDate": fineract_today(),
-            "transactionAmount": amount,
-            "dateFormat": "dd MMMM yyyy",
-            "locale": "en",
-        })
+        result = client.post(f"loans/{loan_id}/transactions?command=repayment", payload)
         return safe_result(result)
     except FineractError as exc:
         return safe_result(None, error=str(exc))

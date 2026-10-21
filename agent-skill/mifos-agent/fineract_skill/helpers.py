@@ -46,6 +46,40 @@ def fmt_date(raw) -> str | None:
     return str(raw)
 
 
+def invalid_payment_type(payment_type_id: int | None, recovery: str) -> str | None:
+    """Message for a payment type id that is not a positive integer, else ``None``.
+
+    Fineract checks ``paymentTypeId`` with ``integerGreaterThanZero()`` on savings
+    transactions (``SavingsAccountTransactionDataValidator.validatePaymentTypeDetails``)
+    and loan repayments (``LoanTransactionValidatorImpl.validatePaymentDetails``), so
+    ``0`` and negative ids are rejected there. Catching it here turns a platform
+    validation error into one an agent can act on, and saves the round trip. A payment
+    type id of ``0`` cannot exist anyway: Fineract's sequence starts above it.
+
+    Parameters
+    ----------
+    payment_type_id : int or None
+        The id about to be posted, or None when it was not supplied.
+    recovery : str
+        What the caller should do instead, which differs by flow and must not be
+        shared. A savings transaction cannot post without a payment type, so leaving
+        the field out makes the handler list the tenant's configured ones. A loan
+        repayment can post without one, so leaving it out there succeeds and records
+        no payment detail; telling a repayment to "leave it out to be told the
+        options" would be false.
+
+    Returns
+    -------
+    str or None
+        The message to fail with, or None when the id may be posted.
+    """
+    if payment_type_id is not None and payment_type_id <= 0:
+        return (
+            f"payment_type_id must be greater than zero, and {payment_type_id} was given. {recovery}"
+        )
+    return None
+
+
 def safe_result(data: dict | list | None, *, error: str | None = None) -> dict:
     """Wrap a raw Fineract response into a standardised agent-friendly
     envelope.

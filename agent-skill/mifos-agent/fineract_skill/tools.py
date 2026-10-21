@@ -376,6 +376,14 @@ TOOL_REGISTRY: list[ToolSpec] = [
         parameters=[
             ToolParam("loan_id", "integer", "Active loan ID."),
             ToolParam("amount", "number", "Repayment amount."),
+            ToolParam(
+                "payment_type_id",
+                "integer",
+                "Id of one of this tenant's payment types, saying how the money arrived. A "
+                "loan repayment goes through without one, so this is only posted when supplied.",
+                required=False,
+                default=None,
+            ),
         ],
     ),
     ToolSpec(
@@ -501,6 +509,15 @@ TOOL_REGISTRY: list[ToolSpec] = [
         parameters=[
             ToolParam("account_id", "integer", "Active savings account ID."),
             ToolParam("amount", "number", "Amount to deposit."),
+            ToolParam(
+                "payment_type_id",
+                "integer",
+                "Id of one of this tenant's payment types, saying how the money arrived. "
+                "Fineract requires one on a savings transaction, so leave it out only to be "
+                "told the configured ones.",
+                required=False,
+                default=None,
+            ),
         ],
     ),
     ToolSpec(
@@ -511,6 +528,15 @@ TOOL_REGISTRY: list[ToolSpec] = [
         parameters=[
             ToolParam("account_id", "integer", "Active savings account ID."),
             ToolParam("amount", "number", "Amount to withdraw."),
+            ToolParam(
+                "payment_type_id",
+                "integer",
+                "Id of one of this tenant's payment types, saying where the money went. "
+                "Fineract requires one on a savings transaction, so leave it out only to be "
+                "told the configured ones.",
+                required=False,
+                default=None,
+            ),
         ],
         destructive=True,
     ),
