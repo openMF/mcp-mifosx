@@ -46,7 +46,7 @@ def fmt_date(raw) -> str | None:
     return str(raw)
 
 
-def invalid_payment_type(payment_type_id: int | None) -> str | None:
+def invalid_payment_type(payment_type_id: int | None, recovery: str) -> str | None:
     """Message for a payment type id that is not a positive integer, else ``None``.
 
     Fineract checks ``paymentTypeId`` with ``integerGreaterThanZero()`` on savings
@@ -60,6 +60,13 @@ def invalid_payment_type(payment_type_id: int | None) -> str | None:
     ----------
     payment_type_id : int or None
         The id about to be posted, or None when it was not supplied.
+    recovery : str
+        What the caller should do instead, which differs by flow and must not be
+        shared. A savings transaction cannot post without a payment type, so leaving
+        the field out makes the handler list the tenant's configured ones. A loan
+        repayment can post without one, so leaving it out there succeeds and records
+        no payment detail; telling a repayment to "leave it out to be told the
+        options" would be false.
 
     Returns
     -------
@@ -68,8 +75,7 @@ def invalid_payment_type(payment_type_id: int | None) -> str | None:
     """
     if payment_type_id is not None and payment_type_id <= 0:
         return (
-            f"payment_type_id must be greater than zero, and {payment_type_id} was given. "
-            "Use the id of one of this tenant's payment types; leave it out to be told the configured ones."
+            f"payment_type_id must be greater than zero, and {payment_type_id} was given. {recovery}"
         )
     return None
 

@@ -175,7 +175,30 @@ def test_the_rejection_tells_the_agent_how_to_fix_it(fineract: FineractClient, p
 
     # An id of 0 is not a hint that the field should be dropped, so the message has to
     # say what to do instead.
-    assert "leave it out to be told the configured ones" in result["error"]
+    assert "the configured ones will be listed" in result["error"]
+
+
+def test_a_repayment_rejection_does_not_promise_a_list_of_options(fineract: FineractClient, posted: list[dict[str, Any]]) -> None:
+    # A savings deposit left without a payment type is refused and answers with the
+    # options; a repayment left without one posts successfully and answers with nothing.
+    # So the two messages cannot share their recovery text: an agent that followed the
+    # savings wording here would wait for a list that is not coming, while the repayment
+    # it meant to make had already gone through with no payment detail recorded.
+    result = make_repayment(fineract, 7, 250.0, payment_type_id=0)
+
+    assert result["ok"] is False
+    assert "listed" not in result["error"]
+    assert "recorded with no payment type" in result["error"]
+    assert posted == []
+
+
+def test_a_repayment_rejection_still_points_at_the_field(fineract: FineractClient, posted: list[dict[str, Any]]) -> None:
+    # Refusing a bad id must not read as "drop the field", since dropping it changes
+    # what gets recorded.
+    result = make_repayment(fineract, 7, 250.0, payment_type_id=-3)
+
+    assert "supply the id" in result["error"]
+    assert "-3" in result["error"]
 
 
 def test_one_is_still_accepted(fineract: FineractClient, posted: list[dict[str, Any]]) -> None:

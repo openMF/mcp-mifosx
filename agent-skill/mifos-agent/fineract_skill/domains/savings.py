@@ -155,6 +155,16 @@ def close_savings_account(client: FineractClient, account_id: int) -> dict[str, 
 
 # ── Transactions ───────────────────────────────────────────────────────
 
+# Recovery text for a non-positive payment type on a savings transaction. Leaving the
+# field out makes the two handlers below list the tenant's configured ids, so the
+# instruction is true here and only here; make_repayment in loans.py must say something
+# else, because a loan repayment posts happily without one.
+_SAVINGS_RECOVERY = (
+    "Use the id of one of this tenant's payment types; leave it out and the configured "
+    "ones will be listed."
+)
+
+
 def _payment_type_required(client: FineractClient, action: str) -> dict[str, Any]:
     """Error for a savings transaction with no payment type, listing the ones Fineract has.
 
@@ -211,7 +221,7 @@ def deposit(client: FineractClient, account_id: int, amount: float, payment_type
     """
     if payment_type_id is None:
         return _payment_type_required(client, "deposit")
-    invalid = invalid_payment_type(payment_type_id)
+    invalid = invalid_payment_type(payment_type_id, _SAVINGS_RECOVERY)
     if invalid is not None:
         return safe_result(None, error=invalid)
     try:
@@ -243,7 +253,7 @@ def withdraw(client: FineractClient, account_id: int, amount: float, payment_typ
     """
     if payment_type_id is None:
         return _payment_type_required(client, "withdrawal")
-    invalid = invalid_payment_type(payment_type_id)
+    invalid = invalid_payment_type(payment_type_id, _SAVINGS_RECOVERY)
     if invalid is not None:
         return safe_result(None, error=invalid)
     try:

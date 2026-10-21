@@ -303,6 +303,16 @@ def reject_loan(
         return safe_result(None, error=str(exc))
 
 
+# A loan repayment posts without a payment type (LoanTransactionValidatorImpl uses
+# ignoreIfNull), so leaving the field out succeeds and records no payment detail. It must
+# not be told to leave it out "to be told the configured ones": nothing lists them here,
+# unlike the savings handlers.
+_LOAN_RECOVERY = (
+    "Omit the field and the repayment is recorded with no payment type, or supply the id "
+    "of one of this tenant's payment types to record how the money arrived."
+)
+
+
 def make_repayment(
     client: FineractClient, loan_id: int, amount: float, payment_type_id: int | None = None
 ) -> dict[str, Any]:
@@ -319,7 +329,7 @@ def make_repayment(
         savings transaction a loan repayment does not need one, so it is posted only when
         supplied rather than guessed at.
     """
-    invalid = invalid_payment_type(payment_type_id)
+    invalid = invalid_payment_type(payment_type_id, _LOAN_RECOVERY)
     if invalid is not None:
         return safe_result(None, error=invalid)
     payload: dict[str, Any] = {
