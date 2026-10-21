@@ -1,0 +1,52 @@
+{
+  "schema_version": "1.0",
+  "assessment_id": "5b8e0c3d-1f7a-4a26-8e9b-7d4c2a6f0e55",
+  "generated_at": "2026-10-14T11:30:00-06:00",
+  "source_agent": "mifos-x-ai-agent-credit-analyst",
+  "destination": "CREDIT_OFFICER",
+  "case_id": "1012",
+  "entity_type": "INDIVIDUAL",
+  "checks": {
+    "national_id": "VALID",
+    "income_proof": "PASS",
+    "income_months": [
+      "2026-07",
+      "2026-08",
+      "2026-09"
+    ],
+    "authorization": "AUTHORIZED"
+  },
+  "decision": "REFER",
+  "reasons": [
+    "REFER_NO_CREDIT_HISTORY"
+  ],
+  "figures": {
+    "average_monthly_income": "31,333.33",
+    "bank_capacity": "9,400.00",
+    "tax_capacity": "7,500.00",
+    "capacity_used": "bank",
+    "payment_capacity": "9,400.00",
+    "current_bureau_payments": "0.00",
+    "free_capacity": "9,400.00"
+  },
+  "officer_notes": {
+    "bureau_summary": {
+      "accounts_considered": 0,
+      "accounts_excluded": 0,
+      "worst_risk_level": null,
+      "allowed_risk_level": 3,
+      "open_accounts": []
+    },
+    "tax_summary": {
+      "annual_return_available": true,
+      "tax_status_certificate": true,
+      "compliance_opinion": "positive"
+    }
+  },
+  "policy": {
+    "capacity_share_percent": 30,
+    "max_term_months": 48,
+    "min_annual_rate_percent": 22.0
+  },
+  "applicant_confirmed_transfer": true
+}
