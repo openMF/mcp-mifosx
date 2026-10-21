@@ -31,7 +31,7 @@ def create_charge(name: str, amount: float, currency_code: str = "USD",
                   is_active: bool = True):
     """Answers: 'Create a late payment fee of $50' or 'Add a new loan disbursement charge'
     charge_applies_to: 1=Loan, 2=Savings, 3=Client
-    charge_time_type: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee
+    charge_time_type: 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee
     charge_calculation_type: 1=Flat, 2=% of Amount
     """
     print(f"[Tool] Creating charge: {name}...")
@@ -47,6 +47,10 @@ def create_charge(name: str, amount: float, currency_code: str = "USD",
         "locale": "en",
         "monthDayFormat": "dd MMM"
     }
+    if charge_applies_to == 1:
+        # Fineract requires a payment mode for every loan charge; 0 = regular (paid with the
+        # loan's repayments), the web app's default. 1 (account transfer) needs a linked savings account.
+        payload["chargePaymentMode"] = 0
     return fineract_client.execute_post("charges", payload)
 
 @tool
