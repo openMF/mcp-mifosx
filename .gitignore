@@ -54,6 +54,7 @@ go/mysql-init/
 !go/README.md
 !gateway/README.md
 !agentic-banking-openfn/README.md
+!mobile-ai/README.md
 !rust/benches/results.md
 !rust/benches/README.md
 
