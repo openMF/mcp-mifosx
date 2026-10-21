@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from fineract_skill.client import FineractClient, FineractError
-from fineract_skill.helpers import fineract_today, fmt_date, safe_result
+from fineract_skill.helpers import fineract_today, fmt_date, invalid_payment_type, safe_result
 
 # ── Read ───────────────────────────────────────────────────────────────
 
@@ -155,7 +155,57 @@ def close_savings_account(client: FineractClient, account_id: int) -> dict[str, 
 
 # ── Transactions ───────────────────────────────────────────────────────
 
-def deposit(client: FineractClient, account_id: int, amount: float) -> dict[str, Any]:
+# Recovery text for a non-positive payment type on a savings transaction. Leaving the
+# field out makes the two handlers below list the tenant's configured ids, so the
+# instruction is true here and only here; make_repayment in loans.py must say something
+# else, because a loan repayment posts happily without one.
+_SAVINGS_RECOVERY = (
+    "Use the id of one of this tenant's payment types; leave it out and the configured "
+    "ones will be listed."
+)
+
+
+def _payment_type_required(client: FineractClient, action: str) -> dict[str, Any]:
+    """Error for a savings transaction with no payment type, listing the ones Fineract has.
+
+    Fineract's ``SavingsAccountTransactionDataValidator`` has ``paymentTypeId`` as
+    ``notNull``, so a deposit or withdrawal cannot post without one. The ids are tenant
+    data: a stock Fineract ships only "Money Transfer", "Repayment Adjustment
+    Chargeback" and "Repayment Adjustment Refund", so no id is right everywhere and the
+    configured ones are returned instead.
+
+    Parameters
+    ----------
+    client : FineractClient
+        Client used to read the tenant's payment types.
+    action : str
+        "deposit" or "withdrawal", used in the message.
+    """
+    try:
+        payment_types = client.get("paymenttypes")
+    except FineractError as exc:
+        return safe_result(None, error=f"payment_type_id is required for a {action}, and the payment types could not be loaded: {exc}")
+    options = [
+        {"id": p.get("id"), "name": p.get("name")}
+        for p in payment_types
+        if isinstance(p, dict) and p.get("id") is not None
+    ] if isinstance(payment_types, list) else []
+    if not options:
+        reason = (
+            f"payment_type_id is required for a {action}, but no payment types are "
+            "configured. Add a payment type in Fineract first."
+        )
+        return safe_result(None, error=reason)
+    # safe_result only carries the message through, so the options are spelled out in it too
+    listed = "; ".join(f"{option['id']} = {option['name']}" for option in options)
+    return {
+        "ok": False,
+        "error": f"payment_type_id is required for a {action}. Ask the user which payment type applies: {listed}.",
+        "payment_types": options,
+    }
+
+
+def deposit(client: FineractClient, account_id: int, amount: float, payment_type_id: int | None = None) -> dict[str, Any]:
     """Deposit money into an active savings account.
 
     Parameters
@@ -164,11 +214,21 @@ def deposit(client: FineractClient, account_id: int, amount: float) -> dict[str,
         Active savings account ID.
     amount : float
         Amount to deposit.
+    payment_type_id : int, optional
+        Id of one of this tenant's payment types, saying how the money arrived. Fineract
+        requires one on a savings transaction, so a deposit left without it does not post
+        and the error lists the configured payment types as ``id = name``.
     """
+    if payment_type_id is None:
+        return _payment_type_required(client, "deposit")
+    invalid = invalid_payment_type(payment_type_id, _SAVINGS_RECOVERY)
+    if invalid is not None:
+        return safe_result(None, error=invalid)
     try:
         result = client.post(f"savingsaccounts/{account_id}/transactions?command=deposit", {
             "transactionDate": fineract_today(),
             "transactionAmount": amount,
+            "paymentTypeId": payment_type_id,
             "dateFormat": "dd MMMM yyyy",
             "locale": "en",
         })
@@ -177,7 +237,7 @@ def deposit(client: FineractClient, account_id: int, amount: float) -> dict[str,
         return safe_result(None, error=str(exc))
 
 
-def withdraw(client: FineractClient, account_id: int, amount: float) -> dict[str, Any]:
+def withdraw(client: FineractClient, account_id: int, amount: float, payment_type_id: int | None = None) -> dict[str, Any]:
     """Withdraw money from an active savings account.
 
     Parameters
@@ -186,11 +246,21 @@ def withdraw(client: FineractClient, account_id: int, amount: float) -> dict[str
         Active savings account ID.
     amount : float
         Amount to withdraw.
+    payment_type_id : int, optional
+        Id of one of this tenant's payment types, saying where the money went. Fineract
+        requires one on a savings transaction, so a withdrawal left without it does not
+        post and the error lists the configured payment types as ``id = name``.
     """
+    if payment_type_id is None:
+        return _payment_type_required(client, "withdrawal")
+    invalid = invalid_payment_type(payment_type_id, _SAVINGS_RECOVERY)
+    if invalid is not None:
+        return safe_result(None, error=invalid)
     try:
         result = client.post(f"savingsaccounts/{account_id}/transactions?command=withdrawal", {
             "transactionDate": fineract_today(),
             "transactionAmount": amount,
+            "paymentTypeId": payment_type_id,
             "dateFormat": "dd MMMM yyyy",
             "locale": "en",
         })

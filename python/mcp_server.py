@@ -370,8 +370,11 @@ def update_mobile(clientId: int, newMobileNo: str) -> dict:
 
 @mcp.tool()
 @safe_tool("close_client_profile")
-def close_client_profile(clientId: int, closureReasonId: int = 17) -> dict:
-    """Close a client's profile"""
+def close_client_profile(clientId: int, closureReasonId: Optional[int] = None) -> dict:
+    """Close a client's profile.
+    closureReasonId is required by Fineract (a ClientClosureReason code value). If it is
+    missing, nothing is closed and the error lists the configured reasons
+    (id = name) so you can ask the user which one applies."""
     return close_client.func(clientId, closureReasonId)
 
 @mcp.tool()
@@ -614,15 +617,18 @@ def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk prof
 
 @mcp.tool()
 @safe_tool("make_repayment")
-def make_repayment(loanId: int, amount: float) -> dict:
-    """Make a repayment on an active loan. Validates loanId and status before executing."""
+def make_repayment(loanId: int, amount: float, paymentTypeId: int = None) -> dict:
+    """Make a repayment on an active loan. Validates loanId and status before executing.
+    paymentTypeId is how the money arrived (a Fineract payment type). Leave it out and the
+    repayment is recorded without a payment type, which Fineract accepts; a payment type id
+    is tenant-specific, so none is guessed."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Loan {loanId} is in status '{status}'. Only Active loans can receive repayments."}
-    return make_loan_repayment.func(loanId, amount)
+    return make_loan_repayment.func(loanId, amount, paymentTypeId)
 
 @mcp.tool()
 @safe_tool("apply_loan_fee")
@@ -874,20 +880,26 @@ def close_savings(accountId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("deposit")
-def deposit(accountId: int, amount: float) -> dict:
-    """Deposit money into a savings account. Validates accountId exists before executing."""
+def deposit(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
+    """Deposit money into a savings account. Validates accountId exists before executing.
+    Fineract will not take a deposit without a payment type, so paymentTypeId must be one of
+    this tenant's payment types. If it is missing, nothing is deposited and the error lists
+    the payment types (id = name) so you can ask the user which applies."""
     check = get_savings_account.func(accountId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can accept deposits."}
-    return deposit_savings.func(accountId, amount)
+    return deposit_savings.func(accountId, amount, paymentTypeId)
 
 @mcp.tool()
 @safe_tool("withdraw")
-def withdraw(accountId: int, amount: float) -> dict:
-    """Withdraw money from a savings account. Validates accountId and balance before executing."""
+def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
+    """Withdraw money from a savings account. Validates accountId and balance before executing.
+    Fineract will not take a withdrawal without a payment type, so paymentTypeId must be one of
+    this tenant's payment types. If it is missing, nothing is withdrawn and the error lists the
+    payment types (id = name) so you can ask the user which applies."""
     check = get_savings_account.func(accountId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.")
@@ -897,7 +909,7 @@ def withdraw(accountId: int, amount: float) -> dict:
     balance = (check.get("summary") or {}).get("availableBalance", 0) or 0
     if amount > balance:
         return {"error": f"Insufficient funds: requested ${amount:.2f} but available balance is ${balance:.2f} in account {accountId}."}
-    return withdraw_savings.func(accountId, amount)
+    return withdraw_savings.func(accountId, amount, paymentTypeId)
 
 @mcp.tool()
 @safe_tool("apply_savings_fee")
@@ -1048,7 +1060,7 @@ def create_new_charge(name: str, amount: float, currencyCode: str = "USD",
                       isActive: bool = True) -> dict:
     """Create a new charge definition.
     chargeAppliesTo: 1=Loan, 2=Savings, 3=Client
-    chargeTimeType: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee
+    chargeTimeType: 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee
     chargeCalculationType: 1=Flat, 2=% of Amount"""
     return create_charge_domain.func(name, amount, currencyCode, chargeAppliesTo,
                                      chargeTimeType, chargeCalculationType, isPenalty, isActive)
