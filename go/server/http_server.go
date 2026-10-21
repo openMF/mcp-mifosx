@@ -19,14 +19,15 @@ import (
 )
 
 type MifosHTTPServer struct {
-	McpServer *MifosMcpServer
-	Port      string
+	caller *adapter.CallerClient
+	Port   string
 }
 
-func NewHTTPServer(srv *MifosMcpServer, port string) *MifosHTTPServer {
+// NewHTTPServer accepts only a caller executor, never a configured local server.
+func NewHTTPServer(caller *adapter.CallerClient, port string) *MifosHTTPServer {
 	return &MifosHTTPServer{
-		McpServer: srv,
-		Port:      port,
+		caller: caller,
+		Port:   port,
 	}
 }
 
@@ -45,9 +46,8 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 		owners.Delete(session.SessionID())
 	})
 
-	// Always build the restricted catalog here, even if a caller constructs
-	// MifosHTTPServer directly with the full stdio server.
-	pilot := newCallerScopedHTTPServer(s.McpServer.Registry.Fineract, hooks)
+	// The restricted catalog has no reference to the configured executor.
+	pilot := newCallerScopedHTTPServer(s.caller, hooks)
 	sseServer := server.NewSSEServer(pilot.MCPServer)
 
 	mux := http.NewServeMux()

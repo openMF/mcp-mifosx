@@ -8,6 +8,7 @@ Agent Skills for Pi Agent, Hermes Agent, Prime-Agent and any other harness that 
 | `mifos-agent/` | Fineract tool library | Python tools for the Apache Fineract REST API (AI-259) |
 | `mifos-x-ai-agent-customer-service-advisor/` | `mifos-x-ai-agent-customer-service-advisor` | First point of contact: greets, profiles and routes customers to Investment, Credit or Operations (AI-261) |
 | `mifos-x-ai-agent-investment-sales-advisor/` | `mifos-x-ai-agent-investment-sales-advisor` | Profiles investors, simulates the Promissory Note and CEDE +D60, hands the case to the Commercial Executive (AI-262) |
+| `mifos-x-ai-agent-credit-analyst/` | `mifos-x-ai-agent-credit-analyst` | Credit pre-analysis: ID, income proof, bureau and tax authorization, 30% payment capacity, proposal or rejection (AI-260) |
 
 ## Install as a Pi package
 
@@ -132,3 +133,37 @@ pytest agent-skill/tests/test_investment_sales_advisor.py -v
 The tests check the skill format and size, every rate and tax cell against the ticket, the ticket's worked
 examples to the cent, every filter and boundary, the command-line input validation, and the handover schema
 and privacy guard.
+
+## Credit Analyst skill
+
+The analyst runs a credit **pre-analysis** with the applicant (directly or from the Customer Service Advisor's
+handoff) and follows the eleven AI-260 rules: national ID validation, formal income proof for the last 3 complete
+months, credit-bureau and tax authorization links, bureau behaviour, payment capacity (30% of bank or tax income,
+whichever is higher, minus current bureau payments) and the maximum financing at 48 months from 22%. It ends with a
+proposal or the reason for rejection, handed to a human credit officer in a fenced `credit_assessment` block
+(`assets/credit-assessment.schema.json`). It never approves, creates or disburses a loan.
+
+Every step runs through `scripts/credit_analyst.py <step> --case <id>`. The script fetches the applicant's data
+through a provider, applies `assets/credit-policy.json` and returns every check, figure and next action; the model
+never computes or copies applicant data. The bundled provider serves mock applicants
+(`assets/mock-applicants.json`) because the `[NATIONAL ID]` and `[RISK SCORING SYSTEM]` platforms are not part of
+Mifos X; `references/external-systems.md` is the contract a real adapter implements. Case progress is saved per case
+(`CREDIT_ANALYST_STATE_DIR`), so a resumed conversation continues with `status`.
+
+```
+mifos-x-ai-agent-credit-analyst/
+├── SKILL.md        # rules, steps, Check First table, reply format, handover
+├── scripts/        # credit_analyst.py: steps, provider, credit rules, decision
+├── assets/         # credit policy, mock applicants, assessment schema and examples, institution profile template
+└── references/     # credit rules and decisions, external-system contract
+```
+
+Values the ticket leaves open (risk level, income window, tax income source, exclusions) are defaults in
+`assets/credit-policy.json`; see `references/credit-rules.md`.
+
+### Validate and test
+
+```bash
+python3 agent-skill/mifos-agent/scripts/validate-skill.py agent-skill/mifos-x-ai-agent-credit-analyst
+pytest agent-skill/tests/test_credit_analyst.py -v
+```

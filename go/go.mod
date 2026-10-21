@@ -2,6 +2,8 @@ module github.com/openMF/mcp-mifosx/go
 
 go 1.26.2
 
+toolchain go1.27.3
+
 require (
 	github.com/joho/godotenv v1.5.1
 	github.com/mark3labs/mcp-go v1.3.0

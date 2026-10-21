@@ -1,0 +1,9 @@
+{
+  "financial_institution_name": "[FINANCIAL INSTITUTION NAME]",
+  "regulator_1": "[REGULATOR 1]",
+  "regulator_2": "[REGULATOR 2]",
+  "location": "[LOCALITY/STATE/COUNTRY]",
+  "national_id_name": "[NATIONAL ID]",
+  "risk_scoring_system_name": "[RISK SCORING SYSTEM]",
+  "currency": "MXN"
+}

@@ -19,10 +19,39 @@ import (
 
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	mcpserver "github.com/mark3labs/mcp-go/server"
 	"github.com/openMF/mcp-mifosx/go/adapter"
 )
 
 type observedCall struct{ Authorization, Tenant, Path string }
+
+func TestCallerCatalogHasNoConfiguredExecutor(t *testing.T) {
+	var calls atomic.Int32
+	bank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls.Add(1) }))
+	defer bank.Close()
+	t.Setenv("MIFOSX_BASE_URL", bank.URL)
+	t.Setenv("MIFOSX_USERNAME", "configured-service")
+	t.Setenv("MIFOSX_PASSWORD", "configured-password")
+	t.Setenv("MIFOSX_TENANT_ID", "configured-tenant")
+	caller, err := adapter.NewCaller()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pilot := newCallerScopedHTTPServer(caller, &mcpserver.Hooks{})
+	if pilot.Registry.Fineract != nil {
+		t.Fatal("HTTP catalog retained a configured executor")
+	}
+	// Even direct handler execution without HTTP middleware must fail closed.
+	result, err := pilot.Registry.ToolDefs["get_client"].Handler(context.Background(), mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: "get_client", Arguments: map[string]interface{}{"clientId": 42}},
+	})
+	if err != nil || result == nil || !result.IsError {
+		t.Fatalf("missing caller context did not fail closed: %v %v", result, err)
+	}
+	if calls.Load() != 0 {
+		t.Fatal("missing caller context reached Fineract")
+	}
+}
 
 func pilot(t *testing.T, downstream http.HandlerFunc) (*httptest.Server, *MifosMcpServer) {
 	t.Helper()
@@ -32,8 +61,16 @@ func pilot(t *testing.T, downstream http.HandlerFunc) (*httptest.Server, *MifosM
 	bank := httptest.NewServer(downstream)
 	t.Cleanup(bank.Close)
 	t.Setenv("MIFOSX_BASE_URL", bank.URL)
-	srv := NewMifosMcpServer(adapter.New())
-	httpSrv := httptest.NewServer(NewHTTPServer(srv, "").Handler())
+	configured, err := adapter.NewConfigured()
+	if err != nil {
+		t.Fatal(err)
+	}
+	caller, err := adapter.NewCaller()
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := NewMifosMcpServer(configured)
+	httpSrv := httptest.NewServer(NewHTTPServer(caller, "").Handler())
 	t.Cleanup(httpSrv.Close)
 	return httpSrv, srv
 }

@@ -47,7 +47,7 @@ func TestCallerRequestRequiresContextAndAllowedEndpoint(t *testing.T) {
 	calls := 0
 	bank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))
 	defer bank.Close()
-	c := &FineractClient{BaseURL: bank.URL, Username: "service", Password: "service-secret", TenantID: "default", HTTP: bank.Client()}
+	c := &CallerClient{baseURL: bank.URL, http: bank.Client()}
 	if _, err := c.DoCallerRequest(context.Background(), "clients/42"); err == nil {
 		t.Fatal("missing context accepted")
 	}
@@ -97,7 +97,7 @@ func TestCallerResponseSizeLimit(t *testing.T) {
 	for _, size := range []int{limit - 1, limit, limit + 1, 2 * limit} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			body := &trackedResponseBody{Reader: strings.NewReader(strings.Repeat("x", size))}
-			c := &FineractClient{BaseURL: "https://fineract.example", HTTP: &http.Client{
+			c := &CallerClient{baseURL: "https://fineract.example", http: &http.Client{
 				Transport: responseTransport(func(*http.Request) (*http.Response, error) {
 					return &http.Response{StatusCode: http.StatusOK, Body: body}, nil
 				}),
@@ -129,7 +129,7 @@ func TestCallerRequestDoesNotFollowRedirects(t *testing.T) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
 	}))
 	defer bank.Close()
-	c := &FineractClient{BaseURL: bank.URL, HTTP: bank.Client()}
+	c := &CallerClient{baseURL: bank.URL, http: bank.Client()}
 	ctx, _ := WithCallerContext(context.Background(), "Bearer private-token", "tenant")
 	data, err := c.DoCallerRequest(ctx, "clients/42")
 	if err == nil || !strings.Contains(err.Error(), "307") || len(data) != 0 || redirected != 0 {
@@ -143,7 +143,7 @@ func TestCallerResponseDoesNotEchoCredentials(t *testing.T) {
 		t.Run(secret, func(t *testing.T) {
 			bank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(secret)) }))
 			defer bank.Close()
-			c := &FineractClient{BaseURL: bank.URL, HTTP: bank.Client()}
+			c := &CallerClient{baseURL: bank.URL, http: bank.Client()}
 			ctx, _ := WithCallerContext(context.Background(), auth, "tenant")
 			data, err := c.DoCallerRequest(ctx, "clients/42")
 			if err == nil || len(data) != 0 || strings.Contains(err.Error(), secret) {

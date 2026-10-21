@@ -31,7 +31,8 @@
     "skills": [
       "./agent-skill/mifos-agent",
       "./agent-skill/mifos-x-ai-agent-customer-service-advisor",
-      "./agent-skill/mifos-x-ai-agent-investment-sales-advisor"
+      "./agent-skill/mifos-x-ai-agent-investment-sales-advisor",
+      "./agent-skill/mifos-x-ai-agent-credit-analyst"
     ]
   }
 }

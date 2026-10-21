@@ -1,0 +1,44 @@
+{
+  "source": "AI-260 Credit Analyst ticket, strict rules 1-11",
+  "currency": "MXN",
+  "income": {
+    "required_months": 3,
+    "grace_days": 10,
+    "accepted_sources": [
+      "bank_statement",
+      "payroll_stub"
+    ],
+    "payroll_stub_must_be_stamped": true,
+    "excluded_inflow_types": [
+      "refund",
+      "credit_disbursement",
+      "reversal"
+    ],
+    "max_retries": 1
+  },
+  "capacity_share": "0.30",
+  "tax_income": "annual_return_div_12",
+  "bureau": {
+    "max_risk_level": 3,
+    "risk_scale": "Buro-style MOP: 1 = current, 2 = 1-29 days late, 3 = 30-59, 4 = 60-89, 5+ = 90+ or worse",
+    "excluded_account_types": [
+      "service",
+      "communications",
+      "tax_credit"
+    ],
+    "revolving_payment_share_of_balance": "0.05",
+    "no_history": "REFER"
+  },
+  "loan": {
+    "max_term_months": 48,
+    "min_term_months": 6,
+    "min_annual_rate_percent": "22",
+    "rate_type": "nominal annual, monthly installments on declining balance, no VAT",
+    "rounding": "floor the principal to the cent; the payment for the proposed amount never exceeds the free capacity"
+  },
+  "authorization": {
+    "max_link_resends": 1
+  },
+  "legal_entity": "REFER",
+  "timezone": "America/Mexico_City"
+}
