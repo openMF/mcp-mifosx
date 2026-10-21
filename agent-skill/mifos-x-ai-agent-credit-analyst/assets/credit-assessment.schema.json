@@ -1,0 +1,352 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/openMF/mcp-mifosx/agent-skill/mifos-x-ai-agent-credit-analyst/assets/credit-assessment.schema.json",
+  "title": "Credit Analyst pre-analysis handover",
+  "description": "Pre-analysis result handed from the Credit Analyst to a human credit officer. Produced by `scripts/credit_analyst.py handover`. Never contains ID numbers, account numbers or document contents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "assessment_id",
+    "generated_at",
+    "source_agent",
+    "destination",
+    "case_id",
+    "entity_type",
+    "checks",
+    "decision",
+    "reasons",
+    "figures",
+    "officer_notes",
+    "policy",
+    "applicant_confirmed_transfer"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "assessment_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "source_agent": {
+      "const": "mifos-x-ai-agent-credit-analyst"
+    },
+    "destination": {
+      "const": "CREDIT_OFFICER"
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^\\d{1,12}$"
+    },
+    "entity_type": {
+      "enum": [
+        "INDIVIDUAL",
+        "LEGAL_ENTITY"
+      ]
+    },
+    "checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "national_id",
+        "income_proof",
+        "income_months",
+        "authorization"
+      ],
+      "properties": {
+        "national_id": {
+          "enum": [
+            "VALID",
+            "INVALID",
+            "NOT_DONE"
+          ]
+        },
+        "income_proof": {
+          "enum": [
+            "PASS",
+            "FAIL",
+            "REFER",
+            "NOT_DONE"
+          ]
+        },
+        "income_months": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}$"
+          }
+        },
+        "authorization": {
+          "enum": [
+            "AUTHORIZED",
+            "PENDING",
+            "REFUSED",
+            "EXPIRED",
+            "NOT_REQUESTED"
+          ]
+        }
+      }
+    },
+    "decision": {
+      "enum": [
+        "PROPOSAL",
+        "REJECT",
+        "REFER",
+        "INCOMPLETE"
+      ]
+    },
+    "reasons": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "INVALID_ID",
+          "NO_FORMAL_INCOME",
+          "INCOME_PROOF_INCOMPLETE",
+          "INCOME_PROOF_OUTDATED",
+          "INCOME_PROOF_NOT_STAMPED",
+          "AUTHORIZATION_REFUSED",
+          "AUTHORIZATION_EXPIRED",
+          "TAX_STATUS_CERTIFICATE_MISSING",
+          "BUREAU_RISK_EXCEEDED",
+          "INSUFFICIENT_CAPACITY",
+          "REFER_LEGAL_ENTITY",
+          "REFER_NO_CREDIT_HISTORY",
+          "REFER_TAX_COMPLIANCE",
+          "REFER_NO_STRUCTURED_DATA",
+          "REFER_AUTHORIZATION_LIMIT"
+        ]
+      }
+    },
+    "figures": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "average_monthly_income": {
+          "type": "string",
+          "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+        },
+        "bank_capacity": {
+          "type": "string",
+          "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+        },
+        "tax_capacity": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+            },
+            {
+              "const": "N/A"
+            }
+          ]
+        },
+        "capacity_used": {
+          "enum": [
+            "bank",
+            "tax"
+          ]
+        },
+        "payment_capacity": {
+          "type": "string",
+          "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+        },
+        "current_bureau_payments": {
+          "type": "string",
+          "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+        },
+        "free_capacity": {
+          "type": "string",
+          "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+        },
+        "maximum_financing": {
+          "type": "string",
+          "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+        },
+        "requested_amount": {
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+            },
+            {
+              "const": "not stated"
+            }
+          ]
+        },
+        "proposed_amount": {
+          "type": "string",
+          "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+        },
+        "term_months": {
+          "type": "integer",
+          "minimum": 6,
+          "maximum": 48
+        },
+        "annual_rate_percent": {
+          "type": "string",
+          "pattern": "^from \\d+(\\.\\d+)?%$"
+        },
+        "monthly_payment": {
+          "type": "string",
+          "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+        },
+        "capped_at_maximum": {
+          "type": "boolean"
+        }
+      }
+    },
+    "policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capacity_share_percent",
+        "max_term_months",
+        "min_annual_rate_percent"
+      ],
+      "properties": {
+        "capacity_share_percent": {
+          "const": 30
+        },
+        "max_term_months": {
+          "const": 48
+        },
+        "min_annual_rate_percent": {
+          "type": "number",
+          "minimum": 22
+        }
+      }
+    },
+    "applicant_confirmed_transfer": {
+      "type": "boolean"
+    },
+    "officer_notes": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Officer-only details (never shown to the applicant). Empty when the case ended before the analysis.",
+      "properties": {
+        "bureau_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "accounts_considered",
+            "accounts_excluded",
+            "worst_risk_level",
+            "allowed_risk_level",
+            "open_accounts"
+          ],
+          "properties": {
+            "accounts_considered": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "accounts_excluded": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "worst_risk_level": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "allowed_risk_level": {
+              "type": "integer"
+            },
+            "open_accounts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "monthly_payment"
+                ],
+                "properties": {
+                  "type": {
+                    "type": "string"
+                  },
+                  "monthly_payment": {
+                    "type": "string",
+                    "pattern": "^\\d{1,3}(,\\d{3})*\\.\\d{2}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "tax_summary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "annual_return_available",
+            "tax_status_certificate",
+            "compliance_opinion"
+          ],
+          "properties": {
+            "annual_return_available": {
+              "type": "boolean"
+            },
+            "tax_status_certificate": {
+              "type": "boolean"
+            },
+            "compliance_opinion": {
+              "enum": [
+                "positive",
+                "negative",
+                "unknown"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "PROPOSAL"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "figures": {
+            "required": [
+              "maximum_financing",
+              "proposed_amount",
+              "monthly_payment",
+              "term_months"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "enum": [
+              "REJECT",
+              "REFER",
+              "INCOMPLETE"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "reasons": {
+            "minItems": 1
+          }
+        }
+      }
+    }
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "schema_version": "1.0",
+  "assessment_id": "3f6c1a52-8e0b-4b7d-9c2a-5d1e7f0a9b11",
+  "generated_at": "2026-10-14T11:30:00-06:00",
+  "source_agent": "mifos-x-ai-agent-credit-analyst",
+  "destination": "CREDIT_OFFICER",
+  "case_id": "1001",
+  "entity_type": "INDIVIDUAL",
+  "checks": {
+    "national_id": "VALID",
+    "income_proof": "PASS",
+    "income_months": [
+      "2026-07",
+      "2026-08",
+      "2026-09"
+    ],
+    "authorization": "AUTHORIZED"
+  },
+  "decision": "PROPOSAL",
+  "reasons": [],
+  "figures": {
+    "average_monthly_income": "31,333.33",
+    "bank_capacity": "9,400.00",
+    "tax_capacity": "7,500.00",
+    "capacity_used": "bank",
+    "payment_capacity": "9,400.00",
+    "current_bureau_payments": "1,500.00",
+    "free_capacity": "7,900.00",
+    "maximum_financing": "250,745.27",
+    "requested_amount": "120,000.00",
+    "proposed_amount": "120,000.00",
+    "term_months": 48,
+    "annual_rate_percent": "from 22%",
+    "monthly_payment": "3,780.73",
+    "capped_at_maximum": false
+  },
+  "officer_notes": {
+    "bureau_summary": {
+      "accounts_considered": 2,
+      "accounts_excluded": 1,
+      "worst_risk_level": 2,
+      "allowed_risk_level": 3,
+      "open_accounts": [
+        {
+          "type": "credit_card",
+          "monthly_payment": "1,500.00"
+        }
+      ]
+    },
+    "tax_summary": {
+      "annual_return_available": true,
+      "tax_status_certificate": true,
+      "compliance_opinion": "positive"
+    }
+  },
+  "policy": {
+    "capacity_share_percent": 30,
+    "max_term_months": 48,
+    "min_annual_rate_percent": 22.0
+  },
+  "applicant_confirmed_transfer": true
+}
