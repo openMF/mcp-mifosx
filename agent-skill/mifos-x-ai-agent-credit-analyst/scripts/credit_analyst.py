@@ -427,6 +427,9 @@ def _run_step(step: str, case_id: str, requested=None, term=None, today: date | 
     if step == "income-check":
         if state.get("id") != "VALID":
             return result(case_id, step, "NOT_READY", "Run id-check first.")
+        if state.get("income") == "PASS":  # already passed: never re-run (keeps authorization and limits intact)
+            return result(case_id, step, "PASS", next_from_state(state)[0], months=state.get("income_months", []),
+                          message="Your income documents were already confirmed.")
         check = check_income(case, policy, today)
         state["income"] = check["status"]
         if check["status"] == "PASS":

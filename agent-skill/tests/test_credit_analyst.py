@@ -482,3 +482,35 @@ def test_authorization_links_cannot_be_resent_while_pending():
     step("id-check", "1013")
     assert step("income-check", "1013")["bureau_link"]
     assert step("request-authorization", "1013")["status"] == "NOT_ALLOWED"
+
+
+def test_repeated_income_check_keeps_authorization_and_resend_limit():
+    run_to_analysis("1001")
+    step("start", "1013")
+    step("id-check", "1013")
+    step("income-check", "1013")
+    assert step("status", "1013")["authorization"] == "PENDING"
+    assert step("income-check", "1013")["status"] == "PASS"  # repeat: no reset
+    assert step("status", "1013")["authorization"] == "AUTHORIZED"
+    run_to_analysis("1019")  # expired once
+    step("request-authorization", "1019")
+    step("status", "1019")  # expired again
+    step("income-check", "1019")  # must not reset the resend counter
+    assert step("request-authorization", "1019")["reason"] == "REFER_AUTHORIZATION_LIMIT"
+
+
+def test_schema_rejects_inconsistent_decisions(validator):
+    proposal = json.loads((SKILL_DIR / "assets" / "assessment-example-proposal.json").read_text(encoding="utf-8"))
+    bad = copy.deepcopy(proposal)
+    bad["reasons"] = ["INSUFFICIENT_CAPACITY"]
+    assert list(validator.iter_errors(bad))
+    bad = copy.deepcopy(proposal)
+    bad["checks"]["authorization"] = "REFUSED"
+    assert list(validator.iter_errors(bad))
+    reject = json.loads((SKILL_DIR / "assets" / "assessment-example-reject.json").read_text(encoding="utf-8"))
+    bad = copy.deepcopy(reject)
+    bad["figures"]["proposed_amount"] = "50,000.00"
+    assert list(validator.iter_errors(bad))
+    bad = copy.deepcopy(reject)
+    del bad["figures"]["free_capacity"]  # analysis ran: capacity figures are required
+    assert list(validator.iter_errors(bad))

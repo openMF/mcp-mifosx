@@ -317,12 +317,38 @@
       },
       "then": {
         "properties": {
+          "reasons": {
+            "maxItems": 0
+          },
+          "checks": {
+            "properties": {
+              "national_id": {
+                "const": "VALID"
+              },
+              "income_proof": {
+                "const": "PASS"
+              },
+              "authorization": {
+                "const": "AUTHORIZED"
+              }
+            }
+          },
           "figures": {
             "required": [
+              "average_monthly_income",
+              "bank_capacity",
+              "tax_capacity",
+              "capacity_used",
+              "payment_capacity",
+              "current_bureau_payments",
+              "free_capacity",
               "maximum_financing",
+              "requested_amount",
               "proposed_amount",
+              "term_months",
+              "annual_rate_percent",
               "monthly_payment",
-              "term_months"
+              "capped_at_maximum"
             ]
           }
         }
@@ -344,9 +370,55 @@
         "properties": {
           "reasons": {
             "minItems": 1
+          },
+          "figures": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "maximum_financing"
+                  ]
+                },
+                {
+                  "required": [
+                    "proposed_amount"
+                  ]
+                },
+                {
+                  "required": [
+                    "monthly_payment"
+                  ]
+                }
+              ]
+            }
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "figures": {
+            "minProperties": 1
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "figures": {
+            "required": [
+              "average_monthly_income",
+              "bank_capacity",
+              "tax_capacity",
+              "capacity_used",
+              "payment_capacity",
+              "current_bureau_payments",
+              "free_capacity"
+            ]
+          }
+        }
+      },
+      "description": "When the analysis ran, the capacity figures are always present; cases that ended before the analysis have empty figures."
     }
   ]
 }
