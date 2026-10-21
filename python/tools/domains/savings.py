@@ -4,6 +4,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
+from typing import Optional
+
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
@@ -108,10 +110,38 @@ def close_savings_account(account_id: int):
 
 # --- SAVINGS TRANSACTION OPERATIONS ---
 
+def _payment_type_required(action: str) -> dict:
+    """Error for a deposit or withdrawal without a payment type, listing the ones Fineract has.
+
+    Fineract's SavingsAccountTransactionDataValidator has paymentTypeId as notNull, so the
+    request cannot go through without one. The ids are tenant-specific (a stock Fineract ships
+    only 'Money Transfer', 'Repayment Adjustment Chargeback' and 'Repayment Adjustment Refund'),
+    so there is no id that is right everywhere and the configured ones are returned instead.
+    """
+    payment_types = fineract_client.execute_get("paymenttypes")
+    if not isinstance(payment_types, list):
+        reason = payment_types.get("error") if isinstance(payment_types, dict) else payment_types
+        return {"error": f"payment_type_id is required for a {action}, and the payment types could "
+                         f"not be loaded: {reason}"}
+    options = [{"id": p.get("id"), "name": p.get("name")} for p in payment_types if p.get("id") is not None]
+    if not options:
+        return {"error": f"payment_type_id is required for a {action}, but no payment types are "
+                         "configured. Add a payment type in Fineract first."}
+    # The MCP wrapper (safe_tool) passes on only the message, so the options have to be in it
+    listed = "; ".join(f"{o['id']} = {o['name']}" for o in options)
+    return {"error": f"payment_type_id is required for a {action}. Ask the user which payment type "
+                     f"applies: {listed}.",
+            "payment_types": options}
+
+
 @tool
-def deposit_savings(account_id: int, amount: float):
-    """Answers: 'Deposit $500 into this savings account'"""
+def deposit_savings(account_id: int, amount: float, payment_type_id: Optional[int] = None):
+    """Answers: 'Deposit $500 into this savings account'
+    Fineract requires a payment type on a deposit, and payment types are tenant-specific, so
+    payment_type_id has to be the id of one this tenant actually has."""
     print(f"[Tool] Depositing {amount} into Savings Account #{account_id}...")
+    if payment_type_id is None:
+        return _payment_type_required("deposit")
     today = get_fineract_today()
 
     payload = {
@@ -119,14 +149,18 @@ def deposit_savings(account_id: int, amount: float):
         "transactionAmount": amount,
         "dateFormat": "dd MMMM yyyy",
         "locale": "en",
-        "paymentTypeId": 1  # Standard Cash Receipt
+        "paymentTypeId": payment_type_id
     }
     return fineract_client.execute_post(f"savingsaccounts/{account_id}/transactions?command=deposit", payload)
 
 @tool
-def withdraw_savings(account_id: int, amount: float):
-    """Answers: 'Withdraw $100 from this savings account'"""
+def withdraw_savings(account_id: int, amount: float, payment_type_id: Optional[int] = None):
+    """Answers: 'Withdraw $100 from this savings account'
+    Fineract requires a payment type on a withdrawal, and payment types are tenant-specific, so
+    payment_type_id has to be the id of one this tenant actually has."""
     print(f"[Tool] Withdrawing {amount} from Savings Account #{account_id}...")
+    if payment_type_id is None:
+        return _payment_type_required("withdrawal")
     today = get_fineract_today()
 
     payload = {
@@ -134,7 +168,7 @@ def withdraw_savings(account_id: int, amount: float):
         "transactionAmount": amount,
         "dateFormat": "dd MMMM yyyy",
         "locale": "en",
-        "paymentTypeId": 2  # Standard Cash Payout
+        "paymentTypeId": payment_type_id
     }
     return fineract_client.execute_post(f"savingsaccounts/{account_id}/transactions?command=withdrawal", payload)
 
