@@ -139,7 +139,7 @@ func TestCallerRequestDoesNotFollowRedirects(t *testing.T) {
 
 func TestCallerResponseDoesNotEchoCredentials(t *testing.T) {
 	auth := "Basic " + base64.StdEncoding.EncodeToString([]byte("private-user:private-password"))
-	for _, secret := range []string{auth, strings.TrimPrefix(auth, "Basic "), "private-user:private-password", "private-user", "private-password"} {
+	for _, secret := range []string{auth, strings.TrimPrefix(auth, "Basic "), "private-user:private-password", "private-password"} {
 		t.Run(secret, func(t *testing.T) {
 			bank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(secret)) }))
 			defer bank.Close()
@@ -148,6 +148,41 @@ func TestCallerResponseDoesNotEchoCredentials(t *testing.T) {
 			data, err := c.DoCallerRequest(ctx, "clients/42")
 			if err == nil || len(data) != 0 || strings.Contains(err.Error(), secret) {
 				t.Fatalf("credential echo escaped: %s %v", data, err)
+			}
+		})
+	}
+}
+
+func TestCallerResponseBasicCredentialFalsePositives(t *testing.T) {
+	for _, tc := range []struct {
+		name, username, password, response string
+		rejected                           bool
+	}{
+		{name: "timeline username", username: "mifos", password: "private-password", response: `{"timeline":{"submittedByUsername":"mifos","activatedByUsername":"mifos"}}`},
+		{name: "username matches JSON key", username: "id", password: "private-password", response: `{"id":42}`},
+		{name: "short password matches data", username: "officer", password: "name", response: `{"name":"Alice"}`},
+		{name: "seven byte password", username: "officer", password: "1234567", response: `{"accountNo":"1234567"}`},
+		{name: "eight byte password", username: "officer", password: "12345678", response: `{"echo":"12345678"}`, rejected: true},
+		{name: "short decoded credential pair", username: "officer", password: "short", response: `{"echo":"officer:short"}`, rejected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			bank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Write([]byte(tc.response))
+			}))
+			defer bank.Close()
+			c := &CallerClient{baseURL: bank.URL, http: bank.Client()}
+			auth := "Basic " + base64.StdEncoding.EncodeToString([]byte(tc.username+":"+tc.password))
+			ctx, err := WithCallerContext(context.Background(), auth, "tenant")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data, err := c.DoCallerRequest(ctx, "clients/42")
+			if tc.rejected {
+				if err == nil || len(data) != 0 || err.Error() != "Fineract response contained credential material" {
+					t.Fatal("credential echo was not safely rejected")
+				}
+			} else if err != nil || string(data) != tc.response {
+				t.Fatalf("normal client data was rejected or changed: %v", err)
 			}
 		})
 	}
