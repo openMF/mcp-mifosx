@@ -15,6 +15,34 @@ import (
 	"testing"
 )
 
+func TestCallerFingerprint(t *testing.T) {
+	if _, err := CallerFingerprint(context.Background()); err == nil {
+		t.Fatal("fingerprint accepted missing caller context")
+	}
+	fingerprint := func(auth, tenant string) [32]byte {
+		t.Helper()
+		ctx, err := WithCallerContext(context.Background(), auth, tenant)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err := CallerFingerprint(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return value
+	}
+	owner := fingerprint("Bearer secret", "tenant")
+	if owner != fingerprint("Bearer secret", "tenant") {
+		t.Fatal("same caller fingerprint changed")
+	}
+	if owner == fingerprint("Bearer other-secret", "tenant") || owner == fingerprint("Bearer secret", "other-tenant") {
+		t.Fatal("fingerprint did not include both authorization and tenant")
+	}
+	if fingerprint("Bearer ab", "c") == fingerprint("Bearer a", "bc") {
+		t.Fatal("fingerprint pair encoding is ambiguous")
+	}
+}
+
 func TestCallerRequestRequiresContextAndAllowedEndpoint(t *testing.T) {
 	calls := 0
 	bank := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++ }))

@@ -58,6 +58,17 @@ python mcp_server.py
 
 The server starts on **stdio transport** — MCP clients connect to it using standard input/output.
 
+To serve **streamable HTTP** instead, for a client in another container or on another host, set FastMCP's settings:
+
+```bash
+FASTMCP_TRANSPORT=http FASTMCP_HOST=0.0.0.0 FASTMCP_PORT=8000 python mcp_server.py
+# clients connect to http://<host>:8000/mcp
+```
+
+The HTTP endpoint has no authentication of its own: anyone who can reach it acts as the configured Fineract user. Keep it on a private network, as the agentic Mifos sandbox does (one network per agent and its MCP server).
+
+By default it exposes only the read-only tools. Set `MCP_AGENT_PROFILE` to choose which tools it exposes; see [Tool profiles](#tool-profiles-enforced-by-the-server).
+
 ### 4. (Optional) Run with Docker
 
 ```bash
@@ -88,14 +99,15 @@ Add the following to your `claude_desktop_config.json`:
         "MIFOSX_BASE_URL": "https://your-fineract-instance/api/v1",
         "MIFOSX_TENANT_ID": "default",
         "MIFOSX_USERNAME": "mifos",
-        "MIFOSX_PASSWORD": "password"
+        "MIFOSX_PASSWORD": "password",
+        "MCP_AGENT_PROFILE": "all"
       }
     }
   }
 }
 ```
 
-Claude will automatically discover all 49 tools and be able to perform banking operations via natural language.
+With `MCP_AGENT_PROFILE` set to `all`, Claude will discover every tool and be able to perform banking operations via natural language. Leave it out to give Claude the read-only tools only.
 
 ### Custom Python Agent (Local / On-Premise)
 
@@ -258,6 +270,10 @@ By keeping this server "pure," you gain:
 | `MIFOSX_TENANT_ID` | Fineract tenant identifier              | `default`  |
 | `MIFOSX_USERNAME`  | Fineract API username                   | `mifos`    |
 | `MIFOSX_PASSWORD`  | Fineract API password                   | `password` |
+| `MCP_AGENT_PROFILE` | Tool profile to expose: a name from `profiles.toml`, or `all` | `read-only` |
+| `MCP_PROFILES_FILE` | Path to the tool profiles file          | `profiles.toml` |
+| `FASTMCP_TRANSPORT` | `stdio`, or `http` for streamable HTTP at `/mcp` | `stdio` |
+| `FASTMCP_HOST` / `FASTMCP_PORT` | Address the HTTP transport listens on | `127.0.0.1` / `8000` |
 
 ---
 
@@ -326,7 +342,27 @@ Expected output:
 
 ## Using a Subset of Tools
 
-You do not need to use all 49 tools. The server exposes the full set, but your MCP client can choose to work with a subset. There are three approaches:
+You do not need to use all the tools. The server itself decides which tools a client can see and call (tool profiles); within that set, your MCP client can narrow down further.
+
+### Tool profiles (enforced by the server)
+
+`profiles.toml` lists, per profile, the tools the server exposes. Choose one with `MCP_AGENT_PROFILE`:
+
+```bash
+MCP_AGENT_PROFILE=decision python mcp_server.py
+```
+
+| `MCP_AGENT_PROFILE` | Tools exposed |
+| ------------------- | ------------- |
+| not set | `read-only`: the tools that only read from Fineract |
+| a profile in `profiles.toml` | exactly the tools that profile lists |
+| `all` | every tool, including those that change or delete data |
+
+Tools outside the profile are neither listed nor callable: calling one by name fails with `Unknown tool`. A tool added to `mcp_server.py` later stays hidden until a profile lists it. The server refuses to start when the profile does not exist, when `profiles.toml` names a tool the server does not have, or when the file cannot be read.
+
+To give an agent its own set of tools, add a `[profiles.<name>]` table with a `tools` list to `profiles.toml` (or point `MCP_PROFILES_FILE` at your own file, which must also define `read-only`).
+
+Within the profile, clients can narrow the set further in three ways. Only options 2 and 3 restrict which tools can be called; option 1 only guides the model:
 
 ### Option 1 — System Prompt Filtering (Simplest)
 
@@ -337,7 +373,7 @@ You only have access to the following tools: get_savings, deposit, withdraw.
 Do not use any other tools.
 ```
 
-The LLM will respect this even though the full 49 tools are technically available.
+This is guidance, not access control: the model can still call every tool the server's profile exposes. To restrict tools, use a tool profile.
 
 ### Option 2 — Domain Router via `registry.py` (Recommended)
 

@@ -1,24 +1,48 @@
 # Agentic Mifos sandbox: a minimal, self-contained Mifos X environment for
 # agentic workflows. This file starts the system of record (Apache Fineract),
-# the Mifos X web app and the OpenFn Lightning orchestrator; the Pi agents and
-# the scoped MCP servers are added as separate services.
+# the Mifos X web app and the OpenFn Lightning orchestrator, plus the Pi agents
+# and their scoped MCP servers on request.
 #
 #   ./scripts/gen-secrets.sh   # creates .env with generated passwords and keys
 #   docker compose up -d
 #   open http://localhost:4200   Mifos X web app (mifos / password)
 #   open http://localhost:4000   OpenFn Lightning (LIGHTNING_ADMIN_* in .env)
 #   curl http://localhost:8080/actuator/health   Agentic gateway (loan API)
+#   open http://localhost:8090/docs   LOS: commercial opportunities (los/README.md)
+#
+# Local models (optional, several GB to download on first start):
+#   docker compose --profile ollama up -d
+# Without the profile the OpenFn jobs fall back to rule-based decisions, or
+# set OLLAMA_URL in .env to an Ollama server you already run.
+#
+# Agents (Pi, see pi-agent/), started one run at a time; they need the local
+# models:
+#   docker compose --profile ollama --profile agents run --rm agent-decision \
+#     -p "List the loan products with their interest rates"
+# From a script, add -T and close stdin (`< /dev/null`): without a terminal,
+# Pi reads stdin into the prompt and waits for it to end.
 #
 # Networks
 #   edge    - published ports (bound to 127.0.0.1) and outbound internet
 #   core    - internal: Fineract and its database, no route to the internet
 #   openfn  - internal: Lightning, its worker, the bootstrap and the gateway
+#   llm     - internal: the Ollama API, reachable from the OpenFn worker and the agents
+#   llm-egress - Ollama alone, to download models
+#   agent-<name> - internal: one agent and its MCP server
+#   los     - internal: the LOS and its database (no route to Fineract)
+#   los-edge - the LOS alone, for its published port
 
 # Webhook trigger ids of the OpenFn project. The bootstrap provisions the
 # triggers with exactly these ids, so the gateway's webhook URLs are fixed.
 x-openfn-triggers:
   loan-submit: &trigger-loan-submit 8c5f206e-6510-4bc1-87cd-cd71554e9335
   loan-review: &trigger-loan-review bde8f76a-5f61-4183-ac6f-0ec0ce8d9ff4
+
+# Models the OpenFn jobs ask for: the decision job (text) and the identity
+# document job (vision). ollama-pull downloads both.
+x-ollama:
+  model: &ollama-model ${OLLAMA_MODEL:-llama3.2:3b}
+  vision-model: &ollama-vision-model ${OLLAMA_VISION_MODEL:-qwen2.5vl:3b}
 
 services:
   fineract-db:
@@ -151,7 +175,7 @@ services:
 
   # Shared settings for the Lightning server and its one-shot setup job.
   lightning-setup: &lightning
-    image: ${LIGHTNING_IMAGE:-openfn/lightning:v2.19.0}
+    image: ${LIGHTNING_IMAGE:-openfn/lightning:v2.19.2}
     depends_on:
       lightning-db:
         condition: service_healthy
@@ -184,6 +208,10 @@ services:
       - /app/bin/lightning
       - eval
       - |
+        # `eval` does not start Lightning's applications. Since v2.19.2 the
+        # setup also starts the adaptor scheduler, which needs the time zone
+        # database: without it every run after the first crashes.
+        {:ok, _} = Application.ensure_all_started(:tzdata)
         Lightning.Release.migrate()
         email = System.fetch_env!("LIGHTNING_ADMIN_EMAIL")
         {:ok, _, _} =
@@ -256,7 +284,12 @@ services:
       NODE_OPTIONS: --dns-result-order=ipv4first
     # edge: adaptors are installed from npm at run time.
     # core: the Fineract write-back job calls Fineract directly.
-    networks: [openfn, edge, core]
+    # llm: the decision and document jobs call Ollama.
+    networks: [openfn, edge, core, llm]
+    # Lets OLLAMA_URL point at an Ollama server on the Docker host (Linux;
+    # Docker Desktop provides this name already).
+    extra_hosts:
+      - host.docker.internal:host-gateway
     mem_limit: 1g
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
@@ -279,10 +312,59 @@ services:
       OPENFN_PROJECT_SPEC: /spec/project.yaml
       OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
       OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
+      # Agent service users and their roles (fineract-rbac.json).
+      FINERACT_AGENT_RBAC: /spec/fineract-rbac.json
+      FINERACT_AGENT_IDENTITY_PASSWORD: ${FINERACT_AGENT_IDENTITY_PASSWORD:?run scripts/gen-secrets.sh}
+      FINERACT_AGENT_DECISION_PASSWORD: ${FINERACT_AGENT_DECISION_PASSWORD:?run scripts/gen-secrets.sh}
+      FINERACT_AGENT_WRITEBACK_PASSWORD: ${FINERACT_AGENT_WRITEBACK_PASSWORD:?run scripts/gen-secrets.sh}
+      FINERACT_AGENT_INTAKE_PASSWORD: ${FINERACT_AGENT_INTAKE_PASSWORD:?run scripts/gen-secrets.sh}
     volumes:
       - bootstrap-state:/state:ro
       - ../agentic-banking-openfn/openfn/project.yaml:/spec/project.yaml:ro
+      - ./fineract-rbac.json:/spec/fineract-rbac.json:ro
     networks: [core, openfn]
+    mem_limit: 128m
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
+  # Local LLM server, started only with `--profile ollama`.
+  ollama:
+    image: &ollama-image ${OLLAMA_IMAGE:-ollama/ollama:0.40.5}
+    profiles: [ollama]
+    environment:
+      # The text and vision models take turns in memory instead of both
+      # staying loaded; one request at a time keeps CPU-only hosts usable.
+      OLLAMA_MAX_LOADED_MODELS: 1
+      OLLAMA_NUM_PARALLEL: 1
+      OLLAMA_KEEP_ALIVE: 10m
+    volumes:
+      - ollama-data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks: [llm, llm-egress]
+    mem_limit: ${OLLAMA_MEM_LIMIT:-6g}
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  # Downloads the models into the ollama-data volume. Models already there are
+  # only checked for updates, so it is safe to run on every `up`.
+  ollama-pull:
+    image: *ollama-image
+    profiles: [ollama]
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: *ollama-model
+      OLLAMA_VISION_MODEL: *ollama-vision-model
+    entrypoint: ["/bin/sh", "-c"]
+    command: ['ollama pull "$$OLLAMA_MODEL" && ollama pull "$$OLLAMA_VISION_MODEL"']
+    networks: [llm]
     mem_limit: 128m
     security_opt: [no-new-privileges:true]
     restart: "no"
@@ -292,6 +374,10 @@ services:
     depends_on:
       bootstrap:
         condition: service_completed_successfully
+      # Only with `--profile ollama`: wait until the models are present.
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
     environment:
       # Spring resolves the ${...} placeholders below from these two variables.
       OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
@@ -302,9 +388,12 @@ services:
       # Where OpenFn jobs (run by the worker) call back into the gateway.
       OPENFN_GATEWAY_BASE_URL: http://gateway:8080
       OPENFN_CALLBACK_SECRET: ${OPENFN_CALLBACK_SECRET:?run scripts/gen-secrets.sh}
-      # No Ollama service yet: the decision job falls back to its rule-based
-      # decision when this host does not resolve.
-      OPENFN_OLLAMA_URL: http://ollama:11434
+      # Passed to the OpenFn jobs, which call Ollama from the worker. Without
+      # the ollama profile this host does not resolve and the decision job
+      # falls back to its rule-based decision.
+      OPENFN_OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
+      OLLAMA_MODEL: *ollama-model
+      OLLAMA_VISION_MODEL: *ollama-vision-model
       # Surface OpenFn failures instead of underwriting inside the gateway.
       LOAN_LOCAL_FALLBACK: "false"
     healthcheck:
@@ -320,14 +409,137 @@ services:
     security_opt: [no-new-privileges:true]
     restart: unless-stopped
 
+  # Loan origination service (LOS): commercial opportunities, from first
+  # contact until they are registered in Fineract or discarded. It has its own
+  # database and no access to Fineract: the write-back agent registers a
+  # qualified opportunity there and records the Fineract ids in the LOS.
+  los-db:
+    image: postgres:18.6-alpine
+    environment:
+      POSTGRES_USER: postgres
+      # Superuser, used only by the init script; the LOS never sees it.
+      POSTGRES_PASSWORD: ${LOS_DB_ADMIN_PASSWORD:?run scripts/gen-secrets.sh}
+      LOS_APP_DB_USER: los
+      LOS_APP_DB_PASSWORD: ${LOS_DB_APP_PASSWORD:?run scripts/gen-secrets.sh}
+    volumes:
+      - ./los/postgresql-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - los-db-data:/var/lib/postgresql
+    healthcheck:
+      # Over TCP: while the init script runs on first start, Postgres listens on
+      # its Unix socket only, so this passes once the los database exists.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d los"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [los]
+    mem_limit: 256m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  los:
+    build: ./los
+    depends_on:
+      los-db:
+        condition: service_healthy
+    environment:
+      LOS_DB_HOST: los-db
+      LOS_DB_NAME: los
+      # Non-superuser role created by los/postgresql-init.sh.
+      LOS_DB_USER: los
+      LOS_DB_PASSWORD: ${LOS_DB_APP_PASSWORD}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    ports:
+      - "127.0.0.1:${LOS_PORT:-8090}:8000"
+    # los-edge: only for the published port; no other service is on it.
+    networks: [los, los-edge]
+    mem_limit: 256m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  # Each agent is a Pi container paired with its own MCP server: the
+  # mcp-mifosx Python server, limited to the agent's tool profile
+  # (python/profiles.toml) and signed in to Fineract as the agent's service
+  # user (fineract-rbac.json). The agent holds no Fineract credentials and
+  # reaches only its MCP server and the LLM.
+  mcp-decision:
+    build: ../python
+    profiles: [agents]
+    depends_on:
+      # Creates the agent-decision user and its role.
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      MIFOSX_BASE_URL: https://fineract:8443/fineract-provider/api/v1
+      MIFOSX_TENANT_ID: default
+      MIFOSX_USERNAME: agent-decision
+      MIFOSX_PASSWORD: ${FINERACT_AGENT_DECISION_PASSWORD:?run scripts/gen-secrets.sh}
+      # The sandbox Fineract uses a self-signed certificate.
+      MIFOSX_SKIP_TLS_VERIFY: "true"
+      MCP_AGENT_PROFILE: decision
+      # FastMCP settings: streamable HTTP on :8000/mcp instead of stdio.
+      FASTMCP_TRANSPORT: http
+      FASTMCP_HOST: 0.0.0.0
+      FASTMCP_PORT: 8000
+      FASTMCP_SHOW_SERVER_BANNER: "false"
+      FASTMCP_CHECK_FOR_UPDATES: "off"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 8000), 2)"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    # The Python image has no unprivileged user of its own.
+    user: "10001:10001"
+    networks: [core, agent-decision]
+    mem_limit: 256m
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+  agent-decision:
+    build: ./pi-agent
+    profiles: [agents]
+    depends_on:
+      mcp-decision:
+        condition: service_healthy
+      # Only with `--profile ollama`: wait until the models are present.
+      ollama-pull:
+        condition: service_completed_successfully
+        required: false
+    environment:
+      AGENT_MCP_URL: http://mcp-decision:8000/mcp
+      # The sandbox's Ollama: the agent networks have no route out, so an
+      # OLLAMA_URL outside the sandbox is not reachable from here.
+      AGENT_LLM_URL: http://ollama:11434/v1
+      AGENT_MODEL: *ollama-model
+    # Forwards signals to Pi and reaps its child processes.
+    init: true
+    networks: [agent-decision, llm]
+    mem_limit: 512m
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+
 networks:
   edge: {}
   core:
     internal: true
   openfn:
     internal: true
+  llm:
+    internal: true
+  llm-egress: {}
+  agent-decision:
+    internal: true
+  los:
+    internal: true
+  los-edge: {}
 
 volumes:
   fineract-db-data: {}
   lightning-db-data: {}
   bootstrap-state: {}
+  ollama-data: {}
+  los-db-data: {}

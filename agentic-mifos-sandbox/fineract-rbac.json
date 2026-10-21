@@ -1,0 +1,25 @@
+{
+  "description": "One Fineract service user per agent, with a role that grants only what the agent's MCP tools need (python/profiles.toml). The bootstrap creates the roles and users, keeps each role's permissions exactly as listed here, and checks on every run that each agent is refused (HTTP 403) outside its role.",
+  "agents": {
+    "identity": {
+      "role": "Agent: identity document",
+      "description": "Looks up the client and their identity documents.",
+      "permissions": ["READ_CLIENT", "READ_CLIENTIDENTIFIER", "READ_DOCUMENT", "READ_CODE", "READ_CODEVALUE"]
+    },
+    "decision": {
+      "role": "Agent: decision support",
+      "description": "Reads the applicant's history and the loan products; never writes.",
+      "permissions": ["READ_CLIENT", "READ_CLIENTCHARGE", "READ_LOAN", "READ_SAVINGSACCOUNT", "READ_LOANPRODUCT"]
+    },
+    "writeback": {
+      "role": "Agent: write-back",
+      "description": "Creates the client, their identity document and the loan application. Approval stays with a human.",
+      "permissions": ["READ_CLIENT", "CREATE_CLIENT", "CREATE_CLIENTIDENTIFIER", "READ_LOANPRODUCT", "READ_LOAN", "CREATE_LOAN"]
+    },
+    "intake": {
+      "role": "Agent: intake",
+      "description": "Reads the client and the loan products on offer.",
+      "permissions": ["READ_CLIENT", "READ_LOAN", "READ_LOANPRODUCT"]
+    }
+  }
+}

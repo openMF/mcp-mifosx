@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class LoanCaseState {
 
@@ -42,11 +43,18 @@ public class LoanCaseState {
     private String errorMessage;
     private final Instant createdAt = Instant.now();
     private volatile Instant updatedAt = Instant.now();
+    private final ReentrantLock lock = new ReentrantLock();
 
     public LoanCaseState(String workflowId, LoanApplication application) {
         this.workflowId = workflowId;
         this.application = application;
     }
+
+    /**
+     * Serialises the changes made to this case by submit, reviews, OpenFn callbacks and the
+     * stall check, so that each one checks and updates the case in a single step.
+     */
+    public ReentrantLock getLock() { return lock; }
 
     public String getWorkflowId() { return workflowId; }
     public LoanApplication getApplication() { return application; }
@@ -54,6 +62,11 @@ public class LoanCaseState {
     public Status getStatus() { return status; }
     public void setStatus(Status status) {
         this.status = status;
+        this.updatedAt = Instant.now();
+    }
+
+    /** Records activity without changing the status, e.g. a progress update from OpenFn. */
+    public void touch() {
         this.updatedAt = Instant.now();
     }
 

@@ -63,6 +63,9 @@ loan:
   local-fallback-enabled: ${LOAN_LOCAL_FALLBACK:true}
   # How long to keep in-memory loan state (hours)
   state-ttl-hours: 72
+  # A case waiting on OpenFn that makes no progress for this long is marked
+  # FAILED: a failed job stops the run without calling back.
+  openfn-timeout-minutes: ${LOAN_OPENFN_TIMEOUT_MINUTES:15}
 
 logging:
   level:

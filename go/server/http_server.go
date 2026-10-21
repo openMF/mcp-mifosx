@@ -5,9 +5,11 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
+	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -30,9 +32,22 @@ func NewHTTPServer(srv *MifosMcpServer, port string) *MifosHTTPServer {
 
 // Handler exposes only the caller-scoped HTTP pilot, independent of stdio.
 func (s *MifosHTTPServer) Handler() http.Handler {
+	// Ownership lives only as long as the transport session. Hooks run before
+	// the endpoint is advertised and when the SSE connection is torn down.
+	var owners sync.Map // session ID -> caller fingerprint; no raw credentials.
+	hooks := &server.Hooks{}
+	hooks.AddOnRegisterSession(func(ctx context.Context, session server.ClientSession) {
+		if fingerprint, err := adapter.CallerFingerprint(ctx); err == nil {
+			owners.Store(session.SessionID(), fingerprint)
+		}
+	})
+	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
+		owners.Delete(session.SessionID())
+	})
+
 	// Always build the restricted catalog here, even if a caller constructs
 	// MifosHTTPServer directly with the full stdio server.
-	pilot := newCallerScopedHTTPServer(s.McpServer.Registry.Fineract)
+	pilot := newCallerScopedHTTPServer(s.McpServer.Registry.Fineract, hooks)
 	sseServer := server.NewSSEServer(pilot.MCPServer)
 
 	mux := http.NewServeMux()
@@ -78,6 +93,14 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 				return
 			}
 			r = r.WithContext(ctx)
+		}
+		if r.URL.Path == "/message" {
+			fingerprint, err := adapter.CallerFingerprint(r.Context())
+			owner, ok := owners.Load(r.URL.Query().Get("sessionId"))
+			if err != nil || !ok || owner != fingerprint {
+				http.Error(w, "session does not belong to the authenticated caller", http.StatusForbidden)
+				return
+			}
 		}
 		mux.ServeHTTP(w, r)
 	})

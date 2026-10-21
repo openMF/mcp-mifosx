@@ -27,6 +27,8 @@ services:
       - MIFOSX_USERNAME=${MIFOSX_USERNAME:-mifos}
       - MIFOSX_PASSWORD=${MIFOSX_PASSWORD:-password}
       - MIFOSX_TENANT_ID=${MIFOSX_TENANT_ID:-default}
+      # MCP tools Pi may use: a profile from python/profiles.toml, or "all"
+      - MCP_AGENT_PROFILE=${MCP_AGENT_PROFILE:-read-only}
       # Pi Agent LLM provider — set ONE of the following:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
