@@ -1,7 +1,8 @@
 # Serves the Mifos X web app and proxies the Fineract API through the same
 # origin, so Fineract never needs a published port or a browser TLS exception.
 server {
-    listen 80;
+    # nginx runs as its unprivileged user, so the port is above 1024.
+    listen 8080;
     server_name _;
 
     root /usr/share/nginx/html;
@@ -20,6 +21,11 @@ server {
         proxy_ssl_verify off;
         proxy_connect_timeout 30s;
         proxy_read_timeout 120s;
+    }
+
+    # Rendered at start-up into /run, as the image is read-only.
+    location = /assets/env.js {
+        alias /run/env.js;
     }
 
     location / {
