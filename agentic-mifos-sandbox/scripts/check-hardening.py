@@ -28,7 +28,8 @@ ROOT_JOBS = {
 # Internal networks and the services allowed on them (`*` matches any
 # characters). Each agent adds no entry here: agent-<name> runs with
 # mcp-<name> on a network named agent-<name> (see allowed_on), the agent
-# reaches Ollama on agents-llm and its MCP server reaches Fineract on core.
+# reaches Ollama on agents-llm and the OpenFn worker on openfn-agents, and its
+# MCP server reaches Fineract on core.
 INTERNAL_NETWORKS = {
     "fineract-db": {"fineract-db", "fineract"},
     "core": {"fineract", "web-app", "lightning-worker", "bootstrap", "mcp-*"},
@@ -36,6 +37,7 @@ INTERNAL_NETWORKS = {
     "openfn": {"lightning", "lightning-worker", "bootstrap", "gateway"},
     "llm": {"ollama", "ollama-pull", "lightning-worker"},
     "agents-llm": {"ollama", "agent-*"},
+    "openfn-agents": {"lightning-worker", "agent-*"},
     "los": {"los-db", "los"},
 }
 

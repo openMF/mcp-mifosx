@@ -33,6 +33,7 @@ generated() {
     LOS_DB_ADMIN_PASSWORD|LOS_DB_APP_PASSWORD) password ;;
     LIGHTNING_ADMIN_PASSWORD|OPENFN_CALLBACK_SECRET) password ;;
     FINERACT_AGENT_*_PASSWORD) fineract_password ;;
+    AGENT_*_TOKEN) password ;;
     LIGHTNING_SECRET_KEY_BASE) openssl rand -base64 64 | tr -d '\n' ;;
     LIGHTNING_PRIMARY_ENCRYPTION_KEY|LIGHTNING_WORKER_SECRET) openssl rand -base64 32 ;;
     LIGHTNING_WORKER_RUNS_PRIVATE_KEY) base64 -w0 < "$tmp/runs.pem" ;;

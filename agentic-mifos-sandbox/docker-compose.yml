@@ -15,9 +15,10 @@
 # Without the profile the OpenFn jobs fall back to rule-based decisions, or
 # set OLLAMA_URL in .env to an Ollama server you already run.
 #
-# Agents (Pi, see pi-agent/), started one run at a time; they need the local
-# models:
-#   docker compose --profile ollama --profile agents run --rm agent-decision \
+# Agents (Pi, see pi-agent/) start with the local models (`--profile ollama`):
+# the loan flow's decision step asks agent-decision through its HTTP runner,
+# and falls back to rule-based decisions without it. One-off runs:
+#   docker compose --profile ollama run --rm agent-decision \
 #     -p "List the loan products with their interest rates"
 # From a script, add -T and close stdin (`< /dev/null`): without a terminal,
 # Pi reads stdin into the prompt and waits for it to end.
@@ -39,6 +40,7 @@
 #   llm          - internal: Ollama for the OpenFn worker
 #   agents-llm   - internal: Ollama for the agents
 #   agent-<name> - internal: one agent and its MCP server
+#   openfn-agents - internal: the OpenFn worker and the agents' runners
 #   los          - internal: the LOS and its database (no route to Fineract)
 #   web-app-edge, lightning-edge, gateway-edge, los-edge - one published port each
 #                  (lightning-edge also for the npm adaptor catalogue)
@@ -65,8 +67,8 @@ x-postgres: &postgres
   tmpfs: ["/run/postgresql:uid=70,gid=70,mode=0775,size=1m", "/tmp:size=16m"]
   pids_limit: 512
 
-# Models the OpenFn jobs ask for: the decision job (text) and the identity
-# document job (vision). ollama-pull downloads both.
+# Models: the decision agent's (text) and the identity document job's
+# (vision). ollama-pull downloads both.
 x-ollama:
   model: &ollama-model ${OLLAMA_MODEL:-llama3.2:3b}
   vision-model: &ollama-vision-model ${OLLAMA_VISION_MODEL:-qwen2.5vl:3b}
@@ -255,6 +257,10 @@ services:
       # the one shipped with the release instead of updating itself in place.
       ERL_FLAGS: -mnesia dir '"/tmp/mnesia"' -tzdata autoupdate disabled
       ERL_CRASH_DUMP: /tmp/erl_crash.dump
+      # Longest run before Lightning counts it as lost; the worker uses the
+      # same limit. A run with the vision step and the decision agent needs
+      # more than the default 300 s on CPU.
+      WORKER_MAX_RUN_DURATION_SECONDS: &max-run-seconds 600
     # Runs the migrations, creates the admin user if it does not exist yet, and
     # writes an API token for the bootstrap to /state (kept while it stays
     # valid). Safe to run on every `up`.
@@ -343,6 +349,7 @@ services:
       WORKER_SECRET: ${LIGHTNING_WORKER_SECRET}
       WORKER_LIGHTNING_PUBLIC_KEY: ${LIGHTNING_WORKER_PUBLIC_KEY:?run scripts/gen-secrets.sh}
       WORKER_CAPACITY: ${LIGHTNING_WORKER_CAPACITY:-2}
+      WORKER_MAX_RUN_DURATION_SECONDS: *max-run-seconds
       NODE_OPTIONS: --dns-result-order=ipv4first
     user: node
     tmpfs: ["/tmp:size=64m"]
@@ -352,8 +359,9 @@ services:
       - lightning-worker-home:/home/node
     # worker-egress: adaptors are installed from npm at run time.
     # core: the Fineract write-back job calls Fineract directly.
-    # llm: the decision and document jobs call Ollama.
-    networks: [openfn, worker-egress, core, llm]
+    # llm: the document job calls Ollama.
+    # openfn-agents: the decision job calls agent-decision.
+    networks: [openfn, worker-egress, core, llm, openfn-agents]
     # Lets OLLAMA_URL point at an Ollama server on the Docker host (Linux;
     # Docker Desktop provides this name already).
     extra_hosts:
@@ -387,6 +395,10 @@ services:
       FINERACT_AGENT_DECISION_PASSWORD: ${FINERACT_AGENT_DECISION_PASSWORD:?run scripts/gen-secrets.sh}
       FINERACT_AGENT_WRITEBACK_PASSWORD: ${FINERACT_AGENT_WRITEBACK_PASSWORD:?run scripts/gen-secrets.sh}
       FINERACT_AGENT_INTAKE_PASSWORD: ${FINERACT_AGENT_INTAKE_PASSWORD:?run scripts/gen-secrets.sh}
+      # Lightning credential "agent-decision" (URL and token of its runner),
+      # used by the decision job.
+      AGENT_DECISION_URL: http://agent-decision:8080
+      AGENT_DECISION_TOKEN: ${AGENT_DECISION_TOKEN:?run scripts/gen-secrets.sh}
     volumes:
       - bootstrap-state:/state:ro
       - ../agentic-banking-openfn/openfn/project.yaml:/spec/project.yaml:ro
@@ -489,9 +501,9 @@ services:
       # Where OpenFn jobs (run by the worker) call back into the gateway.
       OPENFN_GATEWAY_BASE_URL: http://gateway:8080
       OPENFN_CALLBACK_SECRET: ${OPENFN_CALLBACK_SECRET:?run scripts/gen-secrets.sh}
-      # Passed to the OpenFn jobs, which call Ollama from the worker. Without
-      # the ollama profile this host does not resolve and the decision job
-      # falls back to its rule-based decision.
+      # Passed to the OpenFn jobs: the document job calls Ollama from the
+      # worker. Without the ollama profile neither Ollama nor agent-decision
+      # runs, and the decision job falls back to its rule-based decision.
       OPENFN_OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
       OLLAMA_MODEL: *ollama-model
       OLLAMA_VISION_MODEL: *ollama-vision-model
@@ -575,7 +587,7 @@ services:
   mcp-decision:
     <<: *hardened
     build: ../python
-    profiles: [agents]
+    profiles: [ollama, agents]
     depends_on:
       # Creates the agent-decision user and its role.
       bootstrap:
@@ -607,10 +619,14 @@ services:
     pids_limit: 128
     restart: unless-stopped
 
+  # Serves the loan flow's decision step (pi-agent/skills/decision.md): looks
+  # the applicant up in Fineract and recommends; the OpenFn job keeps the rules
+  # and the guardrail.
   agent-decision:
     <<: *hardened
     build: ./pi-agent
-    profiles: [agents]
+    profiles: [ollama, agents]
+    command: ["serve"]
     depends_on:
       mcp-decision:
         condition: service_healthy
@@ -624,15 +640,23 @@ services:
       # OLLAMA_URL outside the sandbox is not reachable from here.
       AGENT_LLM_URL: http://ollama:11434/v1
       AGENT_MODEL: *ollama-model
+      AGENT_SKILL: /opt/pi-agent/skills/decision.md
+      AGENT_RUNNER_TOKEN: ${AGENT_DECISION_TOKEN:?run scripts/gen-secrets.sh}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
     # Forwards signals to Pi and reaps its child processes.
     init: true
     user: node
-    # Pi's configuration (written at start) in /home/node/.pi.
+    # Pi's configuration (written for each case) in /home/node/.pi.
     tmpfs: ["/tmp:size=32m", "/home/node/.pi:uid=1000,gid=1000,size=8m"]
-    networks: [agent-decision, agents-llm]
+    # openfn-agents: the decision job reaches the runner here.
+    networks: [agent-decision, agents-llm, openfn-agents]
     mem_limit: 512m
     pids_limit: 256
-    restart: "no"
+    restart: unless-stopped
 
 networks:
   fineract-db:
@@ -648,6 +672,8 @@ networks:
   agents-llm:
     internal: true
   agent-decision:
+    internal: true
+  openfn-agents:
     internal: true
   los:
     internal: true

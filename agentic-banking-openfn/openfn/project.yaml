@@ -8,12 +8,16 @@ description: >
   Replaces Temporal SupervisorWorkflow with OpenFn Lightning jobs.
   Spring Boot Agentic Gateway owns HITL + status queries; OpenFn owns step execution.
 
-# Lightning credential used by the Fineract write-back job. It must exist before deploying:
-# a raw JSON credential named "fineract", owned by the Lightning user below
-# (change owner to your Lightning user's email).
+# Lightning credentials the jobs use. They must exist before deploying: raw JSON
+# credentials owned by the Lightning user below (change owner to your Lightning
+# user's email). "fineract" is used by the write-back job; "agent-decision"
+# ({ "url", "token" } of the agent's runner) by the decision job.
 credentials:
   super@openfn.org-fineract:
     name: fineract
+    owner: super@openfn.org
+  super@openfn.org-agent-decision:
+    name: agent-decision
     owner: super@openfn.org
 
 workflows:
@@ -365,15 +369,25 @@ workflows:
           });
 
       ollama-decide:
-        name: Ollama Aggregate Decision
+        # The key stays ollama-decide: the job's id in Lightning is derived from it.
+        name: Decision (agent-decision + guardrail)
         adaptor: "@openfn/language-http@latest"
+        credential: super@openfn.org-agent-decision
         enabled: true
         body: |
-          // Local Ollama aggregates the specialist assessments into a decision (same prompt
-          // contract as agentic-banking-temporal). If Ollama is down or returns invalid JSON,
-          // the rule-based decision below is used instead.
+          // agent-decision looks the applicant up in Fineract (read-only MCP tools)
+          // and recommends. This job keeps what must not depend on a model: the
+          // rule-based decision from the specialist assessments, the evidence gate
+          // (an answer counts only if the agent looked the applicant up), the
+          // guardrail (the agent may be stricter than the rules, never more lenient)
+          // and the evidence check (history it reports is verified only if it called
+          // the tools behind it). If the agent cannot be reached, runs out of time,
+          // skips the lookup or answers in another shape, the rule-based decision
+          // is used.
+          // state.configuration is the "agent-decision" credential: { url, token }.
           fn(async state => {
-            const { application, assessments, bankData, creditReport, docResults, ollamaUrl, ollamaModel } = state;
+            const { application, assessments, bankData, creditReport, docResults } = state;
+            const agent = state.configuration || {};
 
             // Best-effort progress update, so the gateway's deadline counts this
             // (possibly minutes-long) step as activity. A failure only logs: the
@@ -399,76 +413,115 @@ workflows:
                 ? { recommendation: 'REFER', confidence: 0.65, riskLevel: 'MEDIUM', rationale: 'Borderline assessments – human review required.' }
                 : { recommendation: 'APPROVE', confidence: 0.78, riskLevel: 'LOW', rationale: 'All specialist assessments passed.' };
 
-            const prompt = [
-              'You are an expert loan underwriter agent running on-premise.',
-              'Analyse the following loan application data and return ONLY a valid JSON object',
-              'with no additional text, markdown or explanation.',
-              '',
-              'Required JSON schema:',
-              '{',
-              '  "recommendation": "APPROVE" | "REJECT" | "REFER",',
-              '  "confidence": number between 0 and 1,',
-              '  "summary": "concise 2-4 sentence rationale",',
-              '  "riskLevel": "LOW" | "MEDIUM" | "HIGH"',
-              '}',
-              '',
-              'Data:',
-              JSON.stringify({
-                application,
-                assessments,
-                bank: bankData,
-                credit: creditReport,
-                documents: (docResults || []).map(d => ({ docType: d.docType, valid: d.valid, validationMessages: d.validationMessages }))
-              }, null, 2),
-              '',
-              'Rules:',
-              '- Prefer APPROVE only when income, expense and credit assessments all passed and risk is LOW/MEDIUM.',
-              '- Prefer REJECT when credit score is weak or disposable income is insufficient.',
-              '- Use REFER when data is incomplete or borderline.'
-            ].join('\n');
+            const fallback = reason => {
+              console.log(`agent-decision not used (${reason}); using the rule-based decision`);
+              return { ...state, aiDecision: { ...rules, source: 'rules-fallback', error: reason } };
+            };
+            if (!agent.url || !agent.token) return fallback('no agent-decision credential');
 
+            const curp = (docResults || []).find(d => d.valid && d.extracted && d.extracted.curpClave);
+            const input = JSON.stringify({
+              applicant: {
+                fullName: application.fullName,
+                curp: curp ? curp.extracted.curpClave : null,
+                requestedAmount: application.requestedAmount,
+                termMonths: application.termMonths
+              },
+              rules: { recommendation: rules.recommendation, rationale: rules.rationale },
+              assessments,
+              bank: bankData,
+              credit: creditReport,
+              documents: (docResults || []).map(d => ({ docType: d.docType, valid: d.valid, validationMessages: d.validationMessages }))
+            }, null, 2);
+
+            // The runner stops the agent at 240 s and answers 504; the request
+            // timeout leaves it room to do so. A local model on CPU takes up to
+            // a minute per turn, and the run limit (600 s) has room for this.
+            // Built here, inside fn(), like the callback jobs' options (see the
+            // note in notify-gathering).
+            const options = {
+              headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + agent.token },
+              timeout: 260000
+            };
+            let reply;
             try {
-              console.log(`Calling Ollama model=${ollamaModel} at ${ollamaUrl}`);
-              const res = await post(`${ollamaUrl}/api/generate`, {
-                model: ollamaModel,
-                prompt,
-                stream: false,
-                format: 'json',
-                options: { temperature: 0.1 }
-              }, { timeout: 180000 })(state);
-
-              const raw = String(res.data?.response || '');
-              const json = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
-              const recommendation = String(json.recommendation || '').toUpperCase();
-              if (!['APPROVE', 'REJECT', 'REFER'].includes(recommendation)) {
-                throw new Error(`Unexpected recommendation: ${json.recommendation}`);
-              }
-              const confidence = Math.min(1, Math.max(0, Number(json.confidence)));
-              const aiDecision = {
-                recommendation,
-                confidence: Number.isFinite(confidence) ? confidence : rules.confidence,
-                rationale: json.summary || rules.rationale,
-                riskLevel: String(json.riskLevel || rules.riskLevel).toUpperCase(),
-                source: 'ollama',
-                model: ollamaModel,
-                raw
-              };
-
-              // Guardrail: the LLM may be stricter than the assessments, never more lenient
-              const severity = { APPROVE: 0, REFER: 1, REJECT: 2 };
-              if (severity[recommendation] < severity[rules.recommendation]) {
-                aiDecision.guardrail = `LLM recommended ${recommendation}, but the specialist assessments require ` +
-                  `${rules.recommendation} (${rules.rationale})`;
-                aiDecision.recommendation = rules.recommendation;
-                aiDecision.rationale = `${aiDecision.rationale} [Guardrail: ${aiDecision.guardrail}]`;
-                console.log(aiDecision.guardrail);
-              }
-              console.log('Ollama decision', JSON.stringify(aiDecision));
-              return { ...state, aiDecision };
+              console.log(`Asking agent-decision at ${agent.url}`);
+              reply = (await post(`${agent.url}/run`, { input, timeout_seconds: 240 }, options)(state)).data || {};
             } catch (e) {
-              console.log(`Ollama unavailable or invalid response (${e.message}); using rule-based decision`);
-              return { ...state, aiDecision: { ...rules, source: 'rules-fallback', model: ollamaModel, error: e.message } };
+              return fallback(e.message);
             }
+
+            let answer;
+            try {
+              const raw = String(reply.output || '');
+              answer = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+            } catch (e) {
+              return fallback(`unreadable answer (${e.message})`);
+            }
+            const severity = { APPROVE: 0, REFER: 1, REJECT: 2 };
+            const recommendation = String(answer.recommendation || '').toUpperCase();
+            if (!(recommendation in severity)) return fallback(`unexpected recommendation: ${answer.recommendation}`);
+            const confidence = Math.min(1, Math.max(0, Number(answer.confidence)));
+            const riskLevel = String(answer.riskLevel || '').toUpperCase();
+
+            // Evidence gate: the runner reports the tools the agent really called. A
+            // small model may skip the lookup and invent a history; its answer then
+            // rests on nothing, stricter or not. "No client found" (a new applicant)
+            // comes back as a tool error, so any lookup call counts here.
+            const calls = reply.tool_calls || [];
+            const lookups = calls.filter(t => t.tool === 'get_client_accts' || t.tool === 'search_clients');
+            if (!lookups.length) return fallback('the agent did not look the applicant up in Fineract');
+
+            // Evidence check: history the agent reports is verified only if the tools
+            // behind it succeeded. The history is flat in the answer
+            // (skills/decision.md); a nested fineract_history object is read too.
+            const called = new Set(calls.filter(t => !t.is_error).map(t => t.tool));
+            const h = answer.fineract_history && typeof answer.fineract_history === 'object' ? answer.fineract_history : answer;
+            const match = ['external_id', 'name', 'none', 'ambiguous'].includes(h.match) ? h.match : 'none';
+            const count = value => (Number.isFinite(Number(value)) ? Number(value) : null);
+            const lookedUp = called.has('get_client_accts') || called.has('search_clients');
+            const unverified = [];
+            if (match !== 'none' && !lookedUp) unverified.push(`${match} match without a client lookup`);
+            if (match === 'external_id' && !called.has('get_client')) unverified.push('external_id match without get_client');
+            if (count(h.active_loans) > 0 && !called.has('get_client_accts')) unverified.push('loans without get_client_accts');
+            if (count(h.overdue_loans) > 0 && !called.has('get_overdue_loans_for_client')) {
+              unverified.push('overdue loans without get_overdue_loans_for_client');
+            }
+            const history = {
+              match,
+              clientId: Number.isInteger(Number(h.client_id)) && Number(h.client_id) > 0 ? Number(h.client_id) : null,
+              activeLoans: count(h.active_loans),
+              overdueLoans: count(h.overdue_loans),
+              notes: typeof h.notes === 'string' ? h.notes.slice(0, 300) : '',
+              verified: unverified.length === 0,
+              unverified
+            };
+
+            const aiDecision = {
+              recommendation,
+              confidence: Number.isFinite(confidence) ? confidence : rules.confidence,
+              rationale: answer.summary || rules.rationale,
+              riskLevel: ['LOW', 'MEDIUM', 'HIGH'].includes(riskLevel) ? riskLevel : rules.riskLevel,
+              source: 'agent-decision',
+              model: reply.model,
+              raw: reply.output,
+              history,
+              toolCalls: calls.map(t => (t.is_error ? `${t.tool} (failed)` : t.tool)),
+              durationMs: reply.duration_ms
+            };
+
+            // Guardrail: the agent may be stricter than the assessments, never more lenient
+            if (severity[recommendation] < severity[rules.recommendation]) {
+              aiDecision.guardrail = `The agent recommended ${recommendation}, but the specialist assessments require ` +
+                `${rules.recommendation} (${rules.rationale})`;
+              aiDecision.recommendation = rules.recommendation;
+              aiDecision.rationale = `${aiDecision.rationale} [Guardrail: ${aiDecision.guardrail}]`;
+              console.log(aiDecision.guardrail);
+            }
+            console.log('agent-decision', JSON.stringify({
+              recommendation: aiDecision.recommendation, history, toolCalls: aiDecision.toolCalls, durationMs: aiDecision.durationMs
+            }));
+            return { ...state, aiDecision };
           });
 
       callback-gateway:
@@ -500,7 +553,10 @@ workflows:
                   riskLevel: aiDecision.riskLevel,
                   raw: aiDecision.raw,
                   guardrail: aiDecision.guardrail,
-                  error: aiDecision.error
+                  error: aiDecision.error,
+                  history: aiDecision.history,
+                  toolCalls: aiDecision.toolCalls,
+                  durationMs: aiDecision.durationMs
                 }
               }
             };
@@ -759,14 +815,34 @@ workflows:
                     '--- AI summary ---',
                     summary.rationale || '(none)'
                   ];
-                  if (decision.raw) {
-                    lines.push('', '--- LLM raw output ---', decision.raw);
-                  }
                   if (decision.guardrail) {
                     lines.push('', `--- Guardrail applied: ${decision.guardrail} ---`);
                   }
                   if (decision.error) {
-                    lines.push('', `--- Ollama not used: ${decision.error} ---`);
+                    lines.push('', `--- Agent not used: ${decision.error} ---`);
+                  }
+                  if (decision.history) {
+                    const h = decision.history;
+                    lines.push(
+                      '',
+                      '--- Fineract history (agent-decision) ---',
+                      `Match: ${h.match}${h.clientId ? ` (client ${h.clientId})` : ''}`,
+                      `Active loans: ${h.activeLoans ?? 'n/a'}, overdue loans: ${h.overdueLoans ?? 'n/a'}`
+                    );
+                    if (h.notes) lines.push(`Notes: ${h.notes}`);
+                    lines.push(h.verified
+                      ? 'Verified: the agent called the tools behind these figures'
+                      : `Unverified: ${(h.unverified || []).join('; ')}`);
+                  }
+                  if (Array.isArray(decision.toolCalls)) {
+                    lines.push(`Tools called: ${decision.toolCalls.join(', ') || 'none'}`);
+                  }
+                  // Last of the decision lines, and capped: the note is cut at 4000
+                  // characters, and a long answer must not cut off the lines above or
+                  // the assessments below. The full output stays in the case summary.
+                  if (decision.raw) {
+                    const raw = decision.raw.length > 1500 ? `${decision.raw.slice(0, 1500)} […]` : decision.raw;
+                    lines.push('', '--- LLM raw output ---', raw);
                   }
                   if (Array.isArray(summary.assessments) && summary.assessments.length) {
                     lines.push('', '--- Assessments ---');
