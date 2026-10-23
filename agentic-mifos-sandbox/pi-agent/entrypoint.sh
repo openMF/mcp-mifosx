@@ -7,8 +7,14 @@
 #   -p "<prompt>"              answer one prompt, then exit
 #   --mode json "<prompt>"     the same, as JSONL events
 #   (none)                     interactive session (needs a terminal)
+#   serve                      HTTP runner for OpenFn jobs (runner.mjs); each
+#                              case it receives runs through this script again
 # Without a terminal Pi reads stdin into the prompt, so close it (< /dev/null).
 set -eu
+
+if [ "${1:-}" = serve ]; then
+  exec node /opt/pi-agent/runner.mjs
+fi
 
 node /opt/pi-agent/configure.mjs
 

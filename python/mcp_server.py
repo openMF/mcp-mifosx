@@ -291,6 +291,9 @@ def get_client(clientId: int) -> dict:
         return data
     return {
         "clientId":       data.get("id"),
+        # Lets an agent confirm the client against an identity document (the
+        # sandbox's write-back sets it to the CURP clave).
+        "externalId":     data.get("externalId"),
         "displayName":    data.get("displayName"),
         "firstname":      data.get("firstname"),
         "lastname":       data.get("lastname"),
