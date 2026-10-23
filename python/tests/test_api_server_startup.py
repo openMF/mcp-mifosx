@@ -3,14 +3,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-"""The REST API server used to crash on startup because the agent module doesn't exist."""
+"""Starting the REST API server: without the agent module, and by running the module itself."""
 
+import runpy
 import sys
 import types
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
+from uvicorn.importer import import_from_string
 
 from core import api_server
 
@@ -62,3 +64,11 @@ def test_a_broken_agent_module_still_fails_startup() -> None:
         with pytest.raises(ModuleNotFoundError, match="langgraph"):
             with TestClient(api_server.app):
                 pass
+
+
+@pytest.mark.filterwarnings("ignore:.*found in sys.modules:RuntimeWarning")  # runpy re-running an imported module
+def test_running_the_module_points_uvicorn_at_an_importable_app() -> None:
+    with patch("uvicorn.run") as run:
+        runpy.run_module("core.api_server", run_name="__main__")
+    app_path = run.call_args.args[0]
+    assert import_from_string(app_path) is api_server.app

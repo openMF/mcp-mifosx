@@ -94,13 +94,14 @@ class Transaction(BaseModel):
     # deposit or withdrawal gets a 400 listing the tenant's payment types.
     paymentTypeId: Optional[int] = None
 
+# No default charge_id: charge ids are tenant-specific, so the caller has to choose one
 class SavingsCharge(BaseModel):
     amount: float
-    charge_id: int = 1
+    charge_id: int
 
 class LateFee(BaseModel):
     fee_amount: float
-    charge_id: int = 2
+    charge_id: int
 
 class WaiveInterest(BaseModel):
     amount: float
@@ -427,4 +428,4 @@ if __name__ == "__main__":
     print("STARTING HEADLESS MCP SERVER")
     print("-"*50)
     print("API Docs available at: http://localhost:8000/docs")
-    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("core.api_server:app", host="0.0.0.0", port=8000, reload=True)
