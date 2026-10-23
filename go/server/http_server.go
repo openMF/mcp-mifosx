@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -47,7 +48,24 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 	})
 
 	// The restricted catalog has no reference to the configured executor.
+	bridge := adapter.NewApprovalBridge()
+	owns := func(ctx context.Context, id string) bool {
+		fingerprint, err := adapter.CallerFingerprint(ctx)
+		owner, ok := owners.Load(id)
+		return err == nil && ok && owner == fingerprint
+	}
 	pilot := newCallerScopedHTTPServer(s.caller, hooks)
+	pilot.Registry.RegisterCreateClientProposal(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		session := server.ClientSessionFromContext(ctx)
+		if session == nil || !owns(ctx, session.SessionID()) {
+			return mcp.NewToolResultError("a live owned MCP session is required"), nil
+		}
+		data, err := s.caller.ProposeClient(ctx, bridge, session.SessionID(), req.Params.Arguments)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return mcp.NewToolResultText(string(data)), nil
+	})
 	sseServer := server.NewSSEServer(pilot.MCPServer)
 
 	mux := http.NewServeMux()
@@ -55,6 +73,25 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 	mux.Handle("/message", sseServer.MessageHandler())
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/api/capabilities", s.handleCapabilities)
+	// Deliberately outside the tool catalog and REST tool dispatcher. Only the
+	// human-decision gateway can invoke execution, never an MCP tool request.
+	mux.HandleFunc("/internal/approved-create-client/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !bridge.Authorized(r.Header.Get("X-MCP-Approval-Bridge")) || !owns(r.Context(), r.Header.Get("X-MCP-Session-Id")) {
+			http.Error(w, "approval execution is not authorized", http.StatusForbidden)
+			return
+		}
+		data, err := s.caller.ExecuteApprovedClient(r.Context(), bridge, r.Header.Get("X-MCP-Session-Id"), strings.TrimPrefix(r.URL.Path, "/internal/approved-create-client/"), r.Header.Get("X-MCP-Decision-Token"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(data)
+	})
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -63,6 +100,10 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 
 	for _, def := range pilot.Registry.ToolDefs {
 		d := def
+		// Writes require the MCP session; no sessionless REST proposal route.
+		if d.Name == "create_client" {
+			continue
+		}
 		path := "/api/" + d.Name
 		mux.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 			s.handleRESTToolCall(w, r, d)
@@ -84,7 +125,7 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 			return
 		}
 
-		if r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" || r.URL.Path == "/api/search_clients" || r.URL.Path == "/api/get_client_accounts" || r.URL.Path == "/api/capabilities" {
+		if strings.HasPrefix(r.URL.Path, "/internal/approved-create-client/") || r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" || r.URL.Path == "/api/search_clients" || r.URL.Path == "/api/get_client_accounts" || r.URL.Path == "/api/capabilities" {
 			// Exactly one value per identity header; no query/body/session defaults.
 			auth, tenant := r.Header.Values("Authorization"), r.Header.Values("X-Mifos-Tenant-Id")
 			if len(auth) != 1 || len(tenant) != 1 {

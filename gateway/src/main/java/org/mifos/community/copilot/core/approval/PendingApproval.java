@@ -24,14 +24,21 @@ import java.util.Map;
  */
 public record PendingApproval(String cardId, String conversationId, LlmToolCall toolCall, String humanSummary,
         String idempotencyKey, String securityFingerprint, Instant expiresAt, Map<String, String> rows,
-        Map<String, Object> session) {
+        Map<String, Object> session, String claimToken) {
 
     /**
      * Copied on the way in, so the receipt cannot drift from the card. A caller holding the
      * map it passed could otherwise change what an officer is recorded as having approved,
      * and restore() puts a card back without going through create() again.
      */
+    public PendingApproval(String cardId, String conversationId, LlmToolCall toolCall, String humanSummary,
+            String idempotencyKey, String securityFingerprint, Instant expiresAt, Map<String, String> rows,
+            Map<String, Object> session) {
+        this(cardId, conversationId, toolCall, humanSummary, idempotencyKey, securityFingerprint, expiresAt, rows, session, null);
+    }
+
     public PendingApproval {
+        toolCall = new LlmToolCall(toolCall.id(), toolCall.name(), java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(toolCall.arguments())));
         rows = rows == null ? Map.of() : Map.copyOf(rows);
         // Captured when the card was raised. A write lands in the office the officer was
         // working in at that moment, not whichever one is claimed when Confirm is pressed.
@@ -39,6 +46,6 @@ public record PendingApproval(String cardId, String conversationId, LlmToolCall 
     }
 
     public boolean isExpired(Instant now) {
-        return now.isAfter(expiresAt);
+        return !now.isBefore(expiresAt);
     }
 }

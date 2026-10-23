@@ -51,7 +51,7 @@ This server is purpose-built to thrive in production container orchestration env
 Authentication is selected at initialization:
 
 - Trusted stdio/local mode uses `adapter.NewConfigured()` with `MIFOSX_USERNAME`, `MIFOSX_PASSWORD`, and `MIFOSX_TENANT_ID` (`adapter.New()` remains a compatibility alias).
-- HTTP/SSE mode uses `adapter.NewCaller()`. Every banking request requires `Authorization` and `X-Mifos-Tenant-Id`; missing or invalid caller context fails without configured-credential fallback. Only `get_client`, `search_clients`, and `get_client_accounts` are exposed.
+- HTTP/SSE mode uses `adapter.NewCaller()`. Every banking request requires `Authorization` and `X-Mifos-Tenant-Id`; missing or invalid caller context fails without configured-credential fallback. The three reads (`get_client`, `search_clients`, `get_client_accounts`) remain caller scoped. `create_client` proposes an action for human approval through the existing gateway; it never writes during a tool call.
 
 `NewHTTPServer` accepts only `*adapter.CallerClient`. This type holds no configured identity and has no configured-auth request methods. Both modes share base URL and TLS configuration.
 
