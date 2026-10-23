@@ -48,7 +48,7 @@ func postSessionMessage(endpoint, auth, tenant, body string) (int, string, error
 
 func TestHTTPSessionBoundBeforeInitialization(t *testing.T) {
 	var calls atomic.Int32
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1) })
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1) })
 	c, err := client.NewSSEMCPClient(h.URL+"/sse", client.WithHeaders(map[string]string{
 		"Authorization": "Bearer creator-secret", "X-Mifos-Tenant-Id": "creator-tenant",
 	}))
@@ -95,7 +95,7 @@ func TestHTTPSessionCallerBinding(t *testing.T) {
 	old := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(old) })
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.Header.Get("Authorization") != auth || r.Header.Get("fineract-platform-tenantid") != tenant {
 			t.Error("session caller identity changed")
@@ -150,7 +150,7 @@ func TestHTTPSessionCallerBinding(t *testing.T) {
 
 func TestHTTPSessionConcurrentOwners(t *testing.T) {
 	var callsA, callsB atomic.Int32
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("Authorization") {
 		case "Bearer session-A-secret":
 			callsA.Add(1)
@@ -211,7 +211,7 @@ func TestHTTPSessionConcurrentOwners(t *testing.T) {
 
 func TestHTTPSessionOwnershipRemovedOnDisconnect(t *testing.T) {
 	var calls atomic.Int32
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1) })
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1) })
 	c := connect(t, h.URL, "Bearer closing-session-secret", "closing-session-tenant")
 	endpoint := client.GetEndpoint(c).String()
 	if err := c.Close(); err != nil {

@@ -153,6 +153,13 @@ func (s *MifosHTTPServer) handleRESTToolCall(w http.ResponseWriter, r *http.Requ
 	}
 
 	if def.Handler != nil {
+		// REST bypasses the MCP SDK's call-time tool filter, so apply the same
+		// capability decision here before reaching the caller-scoped handler.
+		capabilities, err := tools.CallerCapabilities(r.Context(), s.caller)
+		if err != nil || !tools.ToolAvailable(capabilities, def.Name) {
+			http.Error(w, "tool is not available for the authenticated caller", http.StatusForbidden)
+			return
+		}
 		req := mcp.CallToolRequest{
 			Params: mcp.CallToolParams{
 				Name:      def.Name,
