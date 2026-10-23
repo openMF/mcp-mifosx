@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+
+ Copyright since 2026 Mifos Initiative
+
+ <p>This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0. If a copy
+ of the MPL was not distributed with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+-->
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.3.xsd">
+
+    <!--
+      The column type for an OffsetDateTime, chosen by the database actually in front of us.
+
+      PostgreSQL's plain TIMESTAMP is "without time zone": it keeps the clock reading and throws
+      the offset away, so a turn recorded at 10:00 in Lagos and one recorded at 10:00 in Jakarta
+      become the same instant on the way in. For a record whose whole purpose is to say what
+      happened and when, that is a quiet corruption, and this is the column Apache Fineract
+      itself declares as TIMESTAMP WITH TIME ZONE wherever it stores an OffsetDateTime.
+
+      Fineract makes this choice with context="postgresql" / context="mysql". That pattern is
+      wrong here. Fineract sets a Liquibase context at runtime; this plugin runs its own
+      SpringLiquibase and sets none, and with no context given Liquibase runs every changeSet
+      whatever its context, so both branches would fire and the second would fail. dbms is
+      evaluated against the live database instead of a runtime flag, so it is the correct tool
+      on this side of the fence.
+    -->
+    <property name="timestamp.type" value="TIMESTAMP WITH TIME ZONE" dbms="postgresql"/>
+    <property name="timestamp.type" value="DATETIME" dbms="mysql,mariadb"/>
+    <!--
+      A last resort for any other database. Liquibase keeps the first definition of a property
+      and ignores later ones, so this only applies when neither line above matched. Without it an
+      unmatched database would leave the token unresolved and try to create a column whose type
+      is the literal text "${timestamp.type}", which fails with a message that explains nothing.
+      Fineract supports PostgreSQL, MySQL and MariaDB, so in production one of the two lines
+      above always wins; this is what lets the migration also run under the H2 database the
+      migration test uses.
+    -->
+    <property name="timestamp.type" value="TIMESTAMP"/>
+
+    <!--
+      What the assistant was asked, what it answered, and which model answered it.
+
+      mcp_tool_execution_log records the calls a tool makes. It cannot answer the question an
+      institution is actually asked later, which is what the assistant told an officer and whose
+      infrastructure saw the borrower's details on the way.
+
+      model and provider are the two columns that make this worth keeping. If client data reached
+      a hosted provider on Tuesday and a model on the institution's own hardware on Wednesday,
+      that is a data residency question with a real answer, and the answer only exists if it was
+      written down at the time.
+    -->
+    <changeSet author="fineract" id="mcp-002-1">
+        <preConditions onFail="MARK_RAN">
+            <not>
+                <tableExists tableName="mcp_conversation_log"/>
+            </not>
+        </preConditions>
+        <comment>Record each assistant turn: prompt, response, model and provider</comment>
+
+        <createTable tableName="mcp_conversation_log">
+            <column name="id" type="BIGINT" autoIncrement="true">
+                <constraints primaryKey="true" nullable="false"/>
+            </column>
+
+            <!--
+              Groups the turns of one conversation.
+
+              This is the one column that cannot be added afterwards. Once rows exist without it,
+              nothing in the data says which turns belonged together, and no later migration can
+              work it out. It is unused by this ticket and present for that reason alone.
+
+              There is deliberately no sequence number beside it. Order within a conversation is
+              taken from the auto-increment id, which is already monotonic. Deriving a position
+              as max+1 before inserting would be a read-modify-write: two turns recorded at the
+              same moment would compute the same position, and one of them would be rejected and
+              lost. A record that can silently lose entries is worse than no record, so the
+              column that made that possible is not here.
+            -->
+            <column name="conversation_id" type="VARCHAR(100)">
+                <constraints nullable="false"/>
+            </column>
+
+            <!-- Resolved from the authenticated Fineract user, never sent by the caller. -->
+            <column name="user_id" type="BIGINT"/>
+            <column name="username" type="VARCHAR(100)"/>
+
+            <!--
+              CLOB rather than TEXT. Liquibase renders TEXT as MySQL's TEXT, which holds 65,535
+              bytes: an officer pasting a statement or a long document into the assistant exceeds
+              that, and MySQL outside strict mode truncates it and carries on. A record that
+              silently keeps most of what was said is worse than one that refuses. CLOB renders as
+              LONGTEXT on MySQL and MariaDB and as TEXT on PostgreSQL, which is what is wanted on
+              both.
+            -->
+            <column name="prompt" type="CLOB">
+                <constraints nullable="false"/>
+            </column>
+            <column name="response" type="CLOB"/>
+
+            <!-- Which model answered, for example qwen/qwen3.6-27b. -->
+            <column name="model" type="VARCHAR(150)"/>
+            <!-- Whose infrastructure served it, for example groq, openai or ollama. -->
+            <column name="provider" type="VARCHAR(100)"/>
+
+            <!-- The borrower under discussion, when the turn had one. -->
+            <column name="client_id" type="BIGINT"/>
+
+            <column name="created_at" type="${timestamp.type}" defaultValueComputed="CURRENT_TIMESTAMP">
+                <constraints nullable="false"/>
+            </column>
+        </createTable>
+
+        <!-- Reading a conversation means its turns in order, which is this index exactly. -->
+        <createIndex tableName="mcp_conversation_log" indexName="idx_mcp_conversation_thread">
+            <column name="conversation_id"/>
+            <column name="id"/>
+        </createIndex>
+
+        <!-- One officer's own turns, and anything scoped to a period. -->
+        <createIndex tableName="mcp_conversation_log" indexName="idx_mcp_conversation_user">
+            <column name="user_id"/>
+        </createIndex>
+        <createIndex tableName="mcp_conversation_log" indexName="idx_mcp_conversation_date">
+            <column name="created_at"/>
+        </createIndex>
+    </changeSet>
+
+</databaseChangeLog>

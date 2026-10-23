@@ -63,8 +63,12 @@ public class McpPluginProperties {
     private int toolTimeoutSeconds = 30;
 
     /**
-     * Comma-separated list of enabled tool categories (client, loan, savings, report).
-     * Empty means all tools are enabled.
+     * Comma-separated list of enabled tool categories (client, loan, savings, report,
+     * conversation). Empty means all tools are enabled.
+     *
+     * <p>Naming any category disables the ones left out. Omitting "conversation" therefore
+     * stops conversations being recorded, and nothing reports that: the tool simply is not
+     * offered. Leave it in unless not recording is what you intend.
      */
     private String enabledToolCategories = "";
 }
