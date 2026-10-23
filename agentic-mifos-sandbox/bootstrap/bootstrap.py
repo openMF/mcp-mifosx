@@ -7,9 +7,11 @@
 2. Fineract: one service user per agent, with a role granting exactly the
    permissions in fineract-rbac.json, then check that each agent is allowed
    inside its role and refused (HTTP 403) outside it.
-3. Lightning: the raw credentials the jobs use. "fineract" (write-back job)
-   is created only if missing; "agent-<name>" (the URL and token of an agent's
-   runner, for the job that calls it) also follows changes to its settings.
+3. Lightning: the raw credentials the jobs use, built from the environment and
+   replaced when their settings change (a rotated password or token):
+   "fineract" (the write-back job's login, the agent-writeback user) and
+   "agent-<name>" (the URL and token of an agent's runner, for the job that
+   calls it).
 4. Lightning: provision the OpenFn project from project.yaml.
 
 Every id in the provisioned project is derived from its key in project.yaml
@@ -184,10 +186,13 @@ def check_agent_access(base, username, password, permissions):
     """Prove the role is enforced: a read inside it works, requests outside it get 403."""
     headers = fineract_headers(username, password)
     allowed = status("GET", f"{base}/clients?limit=1", headers)
-    # Every agent is refused user administration; a read-only agent is also
-    # refused creating a client. An empty body would fail validation anyway,
-    # so a misconfigured role still creates nothing.
-    refused = {"GET /users": status("GET", f"{base}/users", headers)}
+    # Every agent is refused user administration and disbursing a loan; a
+    # read-only agent is also refused creating a client. An empty body would
+    # fail validation anyway, so a misconfigured role still creates nothing.
+    refused = {
+        "GET /users": status("GET", f"{base}/users", headers),
+        "POST /loans/0?command=disburse": status("POST", f"{base}/loans/0?command=disburse", headers, {}),
+    }
     if "CREATE_CLIENT" not in permissions:
         refused["POST /clients"] = status("POST", f"{base}/clients", headers, {})
     if allowed != 200 or any(code != 403 for code in refused.values()):
@@ -221,10 +226,12 @@ def lightning_headers():
 def credential_body(name, product_id):
     """The body of a Lightning credential that project.yaml names."""
     if name == "fineract":
+        # The write-back job signs in as its agent user, whose role allows only
+        # the job's calls (fineract-rbac.json); never as the admin.
         return {
             "baseUrl": env("FINERACT_URL"),
-            "username": env("FINERACT_USERNAME"),
-            "password": env("FINERACT_PASSWORD"),
+            "username": "agent-writeback",
+            "password": env("FINERACT_AGENT_WRITEBACK_PASSWORD"),
             "tenantId": env("FINERACT_TENANT"),
             "productId": product_id,
             "officeId": int(os.environ.get("FINERACT_OFFICE_ID", "1")),
@@ -238,18 +245,19 @@ def credential_body(name, product_id):
     sys.exit(f"bootstrap: no settings known for the Lightning credential '{name}'")
 
 
-def ensure_credential(name, body, follow_changes):
-    """Creates the credential if missing. With follow_changes, one whose settings
-    changed is replaced: the API returns no bodies and cannot update one, so a
-    fingerprint of the body is kept in external_id. Provisioning then links the
-    new credential to the project."""
+def ensure_credential(name, body):
+    """Creates the credential if missing, and replaces one whose settings
+    changed: the API returns no bodies and cannot update one, so a fingerprint
+    of the body is kept in external_id. Provisioning then links the new
+    credential to the project. An edit made in Lightning stays until the
+    settings here change."""
     base = env("LIGHTNING_URL")
     fingerprint = "sha256:" + hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
     existing = request("GET", f"{base}/api/credentials", lightning_headers())
     for credential in existing["credentials"]:
         if credential.get("name") != name:
             continue
-        if not follow_changes or credential.get("external_id") == fingerprint:
+        if credential.get("external_id") == fingerprint:
             log(f"Lightning credential '{name}' exists")
             return
         request("DELETE", f"{base}/api/credentials/{credential['id']}", lightning_headers())
@@ -329,8 +337,7 @@ def provision_project(product_id):
     }
     for cred in (spec.get("credentials") or {}).values():
         name = cred["name"]
-        # Agent tokens are rotated in .env; the Fineract credential may be edited in Lightning.
-        ensure_credential(name, credential_body(name, product_id), follow_changes=name.startswith("agent-"))
+        ensure_credential(name, credential_body(name, product_id))
     document = provisioning_document(spec, trigger_ids, env("LIGHTNING_ADMIN_EMAIL"))
     request("POST", f"{env('LIGHTNING_URL')}/api/provision", lightning_headers(), document)
     log(f"provisioned OpenFn project '{document['name']}' ({document['id']})")

@@ -69,7 +69,7 @@ flowchart LR
   agent -->|MCP tools| mcp[mcp-decision]
   agent -->|model| ollama
   mcp -->|REST as agent-decision| fineract[(Apache Fineract)]
-  worker -->|write-back as admin| fineract
+  worker -->|write-back as agent-writeback| fineract
   webapp[Mifos X web app] -->|REST proxy| fineract
   los[LOS] --> losdb[(LOS database)]
 ```
@@ -84,7 +84,7 @@ Each step with the status the gateway reports for the case:
 4. **Assess**: the specialist assessments (income, expense, credit) give the rules' recommendation.
 5. **Decide**: `agent-decision` looks the applicant up in Fineract (existing client, loans, arrears) and recommends (`LLM_DECISION`). The OpenFn job then applies, in code: the **evidence gate** (the answer counts only if the agent looked the applicant up), the **guardrail** (never more lenient than the rules) and the **fallback** (the rules decide when the agent is unreachable, too slow or answers in another shape).
 6. **Human review**: `PENDING_HUMAN_REVIEW`. The officer approves or rejects with `POST /api/loans/{id}/review`.
-7. **Write-back**: the client, the loan and its approval are created in Fineract, with a decision note (recommendation, the agent's Fineract findings, the tools it called) and, when a document was read, a vision note (`WRITING_TO_FINERACT`, then `COMPLETED`). This job signs in as the Fineract admin user (see 7.4).
+7. **Write-back**: the client, the loan and its approval are created in Fineract, with a decision note (recommendation, the agent's Fineract findings, the tools it called) and, when a document was read, a vision note (`WRITING_TO_FINERACT`, then `COMPLETED`). This job signs in as `agent-writeback`, whose role allows only these calls: it cannot disburse or administer users.
 8. **Stall**: a case with no progress for 15 minutes turns `FAILED`; its error names the step and the Lightning run.
 
 ### 3.3 Commercial opportunities (LOS)
@@ -206,7 +206,7 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 
 **Rotating secrets**
 
-- Agent passwords (`FINERACT_AGENT_*_PASSWORD`), agent tokens (`AGENT_*_TOKEN`) and `OPENFN_CALLBACK_SECRET`: change the value in `.env` and run `docker compose --profile ollama up -d`. The bootstrap updates the agents' Fineract users and replaces the agents' Lightning credentials.
+- Agent passwords (`FINERACT_AGENT_*_PASSWORD`), agent tokens (`AGENT_*_TOKEN`) and `OPENFN_CALLBACK_SECRET`: change the value in `.env` and run `docker compose --profile ollama up -d`. The bootstrap updates the agents' Fineract users and replaces the agents' Lightning credentials, including the write-back job's `fineract`. An edit made to one of them in Lightning lasts until its settings in `.env` change.
 - **The database passwords and Lightning's admin password cannot be rotated through `.env`**: they are set when the volumes are first created. Changing them later breaks the connection (databases) or changes nothing (Lightning admin). Change them inside Postgres and Lightning first, or reset the volumes.
 - `./scripts/gen-secrets.sh` fills only empty values: blank one and run it again to generate a new value.
 
@@ -267,6 +267,7 @@ This is a local evaluation sandbox. The model below says what protects what toda
 | A prompt injection makes an agent misuse its tools | Only its profile's tools (the decision profile is read-only); its Fineract role (403); no shell or files in Pi | The agent can read what its profile allows |
 | An agent invents findings or a recommendation | The evidence gate and check; the guardrail; the tools called, listed in the note; human approval | A stricter but wrong answer from an agent that did look the applicant up |
 | An agent takes credentials | Agents hold no Fineract password, only their runner token; no tool can read their environment | — |
+| A compromised job or adaptor uses the write-back login | The `agent-writeback` role: no disbursement, no user administration; paying a loan out takes a person in the web app | It can create clients and loans and approve them; the adaptors are installed as `@latest` (7.4) |
 | A compromised container moves sideways | Segmented networks: each database only from its application, agents only to their MCP server and Ollama | The worker is on `core` (the write-back job) |
 | Data leaves the machine | Fineract, the MCP servers and the agents have no route out | The web app, gateway and LOS (published ports), and Lightning, the worker and Ollama (downloads), do |
 | Container escape or privilege escalation | Read-only file systems, no capabilities, no privilege escalation, non-root users, process limits; root only in two one-shot jobs without a network | — |
@@ -277,8 +278,8 @@ This is a local evaluation sandbox. The model below says what protects what toda
 ### 7.4 Known limits
 
 - **Secrets are environment variables**: anyone who can run `docker inspect` can read them
-- **Fineract's default admin login** (`mifos` / `password`) is used by the bootstrap and by the write-back job; change it for anything beyond a laptop. The write-back agent is planned to replace the admin login there
-- **The OpenFn worker is on `core`**, because the write-back job calls Fineract directly
+- **Fineract's default admin login** (`mifos` / `password`) is used by the bootstrap to set up the loan product, the roles and the agent users; change it for anything beyond a laptop
+- **The OpenFn worker is on `core`**, because the write-back job calls Fineract directly (as `agent-writeback`)
 - **Services with a published port have outbound internet**: Docker publishes ports only from networks with a route out
 - **The gateway and LOS APIs have no authentication** (127.0.0.1 only), and the LOS trusts `X-Actor` as sent
 - **The Lightning webhook triggers have no authentication**, and their ids are in this compose file: any local process can start a workflow directly, bypassing the gateway
