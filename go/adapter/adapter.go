@@ -60,6 +60,37 @@ func (c *CallerClient) DoCallerRequest(ctx context.Context, endpoint string, que
 	if searchClients {
 		req.URL.RawQuery = queryParams[0].Encode()
 	}
+	data, err := c.doCallerRequest(req, call)
+	if err != nil {
+		return nil, err
+	}
+	// Refuse responses that echo the supplied credential, including decoded
+	// Basic credentials. Normal client data is returned unchanged.
+	secrets := []string{call.authorization}
+	if parts := strings.SplitN(call.authorization, " ", 2); len(parts) == 2 {
+		secrets = append(secrets, parts[1])
+		if strings.EqualFold(parts[0], "Basic") {
+			if decoded, err := base64.StdEncoding.DecodeString(parts[1]); err == nil {
+				secrets = append(secrets, string(decoded))
+				// Usernames occur in normal client timelines. Short passwords
+				// can also match ordinary data; only screen longer passwords alone.
+				if userPass := strings.SplitN(string(decoded), ":", 2); len(userPass) == 2 && len(userPass[1]) >= 8 {
+					secrets = append(secrets, userPass[1])
+				}
+			}
+		}
+	}
+	for _, secret := range secrets {
+		if secret != "" && bytes.Contains(data, []byte(secret)) {
+			return nil, fmt.Errorf("Fineract response contained credential material")
+		}
+	}
+	return data, nil
+}
+
+// doCallerRequest shares transport safeguards with permission discovery. Its raw
+// response must remain internal: authentication responses contain credentials.
+func (c *CallerClient) doCallerRequest(req *http.Request, call CallContext) ([]byte, error) {
 	req.Header.Set("Authorization", call.authorization)
 	req.Header.Set("fineract-platform-tenantid", call.tenant)
 	req.Header.Set("Accept", "application/json")
@@ -82,23 +113,6 @@ func (c *CallerClient) DoCallerRequest(ctx context.Context, endpoint string, que
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxCallerResponse+1))
 	if err != nil || len(data) > maxCallerResponse {
 		return nil, fmt.Errorf("could not read Fineract response")
-	}
-	// Refuse responses that echo the supplied credential, including decoded
-	// Basic credentials. Normal client data is returned unchanged.
-	secrets := []string{call.authorization}
-	if parts := strings.SplitN(call.authorization, " ", 2); len(parts) == 2 {
-		secrets = append(secrets, parts[1])
-		if strings.EqualFold(parts[0], "Basic") {
-			if decoded, err := base64.StdEncoding.DecodeString(parts[1]); err == nil {
-				secrets = append(secrets, string(decoded))
-				secrets = append(secrets, strings.SplitN(string(decoded), ":", 2)...)
-			}
-		}
-	}
-	for _, secret := range secrets {
-		if secret != "" && bytes.Contains(data, []byte(secret)) {
-			return nil, fmt.Errorf("Fineract response contained credential material")
-		}
 	}
 	return data, nil
 }

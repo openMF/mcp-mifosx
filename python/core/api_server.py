@@ -140,7 +140,15 @@ banking_agent = None
 async def startup_event():
     global banking_agent
     print("\nLoading Mifos AI Agent...")
-    from agent import get_agent_instance
+    try:
+        from agent import get_agent_instance
+    except ModuleNotFoundError as e:
+        # Only a missing agent module is optional; a broken one should still fail startup
+        if e.name != "agent":
+            raise
+        print("No agent module found: /api/chat is disabled, the other endpoints still work.")
+        banking_agent = None
+        return
     banking_agent = await get_agent_instance()
     print("Agent ready.")
 

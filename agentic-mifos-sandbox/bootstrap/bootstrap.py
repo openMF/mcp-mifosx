@@ -7,8 +7,9 @@
 2. Fineract: one service user per agent, with a role granting exactly the
    permissions in fineract-rbac.json, then check that each agent is allowed
    inside its role and refused (HTTP 403) outside it.
-3. Lightning: create the raw "fineract" credential the write-back job uses
-   (created only if missing).
+3. Lightning: the raw credentials the jobs use. "fineract" (write-back job)
+   is created only if missing; "agent-<name>" (the URL and token of an agent's
+   runner, for the job that calls it) also follows changes to its settings.
 4. Lightning: provision the OpenFn project from project.yaml.
 
 Every id in the provisioned project is derived from its key in project.yaml
@@ -17,6 +18,7 @@ webhook URLs never change and a re-run updates the same project instead of
 creating a second one.
 """
 
+import hashlib
 import json
 import os
 import ssl
@@ -216,30 +218,55 @@ def lightning_headers():
     return {"Authorization": f"Bearer {token_file.read_text().strip()}"}
 
 
-def ensure_fineract_credential(name, product_id):
+def credential_body(name, product_id):
+    """The body of a Lightning credential that project.yaml names."""
+    if name == "fineract":
+        return {
+            "baseUrl": env("FINERACT_URL"),
+            "username": env("FINERACT_USERNAME"),
+            "password": env("FINERACT_PASSWORD"),
+            "tenantId": env("FINERACT_TENANT"),
+            "productId": product_id,
+            "officeId": int(os.environ.get("FINERACT_OFFICE_ID", "1")),
+            # Fineract inside the sandbox uses a self-signed certificate.
+            "tls": {"rejectUnauthorized": False},
+        }
+    if name.startswith("agent-"):
+        # An agent's HTTP runner: AGENT_<NAME>_URL and AGENT_<NAME>_TOKEN.
+        prefix = "AGENT_" + name.removeprefix("agent-").upper().replace("-", "_")
+        return {"url": env(f"{prefix}_URL"), "token": env(f"{prefix}_TOKEN")}
+    sys.exit(f"bootstrap: no settings known for the Lightning credential '{name}'")
+
+
+def ensure_credential(name, body, follow_changes):
+    """Creates the credential if missing. With follow_changes, one whose settings
+    changed is replaced: the API returns no bodies and cannot update one, so a
+    fingerprint of the body is kept in external_id. Provisioning then links the
+    new credential to the project."""
     base = env("LIGHTNING_URL")
+    fingerprint = "sha256:" + hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()[:16]
     existing = request("GET", f"{base}/api/credentials", lightning_headers())
     for credential in existing["credentials"]:
-        if credential.get("name") == name:
+        if credential.get("name") != name:
+            continue
+        if not follow_changes or credential.get("external_id") == fingerprint:
             log(f"Lightning credential '{name}' exists")
             return
-    body = {
-        "baseUrl": env("FINERACT_URL"),
-        "username": env("FINERACT_USERNAME"),
-        "password": env("FINERACT_PASSWORD"),
-        "tenantId": env("FINERACT_TENANT"),
-        "productId": product_id,
-        "officeId": int(os.environ.get("FINERACT_OFFICE_ID", "1")),
-        # Fineract inside the sandbox uses a self-signed certificate.
-        "tls": {"rejectUnauthorized": False},
-    }
+        request("DELETE", f"{base}/api/credentials/{credential['id']}", lightning_headers())
+        log(f"replacing Lightning credential '{name}': its settings changed")
+        break
     # The API ignores a top-level `body`; bodies go in `credential_bodies`,
     # and a project without environments resolves the one named "main".
     request(
         "POST",
         f"{base}/api/credentials",
         lightning_headers(),
-        {"name": name, "schema": "raw", "credential_bodies": [{"name": "main", "body": body}]},
+        {
+            "name": name,
+            "schema": "raw",
+            "external_id": fingerprint,
+            "credential_bodies": [{"name": "main", "body": body}],
+        },
     )
     log(f"created Lightning credential '{name}'")
 
@@ -301,7 +328,9 @@ def provision_project(product_id):
         "webhook-loan-review": env("OPENFN_TRIGGER_LOAN_REVIEW"),
     }
     for cred in (spec.get("credentials") or {}).values():
-        ensure_fineract_credential(cred["name"], product_id)
+        name = cred["name"]
+        # Agent tokens are rotated in .env; the Fineract credential may be edited in Lightning.
+        ensure_credential(name, credential_body(name, product_id), follow_changes=name.startswith("agent-"))
     document = provisioning_document(spec, trigger_ids, env("LIGHTNING_ADMIN_EMAIL"))
     request("POST", f"{env('LIGHTNING_URL')}/api/provision", lightning_headers(), document)
     log(f"provisioned OpenFn project '{document['name']}' ({document['id']})")

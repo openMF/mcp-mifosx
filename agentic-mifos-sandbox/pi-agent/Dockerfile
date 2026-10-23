@@ -14,7 +14,9 @@ COPY package.json package-lock.json ./
 # Exact versions from the lockfile; Pi needs no install scripts.
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund \
  && npm cache clean --force
-COPY configure.mjs entrypoint.sh system-prompt.md /opt/pi-agent/
+COPY configure.mjs entrypoint.sh runner.mjs system-prompt.md /opt/pi-agent/
+# One skill per agent, appended to the system prompt (AGENT_SKILL).
+COPY skills/ /opt/pi-agent/skills/
 # PI_OFFLINE, PI_SKIP_VERSION_CHECK, PI_TELEMETRY: no update checks, model
 # catalogue downloads or telemetry. The agent networks have no route out anyway.
 ENV PATH=/opt/pi/node_modules/.bin:$PATH \

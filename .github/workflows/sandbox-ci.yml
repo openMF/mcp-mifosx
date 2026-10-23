@@ -1,0 +1,78 @@
+name: Sandbox CI
+
+on:
+  push:
+    branches: ['main']
+    paths:
+      - 'agentic-mifos-sandbox/**'
+      - '.github/workflows/sandbox-ci.yml'
+  pull_request:
+    branches: ['main']
+    paths:
+      - 'agentic-mifos-sandbox/**'
+      - '.github/workflows/sandbox-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  hardening:
+    name: Compose hardening
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentic-mifos-sandbox
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # The compose file requires its secrets: generate throwaway ones.
+      - name: Generate a throwaway .env
+        run: ./scripts/gen-secrets.sh
+
+      - name: Check the hardening baseline
+        run: |
+          docker compose --profile ollama --profile agents config --format json > "$RUNNER_TEMP/compose.json"
+          python3 scripts/check-hardening.py < "$RUNNER_TEMP/compose.json"
+
+  agent-runner:
+    name: Agent runner tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentic-mifos-sandbox/pi-agent
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # No dependencies: tests/fake-pi.mjs stands in for Pi.
+      - name: Test the runner
+        run: node --test tests/*.test.mjs
+
+  agent-image:
+    name: Build agent image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      # Build only: catches a file the image needs but the repository lacks,
+      # or an update that breaks the image.
+      - name: Build Docker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: agentic-mifos-sandbox/pi-agent
+          push: false
+          cache-from: type=gha,scope=sandbox-agent
+          cache-to: type=gha,mode=max,scope=sandbox-agent
