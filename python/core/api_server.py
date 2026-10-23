@@ -427,4 +427,4 @@ if __name__ == "__main__":
     print("STARTING HEADLESS MCP SERVER")
     print("-"*50)
     print("API Docs available at: http://localhost:8000/docs")
-    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("core.api_server:app", host="0.0.0.0", port=8000, reload=True)
