@@ -87,10 +87,18 @@
             <column name="user_id" type="BIGINT"/>
             <column name="username" type="VARCHAR(100)"/>
 
-            <column name="prompt" type="TEXT">
+            <!--
+              CLOB rather than TEXT. Liquibase renders TEXT as MySQL's TEXT, which holds 65,535
+              bytes: an officer pasting a statement or a long document into the assistant exceeds
+              that, and MySQL outside strict mode truncates it and carries on. A record that
+              silently keeps most of what was said is worse than one that refuses. CLOB renders as
+              LONGTEXT on MySQL and MariaDB and as TEXT on PostgreSQL, which is what is wanted on
+              both.
+            -->
+            <column name="prompt" type="CLOB">
                 <constraints nullable="false"/>
             </column>
-            <column name="response" type="TEXT"/>
+            <column name="response" type="CLOB"/>
 
             <!-- Which model answered, for example qwen/qwen3.6-27b. -->
             <column name="model" type="VARCHAR(150)"/>

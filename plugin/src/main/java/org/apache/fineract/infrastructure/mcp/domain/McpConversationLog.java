@@ -56,10 +56,24 @@ public class McpConversationLog {
     @Column(name = "username", length = 100)
     private String username;
 
-    @Column(name = "prompt", nullable = false, columnDefinition = "TEXT")
+    /**
+     * No {@code columnDefinition} and no {@code @Lob} on either of these.
+     *
+     * <p>{@code columnDefinition} only ever fed schema generation, which this plugin does not use:
+     * Liquibase owns the table, and the changelog declares these as CLOB. Leaving the attribute
+     * behind would have described a column type that is not what MySQL actually gets.
+     *
+     * <p>{@code @Lob} was considered and left out deliberately. The column type is already settled
+     * by the migration, and the annotation would only change how the value is bound, moving it
+     * onto EclipseLink's large-object path. That path behaves differently across PostgreSQL and
+     * MySQL, and there is no integration test here against either, so it would be a change made on
+     * faith. A plain String binds through setString and reads back through getString against a
+     * CLOB, TEXT or LONGTEXT column on all three supported databases.
+     */
+    @Column(name = "prompt", nullable = false)
     private String prompt;
 
-    @Column(name = "response", columnDefinition = "TEXT")
+    @Column(name = "response")
     private String response;
 
     /** The model that produced the answer, for example qwen/qwen3.6-27b. */

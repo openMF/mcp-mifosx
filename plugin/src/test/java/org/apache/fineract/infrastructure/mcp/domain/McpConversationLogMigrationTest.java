@@ -261,4 +261,51 @@ public class McpConversationLogMigrationTest {
 
         assertThat(priyasPrompts).containsExactly("priya first", "priya second");
     }
+
+    // ── a long turn survives intact ─────────────────────────────────────────
+
+    /**
+     * MySQL's {@code TEXT} holds 65,535 bytes and, outside strict mode, truncates anything larger
+     * without failing. An officer pasting a statement into the assistant passes that easily, and a
+     * record that silently keeps most of what was said is worse than one that refuses. The
+     * changelog therefore declares these columns as CLOB, which is LONGTEXT on MySQL and MariaDB.
+     *
+     * <p>This database maps both TEXT and CLOB to the same large-object type, so this test cannot
+     * tell the two Liquibase types apart. What it does prove is that the column is a large-object
+     * type and not a VARCHAR, and that a value well past the MySQL TEXT ceiling round-trips
+     * unchanged.
+     */
+    @Test
+    public void keepsALongPromptWholeRatherThanTruncatingIt() throws Exception {
+        migrate();
+
+        final String longPrompt = "the client asked about her schedule. ".repeat(3000);
+        assertThat(longPrompt.length()).isGreaterThan(65_535);
+
+        try (PreparedStatement insert = connection.prepareStatement("INSERT INTO mcp_conversation_log "
+                + "(conversation_id, user_id, prompt, created_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)")) {
+            insert.setString(1, "conv-long");
+            insert.setLong(2, 12L);
+            insert.setString(3, longPrompt);
+            insert.executeUpdate();
+        }
+
+        try (PreparedStatement read = connection
+                .prepareStatement("SELECT prompt FROM mcp_conversation_log WHERE conversation_id = 'conv-long'")) {
+            try (ResultSet rows = read.executeQuery()) {
+                rows.next();
+                assertThat(rows.getString(1)).hasSameSizeAs(longPrompt).isEqualTo(longPrompt);
+            }
+        }
+    }
+
+    /** Neither text column may end up a bounded VARCHAR, whatever the database calls its own. */
+    @Test
+    public void declaresThePromptAndResponseAsLargeText() throws Exception {
+        migrate();
+
+        final Map<String, String> columns = columnsOfConversationLog();
+        assertThat(columns.get("prompt")).doesNotContain("VARCHAR").doesNotContain("CHARACTER VARYING");
+        assertThat(columns.get("response")).doesNotContain("VARCHAR").doesNotContain("CHARACTER VARYING");
+    }
 }

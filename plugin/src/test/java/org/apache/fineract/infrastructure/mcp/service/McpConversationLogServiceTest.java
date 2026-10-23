@@ -246,6 +246,73 @@ public class McpConversationLogServiceTest {
         verify(writer, never()).write(any());
     }
 
+    // ── values the column cannot hold are refused, not truncated ────────────
+
+    /**
+     * The failure this prevents is specific to MySQL outside strict mode, which truncates rather
+     * than rejecting. A conversation id cut to 100 characters no longer matches the id the caller
+     * holds, so the turn is stored and can never be read back, and two conversations sharing a
+     * prefix merge into one. Refusing the call says so immediately instead.
+     */
+    @Test
+    public void refusesAConversationIdLongerThanItsColumn() {
+        assertThatThrownBy(() -> service.record("c".repeat(101), "find aisha", "...", "m", "p", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("conversationId");
+        verify(writer, never()).write(any());
+    }
+
+    @Test
+    public void refusesAModelLongerThanItsColumn() {
+        assertThatThrownBy(() -> service.record("conv-9", "find aisha", "...", "m".repeat(151), "p", null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("model");
+        verify(writer, never()).write(any());
+    }
+
+    @Test
+    public void refusesAProviderLongerThanItsColumn() {
+        assertThatThrownBy(() -> service.record("conv-9", "find aisha", "...", "m", "p".repeat(101), null))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("provider");
+        verify(writer, never()).write(any());
+    }
+
+    /** The boundary itself is allowed. Off by one here would reject perfectly storable turns. */
+    @Test
+    public void acceptsValuesExactlyAtTheLimit() {
+        signedInAsPriya();
+        storesWhateverItIsGiven();
+
+        final McpConversationLogService.RecordOutcome outcome = service.record("c".repeat(100), "find aisha", "...",
+                "m".repeat(150), "p".repeat(100), null);
+
+        assertThat(outcome.recorded()).isTrue();
+    }
+
+    /**
+     * The column counts characters; {@code String.length()} counts UTF-16 units. Measuring the
+     * wrong one would reject a hundred emoji, or a name in a script outside the basic plane, that
+     * the database would have stored without complaint.
+     */
+    @Test
+    public void countsCharactersRatherThanUtf16Units() {
+        signedInAsPriya();
+        storesWhateverItIsGiven();
+
+        final String hundredEmoji = "😀".repeat(100);
+        assertThat(hundredEmoji.length()).isEqualTo(200);
+        assertThat(hundredEmoji.codePointCount(0, hundredEmoji.length())).isEqualTo(100);
+
+        assertThat(service.record(hundredEmoji, "find aisha", "...", "m", "p", null).recorded()).isTrue();
+    }
+
+    /** A missing model or provider is normal, and must not be mistaken for an over-length one. */
+    @Test
+    public void allowsAMissingModelAndProvider() {
+        signedInAsPriya();
+        storesWhateverItIsGiven();
+
+        assertThat(service.record("conv-9", "find aisha", "...", null, null, null).recorded()).isTrue();
+    }
+
     // ── reading is scoped to the officer who asks ───────────────────────────
 
     /**

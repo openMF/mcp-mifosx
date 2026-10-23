@@ -78,6 +78,14 @@ public class McpConversationLogService {
         if (prompt == null || prompt.isBlank()) {
             throw new IllegalArgumentException("prompt is required and must not be blank");
         }
+        // Refused here rather than left to the database. PostgreSQL rejects an over-length value,
+        // but MySQL outside strict mode truncates it and carries on, which is the worse outcome:
+        // a conversation id cut to 100 characters no longer matches the id the caller holds, so
+        // the turn is stored and can never be read back, and two conversations that share a
+        // prefix quietly merge into one.
+        requireAtMost("conversationId", conversationId, 100);
+        requireAtMost("model", model, 150);
+        requireAtMost("provider", provider, 100);
 
         // Deliberately not @Transactional. A transaction opened here would commit after this
         // method returns, which is after the catch below has run: a failed write would mark the
@@ -96,9 +104,29 @@ public class McpConversationLogService {
         } catch (RuntimeException e) {
             // Reported, not swallowed. The caller keeps its answer and also learns the record is
             // incomplete, which is the only way anyone can act on it.
-            log.error("Could not record a turn of conversation {}. The conversation itself was unaffected.",
-                    conversationId, e);
+            //
+            // Only the exception type goes to ERROR. A persistence exception can carry the failed
+            // statement and its bound values, and those values are the officer's question and the
+            // borrower's details, so putting the whole thing in a log file moves the data somewhere
+            // nobody scoped it to go. The trace is still available at DEBUG, which is the pattern
+            // McpErrorSanitizer already uses.
+            log.error("Could not record a turn of conversation {}. Failed with {}. The conversation itself "
+                    + "was unaffected.", conversationId, e.getClass().getSimpleName());
+            log.debug("Full exception trace for conversation {}", conversationId, e);
             return RecordOutcome.failed(e.getClass().getSimpleName());
+        }
+    }
+
+    /**
+     * Refuse a value the column cannot hold, before the database has to decide what to do with it.
+     *
+     * <p>Counted in code points rather than {@code String.length()}, which counts UTF-16 units. A
+     * name in a script outside the basic plane, or a single emoji, is one character to the column
+     * and two to Java, and rejecting a value the database would have accepted is its own bug.
+     */
+    private static void requireAtMost(final String field, final String value, final int maxCharacters) {
+        if (value != null && value.codePointCount(0, value.length()) > maxCharacters) {
+            throw new IllegalArgumentException(field + " must not exceed " + maxCharacters + " characters");
         }
     }
 
