@@ -92,9 +92,10 @@ This repository is structured to support multiple implementations and client int
 │   ├── mcp_server.py       # Main entry point for the MCP server
 │   ├── tools/              # Domain-specific banking tools (Loans, Clients, etc.)
 │   └── core/               # API Gateway handlers
-└── java/                   # Java Implementation (Quarkus)
-    ├── backoffice/         # Core banking tools
-    └── userrecommendation/ # Recommendation engine tools
+├── java/                   # Java Implementation (Quarkus)
+│   ├── backoffice/         # Core banking tools
+│   └── userrecommendation/ # Recommendation engine tools
+└── agentic-mifos-sandbox/  # Docker Compose sandbox: Fineract, OpenFn, Pi agents, LOS (see its README)
 ```
 
 ---
