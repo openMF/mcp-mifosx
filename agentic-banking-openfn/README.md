@@ -5,6 +5,10 @@ that `agentic-banking-temporal` runs as a Temporal workflow is executed here as
 **OpenFn Lightning** workflows, while a Spring Boot **Agentic Gateway** owns the REST
 API, the case state and the human-in-the-loop (HITL) review.
 
+To run all of it with one command (Fineract, Lightning, this gateway, local models and
+the decision agent), use the [agentic Mifos sandbox](../agentic-mifos-sandbox/README.md).
+The steps below set each part up by hand.
+
 ## Architecture
 
 ```
