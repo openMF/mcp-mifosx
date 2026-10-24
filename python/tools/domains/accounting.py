@@ -31,13 +31,19 @@ def get_journal_entries(account_id: int = None, transaction_id: str = None):
     return fineract_client.execute_get(endpoint)
 
 @tool
-def create_journal_entry(office_id: int, date: str, credits: list, debits: list, comment: str = ""):
+def create_journal_entry(office_id: int, date: str, credits: list, debits: list, currency_code: str,
+                         comment: str = ""):
     """Answers: 'Record a manual journal entry'
     credits/debits format: [{"glAccountId": 1, "amount": 100}]
+    currency_code is the entry's currency (e.g. "USD"). Fineract requires it, and it differs per
+    tenant, so it is not guessed.
     """
+    if not isinstance(currency_code, str) or not currency_code.strip():
+        return {"error": "currency_code is required for a journal entry (e.g. \"USD\") and cannot be blank."}
     print("[Tool] Creating Journal Entry...")
     payload = {
         "officeId": office_id,
+        "currencyCode": currency_code.strip(),
         "transactionDate": date,
         "comments": comment,
         "dateFormat": "dd MMMM yyyy",
