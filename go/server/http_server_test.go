@@ -75,6 +75,19 @@ func pilot(t *testing.T, downstream http.HandlerFunc) (*httptest.Server, *MifosM
 	return httpSrv, srv
 }
 
+// Existing execution/session tests grant discovery permission separately so their
+// downstream assertions continue to exercise data requests and ownership checks.
+func pilotWithClientRead(t *testing.T, downstream http.HandlerFunc) (*httptest.Server, *MifosMcpServer) {
+	t.Helper()
+	return pilot(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/userdetails" {
+			w.Write([]byte(`{"authenticated":true,"permissions":["READ_CLIENT"]}`))
+			return
+		}
+		downstream(w, r)
+	})
+}
+
 func connect(t *testing.T, url, auth, tenant string) *client.Client {
 	t.Helper()
 	c, err := client.NewSSEMCPClient(url+"/sse", client.WithHeaders(map[string]string{
@@ -119,7 +132,7 @@ func callSearch(c *client.Client, name string) (*mcp.CallToolResult, error) {
 func TestHTTPClientAccountsCallerIsolation(t *testing.T) {
 	var mu sync.Mutex
 	var seen []observedCall
-	h, configured := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, configured := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		seen = append(seen, observedCall{r.Header.Get("Authorization"), r.Header.Get("fineract-platform-tenantid"), r.URL.Path})
 		mu.Unlock()
@@ -174,7 +187,7 @@ func TestHTTPClientAccountsMissingIdentityAndPermissionFailure(t *testing.T) {
 	old := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(old) })
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(r.Header.Get("Authorization") + " configured-password"))
@@ -214,7 +227,7 @@ func TestHTTPClientAccountsMissingIdentityAndPermissionFailure(t *testing.T) {
 
 func TestHTTPClientAccountsRESTUsesCaller(t *testing.T) {
 	var calls atomic.Int32
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.Header.Get("Authorization") != "Bearer accounts-rest-secret" ||
 			r.Header.Get("fineract-platform-tenantid") != "accounts-rest-tenant" ||
@@ -244,7 +257,7 @@ func TestHTTPClientAccountsRESTUsesCaller(t *testing.T) {
 func TestHTTPSearchClientsCallerIsolation(t *testing.T) {
 	var mu sync.Mutex
 	var seen []observedCall
-	h, configured := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, configured := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		seen = append(seen, observedCall{r.Header.Get("Authorization"), r.Header.Get("fineract-platform-tenantid"), r.URL.RequestURI()})
 		mu.Unlock()
@@ -299,7 +312,7 @@ func TestHTTPSearchClientsMissingIdentityAndPermissionFailure(t *testing.T) {
 	old := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(old) })
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(r.Header.Get("Authorization") + " configured-password"))
@@ -339,7 +352,7 @@ func TestHTTPSearchClientsMissingIdentityAndPermissionFailure(t *testing.T) {
 
 func TestHTTPSearchClientsRESTUsesCaller(t *testing.T) {
 	var calls atomic.Int32
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.Header.Get("Authorization") != "Bearer rest-secret" ||
 			r.Header.Get("fineract-platform-tenantid") != "rest-tenant" ||
@@ -364,7 +377,7 @@ func TestHTTPSearchClientsRESTUsesCaller(t *testing.T) {
 func TestHTTPCallerIsolation(t *testing.T) {
 	var mu sync.Mutex
 	var seen []observedCall
-	h, configured := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, configured := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		seen = append(seen, observedCall{r.Header.Get("Authorization"), r.Header.Get("fineract-platform-tenantid"), r.URL.Path})
 		mu.Unlock()
@@ -415,7 +428,7 @@ func TestHTTPCallerIsolation(t *testing.T) {
 
 func TestHTTPMissingIdentityNeverFallsBack(t *testing.T) {
 	var calls atomic.Int32
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.Write([]byte(`{}`)) })
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) { calls.Add(1); w.Write([]byte(`{}`)) })
 	c := connect(t, h.URL, "Bearer valid-secret", "valid-tenant")
 	endpoint := client.GetEndpoint(c).String()
 	for _, headers := range []map[string]string{
@@ -446,7 +459,7 @@ func TestHTTPPermissionFailureAndNoCredentialDisclosure(t *testing.T) {
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(old) })
 	var calls atomic.Int32
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		w.WriteHeader(http.StatusForbidden)
 		w.Write([]byte(r.Header.Get("Authorization") + " configured-password"))
@@ -472,7 +485,7 @@ func TestHTTPPermissionFailureAndNoCredentialDisclosure(t *testing.T) {
 
 func TestHTTPOnlyClientReadsAndConfiguredModePreserved(t *testing.T) {
 	var calls atomic.Int32
-	h, srv := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, srv := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		call := calls.Add(1)
 		u, p, ok := r.BasicAuth()
 		if !ok || u != "configured-service" || p != "configured-password" || r.Header.Get("fineract-platform-tenantid") != "configured-tenant" {
@@ -524,6 +537,19 @@ func TestHTTPOnlyClientReadsAndConfiguredModePreserved(t *testing.T) {
 	if _, err := local.Initialize(context.Background(), init); err != nil {
 		t.Fatal(err)
 	}
+	localList, err := local.ListTools(context.Background(), mcp.ListToolsRequest{})
+	if err != nil || len(localList.Tools) <= 3 {
+		t.Fatalf("configured catalogue changed: %v %v", localList, err)
+	}
+	hasWrite := false
+	for _, tool := range localList.Tools {
+		if tool.Name == "create_client" {
+			hasWrite = true
+		}
+	}
+	if !hasWrite || calls.Load() != 0 {
+		t.Fatal("configured catalogue was filtered or resolved caller capabilities")
+	}
 	result, err = callClient(local, "get_client")
 	if err != nil || result.IsError {
 		t.Fatal(err)
@@ -543,7 +569,7 @@ func TestHTTPOnlyClientReadsAndConfiguredModePreserved(t *testing.T) {
 
 func TestHTTPRESTUsesCallerAndValidatesClientID(t *testing.T) {
 	var calls atomic.Int32
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		if r.Header.Get("Authorization") != "Bearer rest-secret" || r.Header.Get("fineract-platform-tenantid") != "rest-tenant" || r.URL.Path != "/clients/1000000" {
 			t.Error("REST caller or path changed")
@@ -573,7 +599,7 @@ func TestHTTPSuccessfulCredentialEchoIsNotExposed(t *testing.T) {
 	old := log.Writer()
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(old) })
-	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+	h, _ := pilotWithClientRead(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"echo":"` + r.Header.Get("Authorization") + `"}`))
 	})
 	c := connect(t, h.URL, "Bearer successful-echo-secret", "tenant")

@@ -135,6 +135,10 @@ services:
       retries: 60
       start_period: 120s
     user: nobody
+    # The health check's wget leaves an ssl_client process behind, and Java as
+    # PID 1 never reaps it: the zombies filled pids_limit after about 16 hours.
+    # Docker's init reaps them.
+    init: true
     tmpfs: ["/tmp:size=128m"]
     networks: [fineract-db, core]
     mem_limit: 2g
