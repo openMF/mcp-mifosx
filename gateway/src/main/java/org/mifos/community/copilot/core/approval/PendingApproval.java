@@ -38,7 +38,9 @@ public record PendingApproval(String cardId, String conversationId, LlmToolCall 
     }
 
     public PendingApproval {
-        toolCall = new LlmToolCall(toolCall.id(), toolCall.name(), java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(toolCall.arguments())));
+        Map<String, Object> args = toolCall.arguments() == null ? Map.of() : toolCall.arguments();
+        toolCall = new LlmToolCall(toolCall.id(), toolCall.name(),
+                java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(args)));
         rows = rows == null ? Map.of() : Map.copyOf(rows);
         // Captured when the card was raised. A write lands in the office the officer was
         // working in at that moment, not whichever one is claimed when Confirm is pressed.

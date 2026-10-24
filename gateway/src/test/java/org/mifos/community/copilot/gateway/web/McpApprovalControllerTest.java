@@ -71,6 +71,18 @@ class McpApprovalControllerTest {
         }
     }
 
+    @Test void snapshotNormalizesNullArgumentsToAnImmutableEmptyMap() {
+        var card = store.create("legacy", new LlmToolCall("call", "legacy_write", null), "Legacy action", owner, Map.of());
+        assertThat(card.toolCall().id()).isEqualTo("call");
+        assertThat(card.toolCall().name()).isEqualTo("legacy_write");
+        assertThat(card.toolCall().arguments()).isEmpty();
+        assertThatThrownBy(() -> card.toolCall().arguments().put("payload", "tamper"))
+                .isInstanceOf(UnsupportedOperationException.class);
+        String ticket = store.confirm(card.cardId(), owner, a -> true).orElseThrow();
+        assertThat(store.take(card.cardId(), owner, a -> ticket.equals(a.claimToken())))
+                .hasValueSatisfying(approval -> assertThat(approval.toolCall().arguments()).isEmpty());
+    }
+
     @Test void snapshotPreservesExistingNullOptionalArguments() {
         Map<String, Object> args = new HashMap<>();
         args.put("optional", null);
