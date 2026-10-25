@@ -153,6 +153,17 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- An embedded database so the Liquibase migration is exercised for real, rather
+             than only being read. Fineract itself runs PostgreSQL, MySQL or MariaDB; this is
+             here so the changelog can be executed in an ordinary unit-test run with no
+             Docker daemon and no credentials. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
+            <version>2.2.224</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>junit-jupiter</artifactId>

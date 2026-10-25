@@ -6,6 +6,7 @@ import org.apache.fineract.infrastructure.mcp.service.McpToolCallbackProvider;
 import org.apache.fineract.infrastructure.mcp.tools.client.ClientCreateTool;
 import org.apache.fineract.infrastructure.mcp.tools.client.ClientDetailsTool;
 import org.apache.fineract.infrastructure.mcp.tools.client.ClientSearchTool;
+import org.apache.fineract.infrastructure.mcp.tools.conversation.ConversationLogTool;
 import org.apache.fineract.infrastructure.mcp.tools.loan.LoanApprovalTool;
 import org.apache.fineract.infrastructure.mcp.tools.loan.LoanDetailsTool;
 import org.apache.fineract.infrastructure.mcp.tools.loan.LoanTransactionTool;
@@ -47,6 +48,7 @@ public class McpPluginConfiguration {
             SavingsAccountTool savingsAccountTool,
             SavingsTransactionTool savingsTransactionTool,
             ReportExecutionTool reportExecutionTool,
+            ConversationLogTool conversationLogTool,
             McpPluginProperties mcpProperties) {
 
         log.info("Registering Apache Fineract MCP Tools...");
@@ -62,7 +64,8 @@ public class McpPluginConfiguration {
                 loanTransactionTool,
                 savingsAccountTool,
                 savingsTransactionTool,
-                reportExecutionTool
+                reportExecutionTool,
+                conversationLogTool
         );
 
         log.info("Registered {} MCP tool(s) for Apache Fineract.", callbacks.size());
