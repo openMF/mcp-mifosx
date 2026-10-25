@@ -67,6 +67,17 @@ func (r *Registry) RegisterCallerScopedHTTPTools(client *adapter.CallerClient) {
 	}
 }
 
+// RegisterCreateClientProposal installs only the approval proposal handler in HTTP mode.
+func (r *Registry) RegisterCreateClientProposal(handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	for _, def := range GetClientToolDefs() {
+		if def.Name == "create_client" {
+			def.Description = "Propose client creation for human approval. Does not execute a write."
+			def.Handler = handler
+			r.registerTools([]BaseToolDef{def})
+		}
+	}
+}
+
 func GetClientToolDefs() []BaseToolDef {
 	return []BaseToolDef{
 		{

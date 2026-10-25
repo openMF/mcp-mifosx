@@ -82,6 +82,12 @@ public final class ApprovalStore {
      * officer's pending approval.
      */
     public Optional<PendingApproval> take(String cardId, CallContext context) {
+        // MCP cards may only be consumed by the session-bound bridge, never AgentLoop.
+        return take(cardId, context, a -> !a.session().containsKey("mcpSessionId"));
+    }
+
+    public Optional<PendingApproval> take(String cardId, CallContext context,
+            java.util.function.Predicate<PendingApproval> additionalChecks) {
         PendingApproval approval = pending.get(cardId);
         if (approval == null) {
             return Optional.empty();
@@ -90,11 +96,35 @@ public final class ApprovalStore {
             pending.remove(cardId, approval);
             return Optional.empty();
         }
-        if (!approval.securityFingerprint().equals(context.fingerprint())) {
+        if (!owned(approval, context) || !additionalChecks.test(approval)) {
             return Optional.empty(); // Different identity, so the card stays for its owner.
         }
         // Two-arg remove keeps consumption atomic against a concurrent take of the same card.
         return pending.remove(cardId, approval) ? Optional.of(approval) : Optional.empty();
+    }
+
+    /** Mark a human decision before handing a single-use claim ticket to an executor.
+     * The ticket never reaches the model. Confirmation does not extend expiry. */
+    public Optional<String> confirm(String cardId, CallContext context,
+            java.util.function.Predicate<PendingApproval> additionalChecks) {
+        java.util.concurrent.atomic.AtomicReference<String> ticket = new java.util.concurrent.atomic.AtomicReference<>();
+        pending.computeIfPresent(cardId, (id, approval) -> {
+            if (approval.isExpired(Instant.now())) { return null; }
+            if (!owned(approval, context) || !additionalChecks.test(approval) || approval.claimToken() != null) {
+                return approval;
+            }
+            String token = UUID.randomUUID().toString();
+            ticket.set(token);
+            return new PendingApproval(approval.cardId(), approval.conversationId(), approval.toolCall(),
+                    approval.humanSummary(), approval.idempotencyKey(), approval.securityFingerprint(),
+                    approval.expiresAt(), approval.rows(), approval.session(), token);
+        });
+        return Optional.ofNullable(ticket.get());
+    }
+
+    private boolean owned(PendingApproval approval, CallContext context) {
+        return context.hasCredential() && context.tenantId() != null && !context.tenantId().isBlank()
+                && approval.securityFingerprint().equals(context.fingerprint());
     }
 
     private void sweep() {

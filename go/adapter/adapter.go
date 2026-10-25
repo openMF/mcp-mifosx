@@ -64,6 +64,10 @@ func (c *CallerClient) DoCallerRequest(ctx context.Context, endpoint string, que
 	if err != nil {
 		return nil, err
 	}
+	return safeCallerResponse(data, call)
+}
+
+func safeCallerResponse(data []byte, call CallContext) ([]byte, error) {
 	// Refuse responses that echo the supplied credential, including decoded
 	// Basic credentials. Normal client data is returned unchanged.
 	secrets := []string{call.authorization}
@@ -80,10 +84,39 @@ func (c *CallerClient) DoCallerRequest(ctx context.Context, endpoint string, que
 			}
 		}
 	}
-	for _, secret := range secrets {
-		if secret != "" && bytes.Contains(data, []byte(secret)) {
-			return nil, fmt.Errorf("Fineract response contained credential material")
+	containsSecret := func(value string) bool {
+		for _, secret := range secrets {
+			if secret != "" && strings.Contains(value, secret) {
+				return true
+			}
 		}
+		return false
+	}
+	// Also inspect decoded JSON strings: escaping must not hide a credential
+	// echoed by Fineract or an approval gateway response.
+	var containsJSONSecret func(any) bool
+	containsJSONSecret = func(value any) bool {
+		switch value := value.(type) {
+		case string:
+			return containsSecret(value)
+		case []any:
+			for _, item := range value {
+				if containsJSONSecret(item) {
+					return true
+				}
+			}
+		case map[string]any:
+			for key, item := range value {
+				if containsSecret(key) || containsJSONSecret(item) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	var decoded any
+	if containsSecret(string(data)) || json.Unmarshal(data, &decoded) == nil && containsJSONSecret(decoded) {
+		return nil, fmt.Errorf("Fineract response contained credential material")
 	}
 	return data, nil
 }
