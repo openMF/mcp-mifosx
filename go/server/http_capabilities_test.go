@@ -79,11 +79,16 @@ func capabilityRequest(t *testing.T, baseURL, auth, tenant string) (int, string)
 	return resp.StatusCode, string(body)
 }
 
-func assertCapabilities(t *testing.T, body string, available bool) {
+func assertCapabilities(t *testing.T, body string, available bool, create ...bool) {
 	t.Helper()
 	reason := ""
 	if !available {
 		reason = "missing_permission"
+	}
+	canCreate := len(create) == 1 && create[0]
+	createReason := "missing_permission"
+	if canCreate {
+		createReason = ""
 	}
 	want, err := json.Marshal(struct {
 		Tools []tools.ToolCapability `json:"tools"`
@@ -91,6 +96,7 @@ func assertCapabilities(t *testing.T, body string, available bool) {
 		{Tool: "get_client", Available: available, Reason: reason},
 		{Tool: "search_clients", Available: available, Reason: reason},
 		{Tool: "get_client_accounts", Available: available, Reason: reason},
+		{Tool: "create_client", Available: canCreate, Reason: createReason},
 	}})
 	if err != nil {
 		t.Fatal(err)
@@ -106,13 +112,14 @@ func TestHTTPCapabilityResolution(t *testing.T) {
 		response  string
 		status    int
 		available bool
+		create    bool
 		failure   bool
 	}{
 		{name: "client read", response: `{"authenticated":true,"permissions":["READ_CLIENT"]}`, available: true},
-		{name: "superuser", response: `{"authenticated":true,"permissions":["ALL_FUNCTIONS"]}`, available: true},
+		{name: "superuser", response: `{"authenticated":true,"permissions":["ALL_FUNCTIONS"]}`, available: true, create: true},
 		{name: "read superuser", response: `{"authenticated":true,"permissions":["ALL_FUNCTIONS_READ"]}`, available: true},
 		{name: "empty permissions", response: `{"authenticated":true,"permissions":[]}`},
-		{name: "unrelated permissions", response: `{"authenticated":true,"permissions":["READ_LOAN","READ_CLIENTIMAGE","CREATE_CLIENT","ALL_FUNCTIONS_READONLY","read_client"," READ_CLIENT "]}`},
+		{name: "create permission independent of reads", create: true, response: `{"authenticated":true,"permissions":["READ_LOAN","READ_CLIENTIMAGE","CREATE_CLIENT","ALL_FUNCTIONS_READONLY","read_client"," READ_CLIENT "]}`},
 		{name: "secrets discarded", response: `{"authenticated":true,"permissions":["READ_CLIENT"],"username":"private-officer","base64EncodedAuthenticationKey":"private-key","accessToken":"private-token","Authorization":"Bearer capability-secret"}`, available: true},
 		{name: "explicit false gates", response: `{"authenticated":true,"permissions":["READ_CLIENT"],"shouldRenewPassword":false,"isTwoFactorAuthenticationRequired":false}`, available: true},
 		{name: "unauthenticated", response: `{"authenticated":false,"permissions":["ALL_FUNCTIONS"]}`, failure: true},
@@ -159,7 +166,7 @@ func TestHTTPCapabilityResolution(t *testing.T) {
 				if status != http.StatusOK {
 					t.Fatalf("lookup failed: %d %s", status, body)
 				}
-				assertCapabilities(t, body, tc.available)
+				assertCapabilities(t, body, tc.available, tc.create)
 			}
 			if calls.Load() != 1 {
 				t.Fatal("lookup retried or used a credential fallback")

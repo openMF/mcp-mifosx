@@ -242,3 +242,10 @@ server-minted idempotency keys, backend-drift guard, and the framework-free-core
 *Part of [mcp-mifosx](https://github.com/openMF/mcp-mifosx). The tool servers there expose Fineract
 operations; this gateway is the client "brain" that drives them for the Mifos X web-app Copilot.
 Architecture rationale: ADR-001.*
+
+### Caller-scoped Go client creation
+
+The gateway also hosts Go MCP client-creation proposals in the existing `ApprovalStore`.
+The adapter uses the standard action-card fields and TTL. Its separate human decision
+route is `/copilot/api/v1/mcp/actions/{cardId}/decision`; it does not enter `AgentLoop`
+or expose approval as an LLM tool.

@@ -28,20 +28,25 @@ func ToolAvailable(capabilities []ToolCapability, name string) bool {
 	return false
 }
 
-// CallerCapabilities resolves only the three supported HTTP client reads.
+// CallerCapabilities resolves the supported caller-scoped CLIENT operations.
 // Lookup failures return no capabilities; callers must not treat errors as grants.
 func CallerCapabilities(ctx context.Context, caller *adapter.CallerClient) ([]ToolCapability, error) {
-	permitted, err := caller.ClientReadPermitted(ctx)
+	permitted, err := caller.ClientPermissions(ctx)
 	if err != nil {
 		return nil, err
 	}
 	reason := ""
-	if !permitted {
+	if !permitted.Read {
 		reason = "missing_permission"
 	}
+	createReason := ""
+	if !permitted.Create {
+		createReason = "missing_permission"
+	}
 	return []ToolCapability{
-		{Tool: "get_client", Available: permitted, Reason: reason},
-		{Tool: "search_clients", Available: permitted, Reason: reason},
-		{Tool: "get_client_accounts", Available: permitted, Reason: reason},
+		{Tool: "get_client", Available: permitted.Read, Reason: reason},
+		{Tool: "search_clients", Available: permitted.Read, Reason: reason},
+		{Tool: "get_client_accounts", Available: permitted.Read, Reason: reason},
+		{Tool: "create_client", Available: permitted.Create, Reason: createReason},
 	}, nil
 }

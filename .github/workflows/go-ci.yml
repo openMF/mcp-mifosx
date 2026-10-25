@@ -5,11 +5,13 @@ on:
     branches: ['main']
     paths:
       - 'go/**'
+      - 'gateway/**'
       - '.github/workflows/go-ci.yml'
   pull_request:
     branches: ['main']
     paths:
       - 'go/**'
+      - 'gateway/**'
       - '.github/workflows/go-ci.yml'
 
 permissions:
@@ -36,6 +38,26 @@ jobs:
 
       - name: Install dependencies
         run: go mod download
+
+      - name: Set up Java for the approval boundary
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+          cache-dependency-path: gateway/pom.xml
+
+      - name: Test and package the existing approval gateway
+        working-directory: gateway
+        run: sh mvnw -B package
+
+      - name: Test caller approval boundary and existing Go tools
+        env:
+          MCP_APPROVAL_TEST_GATEWAY_JAR: ${{ github.workspace }}/gateway/target/mifos-copilot-gateway-0.1.0-SNAPSHOT.jar
+        run: |
+          go test ./...
+          go test -race ./...
+          go vet ./...
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9

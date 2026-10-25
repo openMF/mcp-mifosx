@@ -111,7 +111,7 @@ public class CoreWiring {
         config.setAllowedOrigins(properties.cors().allowedOrigins());
         config.setAllowedMethods(List.of("GET", "POST", "OPTIONS"));
         config.setAllowedHeaders(List.of("Authorization", "Fineract-Platform-TenantId", "X-Correlation-Id",
-                "Content-Type", "Accept"));
+                "Content-Type", "Accept", "X-MCP-Session-Id"));
         config.setMaxAge(3600L);
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/copilot/**", config);
