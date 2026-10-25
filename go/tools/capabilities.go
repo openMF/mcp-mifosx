@@ -17,6 +17,17 @@ type ToolCapability struct {
 	Reason    string `json:"reason,omitempty"`
 }
 
+// ToolAvailable requires an explicit grant. Missing or unknown capabilities
+// never make a tool available.
+func ToolAvailable(capabilities []ToolCapability, name string) bool {
+	for _, capability := range capabilities {
+		if capability.Tool == name {
+			return capability.Available
+		}
+	}
+	return false
+}
+
 // CallerCapabilities resolves only the three supported HTTP client reads.
 // Lookup failures return no capabilities; callers must not treat errors as grants.
 func CallerCapabilities(ctx context.Context, caller *adapter.CallerClient) ([]ToolCapability, error) {

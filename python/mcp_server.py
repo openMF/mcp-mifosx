@@ -644,12 +644,13 @@ def apply_loan_fee(loanId: int, feeAmount: float, chargeId: int = None) -> dict:
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     if chargeId is None:
-        return _loan_charge_required()
+        return _charge_required("Loan")
     return apply_late_fee.func(loanId, feeAmount, chargeId)
 
 
-def _loan_charge_required() -> dict:
-    """Error for a fee without a chargeId, listing the charges that can be applied this way."""
+def _charge_required(applies_to: str) -> dict:
+    """Error for a fee without a chargeId, listing the charges that can be applied this way.
+    applies_to is the account type the charge is for, "Loan" or "Savings"."""
     charges = list_charges_domain.func()
     if not isinstance(charges, list):
         reason = charges.get("error") if isinstance(charges, dict) else charges
@@ -658,14 +659,16 @@ def _loan_charge_required() -> dict:
         {"id": c.get("id"), "name": c.get("name"), "amount": c.get("amount")}
         for c in charges
         if c.get("active")
-        and (c.get("chargeAppliesTo") or {}).get("value") == "Loan"
+        and (c.get("chargeAppliesTo") or {}).get("value") == applies_to
         and (c.get("chargeTimeType") or {}).get("value") == "Specified due date"
     ]
     if not options:
-        return {"error": "chargeId is required, but no active loan charge with a specified due date exists."}
+        return {"error": f"chargeId is required, but no active {applies_to.lower()} charge with a specified "
+                         "due date exists."}
     # safe_tool passes on only the message, so the options have to be in it
     listed = "; ".join(f"{o['id']} = {o['name']} ({o['amount']})" for o in options)
-    return {"error": f"chargeId is required. Ask the user which charge applies: {listed}.", "loan_charges": options}
+    return {"error": f"chargeId is required. Ask the user which charge applies: {listed}.",
+            f"{applies_to.lower()}_charges": options}
 
 @mcp.tool()
 @safe_tool("waive_loan_interest")
@@ -916,8 +919,13 @@ def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
 
 @mcp.tool()
 @safe_tool("apply_savings_fee")
-def apply_savings_fee(accountId: int, amount: float, chargeId: int = 1) -> dict:
-    """Apply a charge/block to a savings account"""
+def apply_savings_fee(accountId: int, amount: float, chargeId: int = None) -> dict:
+    """Apply a charge/block to a savings account, due today.
+    chargeId is the charge to apply (a savings charge with a specified due date). If it is
+    missing, nothing is charged and the error lists the available charges
+    (id = name (default amount)) so you can ask the user which one applies."""
+    if chargeId is None:
+        return _charge_required("Savings")
     return apply_savings_charge.func(accountId, amount, chargeId)
 
 @mcp.tool()
@@ -970,9 +978,11 @@ def list_journal_entries(glAccountId: int = None, transactionId: str = None) -> 
 
 @mcp.tool()
 @safe_tool("record_journal_entry")
-def record_journal_entry(officeId: int, date: str, credits: list, debits: list, comment: str = "") -> dict:
-    """Record a manual journal entry. Date format: 'dd MMMM yyyy' e.g. '10 March 2026'"""
-    return create_journal_entry.func(officeId, date, credits, debits, comment)
+def record_journal_entry(officeId: int, date: str, credits: list, debits: list, currencyCode: str,
+                         comment: str = "") -> dict:
+    """Record a manual journal entry. Date format: 'dd MMMM yyyy' e.g. '10 March 2026'
+    currencyCode is the entry's currency (e.g. "USD"); Fineract requires it."""
+    return create_journal_entry.func(officeId, date, credits, debits, currencyCode, comment)
 
 
 # --- REPORTS ---

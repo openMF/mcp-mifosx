@@ -297,8 +297,16 @@ appear in client data can therefore cause a response to be refused.
 
 Use HTTPS at the deployment boundary to protect caller headers in transit.
 HTTP header presence is not a local authentication check. SSE sessions are bound
-to the exact Authorization/tenant pair that created them. This pilot does not
-add permission-based tool discovery.
+to the exact Authorization/tenant pair that created them.
+
+HTTP/SSE `tools/list` advertises only tools explicitly allowed by the caller's
+Fineract-derived capabilities. Each `tools/call` and REST wrapper independently
+resolves the same capabilities before execution; denied, unknown, or unverifiable
+capabilities fail closed. Capabilities are resolved once per list or call, using
+the current caller and tenant, with no permission cache. The three pilot tools
+currently share Fineract's CLIENT read permission, so they are granted or denied
+together. Filtered MCP tools return the SDK's safe `tool not found` error;
+REST wrappers return HTTP 403. Stdio discovery and execution remain unchanged.
 
 ```bash
 docker build -t mcp-go-mifosx .

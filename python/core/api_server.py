@@ -3,12 +3,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from typing import Optional
+from typing import Annotated, Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 
 # Import our custom banking domains and AI router
 from tools.domains import accounting, clients, groups, loans, savings, staff
@@ -94,13 +94,14 @@ class Transaction(BaseModel):
     # deposit or withdrawal gets a 400 listing the tenant's payment types.
     paymentTypeId: Optional[int] = None
 
+# No default charge_id: charge ids are tenant-specific, so the caller has to choose one
 class SavingsCharge(BaseModel):
     amount: float
-    charge_id: int = 1
+    charge_id: int
 
 class LateFee(BaseModel):
     fee_amount: float
-    charge_id: int = 2
+    charge_id: int
 
 class WaiveInterest(BaseModel):
     amount: float
@@ -115,6 +116,7 @@ class JournalEntryCreate(BaseModel):
     date: str
     credits: list[JournalEntryItem]
     debits: list[JournalEntryItem]
+    currency_code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     comment: str = ""
 
 # Helper function to handle Fineract errors gracefully
@@ -417,7 +419,7 @@ def create_journal_entry(payload: JournalEntryCreate):
     debits_dict = [item.dict() for item in payload.debits]
     return handle_response(accounting.create_journal_entry.func(
         office_id=payload.office_id, date=payload.date,
-        credits=credits_dict, debits=debits_dict, comment=payload.comment
+        credits=credits_dict, debits=debits_dict, currency_code=payload.currency_code, comment=payload.comment
     ))
 
 
@@ -427,4 +429,4 @@ if __name__ == "__main__":
     print("STARTING HEADLESS MCP SERVER")
     print("-"*50)
     print("API Docs available at: http://localhost:8000/docs")
-    uvicorn.run("api_server:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("core.api_server:app", host="0.0.0.0", port=8000, reload=True)
