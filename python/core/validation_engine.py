@@ -17,6 +17,12 @@ def _require_positive_number(params: Dict[str, Any], name: str) -> None:
         raise ValidationError(f"{name} must be positive")
 
 
+def _require_non_blank_str(params: Dict[str, Any], name: str) -> None:
+    value = params.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"{name} is required and cannot be blank")
+
+
 def _require_positive_resource_ids(params: Dict[str, Any]) -> None:
     """Reject non-positive Fineract resource IDs before any request.
 
@@ -53,3 +59,6 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
     if tool_name == "make_repayment":
         _require_positive_int(params, "loanId")
         _require_positive_number(params, "amount")
+
+    if tool_name == "record_journal_entry":
+        _require_non_blank_str(params, "currencyCode")
