@@ -10,8 +10,10 @@ description: >
 
 # Lightning credentials the jobs use. They must exist before deploying: raw JSON
 # credentials owned by the Lightning user below (change owner to your Lightning
-# user's email). "fineract" is used by the write-back job; "agent-decision"
-# ({ "url", "token" } of the agent's runner) by the decision job.
+# user's email). "fineract" is the write-back job's Fineract login: a user
+# allowed only the job's calls (the sandbox's agent-writeback), not the admin.
+# "agent-decision" ({ "url", "token" } of the agent's runner) is used by the
+# decision job.
 credentials:
   super@openfn.org-fineract:
     name: fineract
@@ -683,7 +685,9 @@ workflows:
         body: |
           // Same chain as agentic-banking-temporal FineractClient:
           // create client -> submit loan (externalId = workflowId) -> approve.
-          // Uses the "fineract" credential (raw JSON):
+          // Uses the "fineract" credential (raw JSON), whose user needs only
+          // the permissions of the sandbox's agent-writeback role
+          // (agentic-mifos-sandbox/fineract-rbac.json):
           //   { baseUrl, username, password, tenantId, productId, officeId, tls }
           // e.g. baseUrl https://host.docker.internal:8443/fineract-provider/api/v1
           fn(async state => {

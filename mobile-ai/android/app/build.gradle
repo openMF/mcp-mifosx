@@ -1,0 +1,108 @@
+/**
+ * Android Gradle build configuration for Mifos Mobile AI.
+ *
+ * Key settings:
+ * - minSdk 26 (Android 8.0+) for modern device baseline
+ * - NDK/CMake flags for llama.cpp OpenCL GPU acceleration
+ * - Large heap for model loading
+ * - ProGuard rules for llama.rn native bindings
+ */
+
+apply plugin: "com.android.application"
+apply plugin: "org.jetbrains.kotlin.android"
+apply plugin: "com.facebook.react"
+
+react {
+    // Autolinking configuration
+}
+
+def enableProguardInReleaseBuilds = true
+
+android {
+    ndkVersion rootProject.ext.ndkVersion
+    buildToolsVersion rootProject.ext.buildToolsVersion
+    compileSdk rootProject.ext.compileSdkVersion
+
+    namespace "org.mifos.mobileai"
+
+    defaultConfig {
+        applicationId "org.mifos.mobileai"
+        minSdkVersion 26
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "0.1.0"
+
+        // ── llama.cpp / OpenCL GPU acceleration flags ────────────────
+        // These CMake flags enable OpenCL compute on Qualcomm Adreno GPUs.
+        // Required for on-device inference with GPU offloading.
+        externalNativeBuild {
+            cmake {
+                // Enable OpenCL backend for llama.cpp
+                arguments "-DGGML_OPENCL=ON"
+                // Allow large buffer allocations on Adreno (>256MB)
+                arguments "-DGGML_OPENCL_ADRENO_LARGE_BUFFER=ON"
+            }
+        }
+
+        // Enable large heap for model loading (5+ GB GGUF files)
+        manifestPlaceholders = [
+            largeHeap: "true"
+        ]
+
+        // NDK ABI filters — only 64-bit architectures
+        ndk {
+            abiFilters "arm64-v8a", "x86_64"
+        }
+    }
+
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+        release {
+            minifyEnabled enableProguardInReleaseBuilds
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            signingConfig signingConfigs.debug
+        }
+
+        // Production debug variant — optimized builds with debug symbols
+        prodDebug {
+            initWith release
+            debuggable true
+            matchingFallbacks = ['release']
+        }
+    }
+
+    // ── C++ / NDK Configuration ──────────────────────────────────────
+    // llama.rn builds llama.cpp from source via CMake.
+    // These settings ensure the OpenCL backend is compiled.
+    packagingOptions {
+        // Prevent duplicate libc++_shared.so from multiple native deps
+        pickFirst '**/libc++_shared.so'
+        // Keep the llama.rn native library
+        doNotStrip '**/librnllama.so'
+    }
+}
+
+dependencies {
+    // React Native framework
+    implementation("com.facebook.react:react-android")
+
+    // Hermes JS engine (default for RN 0.79+)
+    if (hermesEnabled.toBoolean()) {
+        implementation("com.facebook.react:hermes-android")
+    } else {
+        implementation jscFlavor
+    }
+}
+
+apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)

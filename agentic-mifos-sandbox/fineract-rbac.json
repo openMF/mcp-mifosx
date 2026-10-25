@@ -1,5 +1,5 @@
 {
-  "description": "One Fineract service user per agent, with a role that grants only what the agent's MCP tools need (python/profiles.toml). The bootstrap creates the roles and users, keeps each role's permissions exactly as listed here, and checks on every run that each agent is refused (HTTP 403) outside its role.",
+  "description": "One Fineract service user per agent, with a role that grants only what the agent needs: its MCP tools (python/profiles.toml) or, for the write-back, the calls of the OpenFn write-back job. The bootstrap creates the roles and users, keeps each role's permissions exactly as listed here, and checks on every run that each agent is refused (HTTP 403) outside its role.",
   "agents": {
     "identity": {
       "role": "Agent: identity document",
@@ -13,8 +13,8 @@
     },
     "writeback": {
       "role": "Agent: write-back",
-      "description": "Creates the client, their identity document and the loan application. Approval stays with a human.",
-      "permissions": ["READ_CLIENT", "CREATE_CLIENT", "CREATE_CLIENTIDENTIFIER", "READ_LOANPRODUCT", "READ_LOAN", "CREATE_LOAN"]
+      "description": "Records an application a person approved in the gateway's review: creates the client and the loan, approves the loan and attaches the decision notes. Never disburses.",
+      "permissions": ["READ_LOANPRODUCT", "READ_CLIENT", "CREATE_CLIENT", "ACTIVATE_CLIENT", "READ_LOAN", "CREATE_LOAN", "APPROVE_LOAN", "READ_LOANNOTE", "CREATE_LOANNOTE"]
     },
     "intake": {
       "role": "Agent: intake",

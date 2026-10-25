@@ -156,13 +156,35 @@ The *Create + Approve Loan in Fineract* job reads its connection details from a 
 **credential**, so no secrets live in `project.yaml`. The deploy in step 5 links it to the
 job by name, so it must exist **before** deploying.
 
+First give the job its own Fineract user, whose role has only what the job calls (the
+sandbox creates the same one as `agent-writeback`, see
+[fineract-rbac.json](../agentic-mifos-sandbox/fineract-rbac.json)). Create the role and note
+its id (`resourceId`), then grant the permissions and create the user with a password of
+your own:
+
+```bash
+F=https://localhost:8443/fineract-provider/api/v1
+H=(-sk -u mifos:password -H 'Fineract-Platform-TenantId: default' -H 'Content-Type: application/json')
+curl "${H[@]}" -X POST $F/roles -d '{"name": "OpenFn write-back",
+  "description": "Creates and approves the loans a reviewer approved in the gateway"}'
+ROLE=<resourceId>
+curl "${H[@]}" -X PUT $F/roles/$ROLE/permissions -d '{"permissions": {
+  "READ_LOANPRODUCT": true, "READ_CLIENT": true, "CREATE_CLIENT": true, "ACTIVATE_CLIENT": true,
+  "READ_LOAN": true, "CREATE_LOAN": true, "APPROVE_LOAN": true,
+  "READ_LOANNOTE": true, "CREATE_LOANNOTE": true}}'
+curl "${H[@]}" -X POST $F/users -d '{"username": "agent-writeback", "firstname": "OpenFn",
+  "lastname": "write-back", "email": "agent-writeback@example.com", "officeId": 1,
+  "roles": ['$ROLE'], "sendPasswordToEmail": false, "passwordNeverExpires": true,
+  "password": "<password>", "repeatPassword": "<password>"}'
+```
+
 In Lightning: **Credentials → New credential → Raw JSON**, name it **`fineract`**:
 
 ```json
 {
   "baseUrl": "https://host.docker.internal:8443/fineract-provider/api/v1",
-  "username": "mifos",
-  "password": "password",
+  "username": "agent-writeback",
+  "password": "<password>",
   "tenantId": "default",
   "productId": 1,
   "officeId": 1,
@@ -173,6 +195,8 @@ In Lightning: **Credentials → New credential → Raw JSON**, name it **`finera
 - `baseUrl` must be reachable **from the Lightning container**; `host.docker.internal:8443`
   reaches a Fineract published on the Docker host. For a remote Fineract, use its URL and
   drop `tls`.
+- `username` / `password`: the user created above. For a quick demo only, the admin
+  `mifos` / `password` works too, but it can do anything, including disbursing.
 - `productId`: the loan product from step 1. `officeId`: the office for new clients.
 - `tls.rejectUnauthorized: false` is only for a local Fineract with a self-signed certificate.
 - `openfn/project.yaml` references the credential as owned by `super@openfn.org`
