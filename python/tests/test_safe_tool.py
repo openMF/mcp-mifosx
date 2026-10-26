@@ -125,6 +125,17 @@ def test_validation_blocks_negative_withdraw() -> None:
         withdraw(accountId=1, amount=0)
 
 
+def test_validation_blocks_boolean_and_non_finite_amounts() -> None:
+    from mcp_server import deposit, withdraw
+
+    for bad in (True, False, float("nan"), float("inf")):
+        with pytest.raises(ToolError, match="amount must be positive"):
+            deposit(accountId=1, amount=bad)
+
+        with pytest.raises(ToolError, match="amount must be positive"):
+            withdraw(accountId=1, amount=bad)
+
+
 
 def test_validation_blocks_non_positive_loan_id() -> None:
     from mcp_server import make_repayment
