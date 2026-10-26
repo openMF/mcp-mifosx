@@ -62,3 +62,10 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
 
     if tool_name == "record_journal_entry":
         _require_non_blank_str(params, "currencyCode")
+
+    if tool_name == "deposit":
+        _require_positive_number(params, "amount")
+
+    if tool_name == "withdraw":
+        _require_positive_number(params, "amount")
+

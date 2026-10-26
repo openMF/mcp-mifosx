@@ -59,9 +59,8 @@ def test_error_sentinel_becomes_tool_error() -> None:
     """An `{"error": ...}` payload must not look like a successful call."""
 
     @safe_tool("deposit")
-    def deposit() -> Dict[str, Any]:
+    def deposit(accountId: int = 1, amount: float = 100.0) -> Dict[str, Any]:
         return {"error": "Savings account ID 999999 not found."}
-
     with pytest.raises(ToolError, match="999999"):
         deposit()
 
@@ -106,6 +105,26 @@ def test_validation_blocks_negative_amount() -> None:
     with pytest.raises(ToolError, match="amount must be positive"):
         make_repayment(loanId=1, amount=-5)
 
+def test_validation_blocks_negative_deposit() -> None:
+    from mcp_server import deposit
+
+    with pytest.raises(ToolError, match="amount must be positive"):
+        deposit(accountId=1, amount=-5)
+
+    with pytest.raises(ToolError, match="amount must be positive"):
+        deposit(accountId=1, amount=0)
+
+
+def test_validation_blocks_negative_withdraw() -> None:
+    from mcp_server import withdraw
+
+    with pytest.raises(ToolError, match="amount must be positive"):
+        withdraw(accountId=1, amount=-5)
+
+    with pytest.raises(ToolError, match="amount must be positive"):
+        withdraw(accountId=1, amount=0)
+
+
 
 def test_validation_blocks_non_positive_loan_id() -> None:
     from mcp_server import make_repayment
@@ -128,6 +147,12 @@ def test_validation_stops_before_any_request() -> None:
 
     assert called == [], "domain function ran despite invalid input"
 
+def test_validate_input_rejects_negative_or_zero_amount_for_deposit_and_withdraw() -> None:
+    with pytest.raises(ValidationError, match="amount must be positive"):
+        validate_input("deposit", {"accountId": 1, "amount": -10})
+
+    with pytest.raises(ValidationError, match="amount must be positive"):
+        validate_input("withdraw", {"accountId": 1, "amount": 0})
 
 def test_validate_input_rejects_non_positive_resource_ids() -> None:
     """Resource IDs are checked for *every* tool, not only the two with
