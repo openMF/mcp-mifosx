@@ -9,6 +9,8 @@ package org.mifos.community.copilot.gateway.config;
 
 import org.mifos.community.copilot.core.agent.AgentLoop;
 import org.mifos.community.copilot.core.approval.ApprovalStore;
+import org.mifos.community.copilot.core.audit.FileActionAudit;
+import org.springframework.beans.factory.annotation.Value;
 import org.mifos.community.copilot.core.convo.ConversationStore;
 import org.mifos.community.copilot.core.llm.LlmClient;
 import org.mifos.community.copilot.core.llm.OpenAiCompatibleLlmClient;
@@ -89,8 +91,13 @@ public class CoreWiring {
     }
 
     @Bean
-    ApprovalStore approvalStore(GatewayProperties properties) {
-        return new ApprovalStore(Duration.ofSeconds(properties.approval().ttlSeconds()));
+    FileActionAudit actionAudit(@Value("${MCP_CREATE_CLIENT_AUDIT_PATH:./data/create-client-audit.jsonl}") String path) {
+        return new FileActionAudit(java.nio.file.Path.of(path));
+    }
+
+    @Bean
+    ApprovalStore approvalStore(GatewayProperties properties, FileActionAudit audit) {
+        return new ApprovalStore(Duration.ofSeconds(properties.approval().ttlSeconds()), audit);
     }
 
     @Bean

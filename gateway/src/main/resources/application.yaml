@@ -29,3 +29,7 @@ copilot:
 logging:
   level:
     org.mifos.community.copilot: INFO
+    # Spring's debug mode otherwise logs decoded proposal payloads and action cards.
+    org.springframework.web: INFO
+    org.springframework.http: INFO
+    org.springframework.core.codec: INFO

@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.mifos.community.copilot.core.approval.ApprovalStore;
 import org.mifos.community.copilot.core.approval.PendingApproval;
 import org.mifos.community.copilot.core.auth.CallContext;
+import org.mifos.community.copilot.core.audit.ActionAudit;
 import org.mifos.community.copilot.core.contract.DecisionRequest;
 import org.mifos.community.copilot.core.contract.StreamEvent;
 import org.mifos.community.copilot.core.llm.LlmToolCall;
@@ -98,6 +99,18 @@ public class McpApprovalController {
                 "idempotency_key", approval.idempotencyKey(), "card_id", approval.cardId());
     }
 
+    /** Result metadata is accepted only from the trusted bridge and original owner/session.
+     * It cannot approve, claim, or retry an action. */
+    @PostMapping("/internal/mcp/results/{cardId}")
+    public Map<String, String> result(@PathVariable String cardId, @RequestBody ActionAudit.Outcome outcome,
+            ServerHttpRequest request) {
+        requireBridge(request);
+        try {
+            approvals.complete(cardId, context(request), header(request, "X-MCP-Session-Id"), outcome);
+        } catch (IllegalArgumentException e) { throw invalid(); }
+        return Map.of("card_id", cardId, "status", "recorded");
+    }
+
     /** Human-only control plane, with the same decision body and ownership rules
      * as the existing action endpoint. Keep this route outside model/tool access. */
     @PostMapping(value = "/mcp/actions/{cardId}/decision", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -107,7 +120,7 @@ public class McpApprovalController {
         String session = header(request, "X-MCP-Session-Id");
         if (!"approve".equals(decision.decision()) && !"reject".equals(decision.decision())) { throw invalid(); }
         if (!decision.isApprove()) {
-            approvals.take(cardId, context, belongsToSession(session)).orElseThrow(McpApprovalController::invalid);
+            approvals.reject(cardId, context, belongsToSession(session)).orElseThrow(McpApprovalController::invalid);
             return Mono.just(ResponseEntity.ok("{\"status\":\"cancelled\"}"));
         }
         requireConfigured();
@@ -122,6 +135,7 @@ public class McpApprovalController {
                         .POST(HttpRequest.BodyPublishers.noBody()).build();
                 HttpResponse<String> result = http.send(callback, HttpResponse.BodyHandlers.ofString());
                 if (result.statusCode() != 200) {
+                    approvals.callbackBlocked(cardId, context, session);
                     // Go returns only sanitized errors; keep the human response generic too.
                     return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
                             .body("{\"status\":\"failed\",\"card_id\":\"" + cardId + "\"}");

@@ -55,6 +55,8 @@ Authentication is selected at initialization:
 
 `NewHTTPServer` accepts only `*adapter.CallerClient`. This type holds no configured identity and has no configured-auth request methods. Both modes share base URL and TLS configuration.
 
+Approved HTTP `create_client` actions use the existing approval `card_id` as their correlation ID through the gateway audit journal and Fineract `X-Correlation-Id`. Execution requires a durable audit claim; Go reports only HTTP status and a safe outcome classification, with no payload or credentials. An outcome audit failure returns an error and must not trigger a write retry. Configure persistent storage using the gateway's `MCP_CREATE_CLIENT_AUDIT_PATH`; see [gateway audit configuration](../gateway/README.md#caller-scoped-go-client-creation). Stdio execution is unchanged.
+
 Client constructors return a client and an error. The optional `.env` file is loaded before mode selection and client construction. A missing file is allowed; unreadable or malformed files stop initialization with a diagnostic that omits file contents.
 
 ### Telemetry & Monitoring (Prometheus)

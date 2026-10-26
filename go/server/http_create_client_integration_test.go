@@ -3,10 +3,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -24,6 +26,23 @@ import (
 	"github.com/openMF/mcp-mifosx/go/adapter"
 )
 
+type auditTestLogs struct {
+	mu   sync.Mutex
+	data bytes.Buffer
+}
+
+func (l *auditTestLogs) Write(data []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.data.Write(data)
+}
+
+func (l *auditTestLogs) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.data.String()
+}
+
 // Runs against the real Java ApprovalStore and HTTP controller, with real Go SSE
 // transport and a recording Fineract. Build gateway first and set this jar path.
 func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
@@ -38,6 +57,10 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 	if _, err := os.Stat(jar); err != nil {
 		t.Fatalf("gateway jar must exist (use an absolute path): %v", err)
 	}
+	goLogs := &auditTestLogs{}
+	previousLogs := log.Writer()
+	log.SetOutput(goLogs)
+	defer log.SetOutput(previousLogs)
 	var writes atomic.Int32
 	var downstreamStatus atomic.Int32
 	var echoCredential atomic.Bool
@@ -100,8 +123,9 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer logFile.Close()
+	auditPath := filepath.Join(t.TempDir(), "create-client-audit.jsonl")
 	command := exec.Command("java", "-jar", jar, "--server.address=127.0.0.1", fmt.Sprintf("--server.port=%d", port))
-	command.Env = append(os.Environ(), "MCP_APPROVAL_BRIDGE_TOKEN="+bridgeSecret, "MCP_CALLER_URL="+goURL, "COPILOT_APPROVAL_TTL_SECONDS=2", "COPILOT_LLM_PROVIDER=mock")
+	command.Env = append(os.Environ(), "MCP_APPROVAL_BRIDGE_TOKEN="+bridgeSecret, "MCP_CALLER_URL="+goURL, "COPILOT_APPROVAL_TTL_SECONDS=2", "COPILOT_LLM_PROVIDER=mock", "MCP_CREATE_CLIENT_AUDIT_PATH="+auditPath)
 	command.Stdout, command.Stderr = logFile, logFile
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
@@ -169,6 +193,63 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		}
 		return resp.StatusCode, string(data)
 	}
+	type auditEntry struct {
+		CorrelationID string `json:"correlationId"`
+		Tool          string `json:"tool"`
+		Tenant        string `json:"tenant"`
+		Caller        string `json:"callerFingerprint"`
+		State         string `json:"state"`
+		HTTPStatus    int    `json:"httpStatus"`
+		FailureClass  string `json:"failureClass"`
+	}
+	auditChain := func(t *testing.T, id string, states ...string) auditEntry {
+		t.Helper()
+		data, err := os.ReadFile(auditPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		var last auditEntry
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			var entry auditEntry
+			if err := json.Unmarshal([]byte(line), &entry); err != nil {
+				t.Fatal(err)
+			}
+			if entry.CorrelationID != id {
+				continue
+			}
+			if entry.Tool != "create_client" || entry.Tenant != "tenant-X" || entry.Caller == "" ||
+				last.Caller != "" && last.Caller != entry.Caller {
+				t.Fatal("audit ownership or tool changed")
+			}
+			got = append(got, entry.State)
+			last = entry
+		}
+		if strings.Join(got, ",") != strings.Join(states, ",") {
+			t.Fatalf("audit states %v, want %v", got, states)
+		}
+		return last
+	}
+	defer func() {
+		for _, path := range []string{auditPath, logFile.Name(), "Go HTTP logs"} {
+			var data []byte
+			if path == "Go HTTP logs" {
+				data = []byte(goLogs.String())
+			} else {
+				var err error
+				data, err = os.ReadFile(path)
+				if err != nil {
+					t.Error(err)
+					continue
+				}
+			}
+			for _, secret := range []string{"original-officer-secret", "configured-password", "configured-service", "configured-tenant", bridgeSecret, "Alice", "Officer"} {
+				if strings.Contains(string(data), secret) {
+					t.Errorf("audit or logs disclosed credentials/PII: %s", path)
+				}
+			}
+		}
+	}()
 	propose := func(t *testing.T) (*client.Client, string, string, map[string]any) {
 		t.Helper()
 		c := connect(t, goServer.URL, "Bearer original-officer-secret", "tenant-X")
@@ -196,6 +277,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		expectedKey, expectedCard = response.Card.Key, response.Card.ID
 		mu.Unlock()
 		session := client.GetEndpoint(c).Query().Get("sessionId")
+		auditChain(t, response.Card.ID, "proposed")
 		return c, response.Card.ID, session, response.Card.Args
 	}
 	decide := func(id, session, decision string) (int, string) {
@@ -222,6 +304,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if writes.Load() != before {
 			t.Fatal("foreign approval executed a write")
 		}
+		auditChain(t, id, "proposed")
 		status, body := decide(id, session, `{"decision":"approve","args":{"officeId":99},"payload":"changed"}`)
 		if status != 200 || !strings.Contains(body, `"resourceId":42`) {
 			t.Fatalf("approval failed: %d %s", status, body)
@@ -244,6 +327,9 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if status == 200 || writes.Load() != before+1 {
 			t.Fatal("duplicate callback repeated client creation")
 		}
+		if auditChain(t, id, "proposed", "approved", "executing", "succeeded").HTTPStatus != 200 {
+			t.Fatal("Fineract success status lost")
+		}
 	})
 	t.Run("reject", func(t *testing.T) {
 		_, id, session, _ := propose(t)
@@ -256,6 +342,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if status != 403 || writes.Load() != before {
 			t.Fatal("rejected card executed")
 		}
+		auditChain(t, id, "proposed", "rejected")
 	})
 	t.Run("expired", func(t *testing.T) {
 		_, id, session, _ := propose(t)
@@ -265,6 +352,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if status != 403 || writes.Load() != before {
 			t.Fatal("expired card executed")
 		}
+		auditChain(t, id, "proposed", "expired")
 	})
 	t.Run("concurrent human approvals", func(t *testing.T) {
 		_, id, session, _ := propose(t)
@@ -285,6 +373,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if successes.Load() != 1 || writes.Load() != before+1 {
 			t.Fatal("concurrent decisions executed more than once")
 		}
+		auditChain(t, id, "proposed", "approved", "executing", "succeeded")
 	})
 	t.Run("permission revoked before execution", func(t *testing.T) {
 		c, id, session, _ := propose(t)
@@ -296,6 +385,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if status == 200 || writes.Load() != before {
 			t.Fatal("revoked permission executed a write")
 		}
+		auditChain(t, id, "proposed", "approved", "failed")
 	})
 	t.Run("originating session disconnected", func(t *testing.T) {
 		c, id, session, _ := propose(t)
@@ -306,6 +396,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if status == 200 || writes.Load() != before {
 			t.Fatal("disconnected session executed a write")
 		}
+		auditChain(t, id, "proposed", "approved", "failed")
 	})
 	t.Run("credential echo on success is refused", func(t *testing.T) {
 		_, id, session, _ := propose(t)
@@ -316,6 +407,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if status != 502 || writes.Load() != before+1 {
 			t.Fatal("credential-bearing success was exposed or retried")
 		}
+		auditChain(t, id, "proposed", "approved", "executing", "succeeded")
 	})
 	for _, status := range []int32{400, 401, 403, 409, 422, 500} {
 		t.Run(fmt.Sprintf("downstream HTTP %d remains failure", status), func(t *testing.T) {
@@ -330,6 +422,10 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 			code, _ = decide(id, session, `{"decision":"approve"}`)
 			if code != 403 || writes.Load() != before+1 {
 				t.Fatal("failed write retried")
+			}
+			entry := auditChain(t, id, "proposed", "approved", "executing", "failed")
+			if entry.HTTPStatus != int(status) || entry.FailureClass != "http_error" {
+				t.Fatal("safe Fineract failure metadata lost")
 			}
 		})
 	}

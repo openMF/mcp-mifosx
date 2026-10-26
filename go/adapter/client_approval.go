@@ -136,7 +136,7 @@ var approvalCardID = regexp.MustCompile(`^card-[a-f0-9-]{36}$`)
 // ExecuteApprovedClient is reachable only from the trusted gateway callback.
 // It fetches the immutable payload through ApprovalStore.take; even duplicate
 // or concurrent callbacks cannot claim the same action twice. Never retry writes.
-func (c *CallerClient) ExecuteApprovedClient(ctx context.Context, b *ApprovalBridge, session, cardID, ticket string) ([]byte, error) {
+func (c *CallerClient) ExecuteApprovedClient(ctx context.Context, b *ApprovalBridge, session, cardID, ticket string) (data []byte, resultErr error) {
 	call, err := callerContext(ctx)
 	if err != nil {
 		return nil, err
@@ -152,6 +152,17 @@ func (c *CallerClient) ExecuteApprovedClient(ctx context.Context, b *ApprovalBri
 	if err != nil {
 		return nil, err
 	}
+	// A successful claim means executing was durably recorded. Report a bounded,
+	// typed outcome even if the incoming callback is cancelled. Never retry the POST.
+	outcome := clientAuditOutcome{FailureClass: "invalid_claim"}
+	defer func() {
+		reportCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if _, err := b.request(reportCtx, "results/"+cardID, session, ticket, outcome); err != nil {
+			data = nil
+			resultErr = errors.New("create_client outcome could not be audited; do not retry")
+		}
+	}()
 	var claim struct {
 		Payload        string `json:"payload"`
 		IdempotencyKey string `json:"idempotency_key"`
@@ -173,9 +184,29 @@ func (c *CallerClient) ExecuteApprovedClient(ctx context.Context, b *ApprovalBri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Idempotency-Key", claim.IdempotencyKey)
 	req.Header.Set("X-Correlation-Id", cardID)
-	data, err := c.doCallerRequest(req, call)
+	data, status, err := c.doCallerRequestWithStatus(req, call)
+	outcome.HTTPStatus = status
 	if err != nil {
+		switch {
+		case status == 0:
+			outcome.FailureClass = "transport_error"
+		case status < 200 || status >= 300:
+			outcome.FailureClass = "http_error"
+		default:
+			outcome.FailureClass = "response_error"
+		}
 		return nil, err
 	}
+	// Record the actual Fineract outcome even when response screening refuses
+	// to return a body that echoes credentials. No response body enters the audit.
+	outcome.Success, outcome.FailureClass = true, ""
 	return safeCallerResponse(data, call)
+}
+
+// Correlation is the approval card ID; the idempotency key remains solely a
+// duplicate-execution safeguard. Neither the key nor payload is outcome metadata.
+type clientAuditOutcome struct {
+	Success      bool   `json:"success"`
+	HTTPStatus   int    `json:"httpStatus"`
+	FailureClass string `json:"failureClass,omitempty"`
 }

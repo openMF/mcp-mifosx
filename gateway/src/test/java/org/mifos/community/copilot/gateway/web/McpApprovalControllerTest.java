@@ -2,6 +2,13 @@
 package org.mifos.community.copilot.gateway.web;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.io.TempDir;
+import org.mifos.community.copilot.core.audit.ActionAudit;
+import org.mifos.community.copilot.core.audit.FileActionAudit;
+import java.nio.file.Path;
+import java.nio.file.Files;
 import org.mifos.community.copilot.core.approval.ApprovalStore;
 import org.mifos.community.copilot.core.auth.CallContext;
 import org.mifos.community.copilot.core.llm.LlmToolCall;
@@ -21,10 +28,19 @@ class McpApprovalControllerTest {
             {"firstname":"Alice","lastname":"Officer","officeId":1,"active":true,
              "activationDate":"2026-10-23","dateFormat":"yyyy-MM-dd","locale":"en"}
             """;
-    private final ApprovalStore store = new ApprovalStore(Duration.ofMinutes(5));
+    @TempDir Path directory;
+    private FileActionAudit audit;
+    private ApprovalStore store;
     private final CallContext owner = new CallContext("Bearer owner", "tenant", "test");
-    private final WebTestClient web = WebTestClient.bindToController(
-            new McpApprovalController(store, TOKEN, "http://localhost:1")).build();
+    private WebTestClient web;
+
+    @BeforeEach void setup() {
+        audit = new FileActionAudit(directory.resolve("audit.jsonl"));
+        store = new ApprovalStore(Duration.ofMinutes(5), audit);
+        web = WebTestClient.bindToController(new McpApprovalController(store, TOKEN, "http://localhost:1")).build();
+    }
+
+    @AfterEach void close() { audit.close(); }
 
     @Test void bridgeRequiresSeparateSecretAndExactIdentityHeaders() {
         for (String token : new String[]{"", "model-provided"}) {
@@ -61,6 +77,7 @@ class McpApprovalControllerTest {
         assertThat(store.confirm(card.cardId(), new CallContext("Bearer owner", "other", "test"), a -> true)).isEmpty();
         String ticket = store.confirm(card.cardId(), owner, a -> true).orElseThrow();
         assertThat(store.confirm(card.cardId(), owner, a -> true)).isEmpty();
+        assertThat(audit.find(card.cardId()).orElseThrow().state()).isEqualTo(ActionAudit.State.approved);
         try (var pool = Executors.newFixedThreadPool(8)) {
             var results = pool.invokeAll(IntStream.range(0, 24).mapToObj(i -> (java.util.concurrent.Callable<Boolean>) () ->
                     store.take(card.cardId(), owner, a -> ticket.equals(a.claimToken()))
@@ -69,6 +86,8 @@ class McpApprovalControllerTest {
                                 assertThat(a.idempotencyKey()).isEqualTo(card.idempotencyKey()); return true; }).orElse(false)).toList());
             assertThat(results.stream().filter(result -> { try { return result.get(); } catch (Exception e) { throw new AssertionError(e); } }).count()).isEqualTo(1);
         }
+        assertThat(audit.find(card.cardId()).orElseThrow().state()).isEqualTo(ActionAudit.State.executing);
+        assertThat(Files.readAllLines(directory.resolve("audit.jsonl"))).hasSize(3);
     }
 
     @Test void snapshotNormalizesNullArgumentsToAnImmutableEmptyMap() {
@@ -106,6 +125,43 @@ class McpApprovalControllerTest {
                 .header("X-MCP-Session-Id", "session").bodyValue(Map.of("decision", "reject"))
                 .exchange().expectStatus().isOk().expectBody().jsonPath("$.status").isEqualTo("cancelled");
         assertThat(store.confirm(id, owner, a -> true)).isEmpty();
+        assertThat(audit.find(id).orElseThrow().state()).isEqualTo(ActionAudit.State.rejected);
+    }
+
+    @Test void resultRequiresOriginalOwnerTenantSessionAndBridge() {
+        String id = propose();
+        String ticket = store.confirm(id, owner, a -> true).orElseThrow();
+        claim(id, ticket).expectStatus().isOk();
+        for (String[] identity : new String[][]{{"Bearer stranger", "tenant", "session"},
+                {"Bearer owner", "other", "session"}, {"Bearer owner", "tenant", "other"}}) {
+            web.post().uri("/copilot/api/v1/internal/mcp/results/" + id)
+                    .header("Authorization", identity[0]).header("Fineract-Platform-TenantId", identity[1])
+                    .header("X-MCP-Session-Id", identity[2]).header("X-MCP-Approval-Bridge", TOKEN)
+                    .bodyValue(Map.of("success", true, "httpStatus", 201)).exchange().expectStatus().isForbidden();
+        }
+        var before = audit.find(id).orElseThrow();
+        assertThat(before.state()).isEqualTo(ActionAudit.State.executing);
+        assertThat(before.tenant()).isEqualTo("tenant");
+        assertThat(before.callerFingerprint()).isEqualTo(owner.fingerprint());
+        for (int i = 0; i < 2; i++) {
+            web.post().uri("/copilot/api/v1/internal/mcp/results/" + id)
+                    .header("Authorization", "Bearer owner").header("Fineract-Platform-TenantId", "tenant")
+                    .header("X-MCP-Session-Id", "session").header("X-MCP-Approval-Bridge", TOKEN)
+                    .bodyValue(Map.of("success", true, "httpStatus", 201)).exchange().expectStatus().isOk();
+        }
+        assertThat(audit.find(id).orElseThrow().state()).isEqualTo(ActionAudit.State.succeeded);
+    }
+
+    @Test void proposalAndClaimFailClosedWhenAuditUnavailable() {
+        String id = propose();
+        String ticket = store.confirm(id, owner, a -> true).orElseThrow();
+        audit.close();
+        claim(id, ticket).expectStatus().is5xxServerError();
+        assertThatThrownBy(() -> store.take(id, owner, a -> true)).hasMessage("Action audit unavailable");
+        web.post().uri("/copilot/api/v1/internal/mcp/proposals")
+                .header("Authorization", "Bearer owner").header("Fineract-Platform-TenantId", "tenant")
+                .header("X-MCP-Session-Id", "session").header("X-MCP-Approval-Bridge", TOKEN)
+                .bodyValue(Map.of("payload", PAYLOAD)).exchange().expectStatus().is5xxServerError();
     }
 
     private String propose() {
