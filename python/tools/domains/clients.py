@@ -270,9 +270,9 @@ def delete_client(client_id: int):
     if "error" in check:
         return check
 
-    # Validate client is in deletable state (pending only)
+    # Validate client is in deletable state (pending only, Fineract rejects any other status)
     status = check.get("status", {}).get("value", "").lower()
-    if "pending" not in status and "closed" not in status:
-        return {"error": f"Client {client_id} is in status '{status}'. Only pending/closed clients can be deleted."}
+    if "pending" not in status:
+        return {"error": f"Client {client_id} is in status '{status}'. Only pending clients can be deleted."}
 
     return fineract_client.execute_delete(f"clients/{client_id}")
