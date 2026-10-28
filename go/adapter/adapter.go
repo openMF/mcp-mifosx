@@ -124,6 +124,12 @@ func safeCallerResponse(data []byte, call CallContext) ([]byte, error) {
 // doCallerRequest shares transport safeguards with permission discovery. Its raw
 // response must remain internal: authentication responses contain credentials.
 func (c *CallerClient) doCallerRequest(req *http.Request, call CallContext) ([]byte, error) {
+	data, _, err := c.doCallerRequestWithStatus(req, call)
+	return data, err
+}
+
+// Status is safe result metadata; downstream bodies and errors remain private.
+func (c *CallerClient) doCallerRequestWithStatus(req *http.Request, call CallContext) ([]byte, int, error) {
 	req.Header.Set("Authorization", call.authorization)
 	req.Header.Set("fineract-platform-tenantid", call.tenant)
 	req.Header.Set("Accept", "application/json")
@@ -134,20 +140,20 @@ func (c *CallerClient) doCallerRequest(req *http.Request, call CallContext) ([]b
 	httpClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("Fineract request failed")
+		return nil, 0, fmt.Errorf("Fineract request failed")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Downstream bodies and transport errors may echo credentials. Never
 		// surface them or retry the call with configured credentials.
-		return nil, fmt.Errorf("Fineract request failed (HTTP %d)", resp.StatusCode)
+		return nil, resp.StatusCode, fmt.Errorf("Fineract request failed (HTTP %d)", resp.StatusCode)
 	}
 	const maxCallerResponse = 10 << 20 // 10 MiB, plus one byte to detect overflow.
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxCallerResponse+1))
 	if err != nil || len(data) > maxCallerResponse {
-		return nil, fmt.Errorf("could not read Fineract response")
+		return nil, resp.StatusCode, fmt.Errorf("could not read Fineract response")
 	}
-	return data, nil
+	return data, resp.StatusCode, nil
 }
 
 // New preserves the configured-identity constructor for existing local users.
