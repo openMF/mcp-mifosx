@@ -22,6 +22,9 @@ credentials:
     name: agent-decision
     owner: super@openfn.org
 
+# Adaptors are pinned to exact versions, so every run uses the code that was
+# reviewed. Renovate opens a PR when a new version is released (renovate.json);
+# keep exact versions when adding a job: Lightning's editor defaults to latest.
 workflows:
   # -------------------------------------------------------------------------
   # Workflow 1: Auto underwriting (triggered by gateway POST /api/loans/submit)
@@ -31,7 +34,7 @@ workflows:
     jobs:
       normalize-application:
         name: Normalize Application
-        adaptor: "@openfn/language-common@latest"
+        adaptor: "@openfn/language-common@3.3.5"
         enabled: true
         body: |
           // state.data is the webhook body from the Agentic Gateway
@@ -94,7 +97,7 @@ workflows:
 
       notify-gathering:
         name: Notify Gateway – GATHERING_DATA
-        adaptor: "@openfn/language-http@latest"
+        adaptor: "@openfn/language-http@7.3.3"
         enabled: true
         body: |
           // Retried with backoff: one failed request (a DNS or network blip)
@@ -130,7 +133,7 @@ workflows:
 
       fetch-bank-and-credit:
         name: Fetch Bank + Credit (parallel simulation)
-        adaptor: "@openfn/language-common@latest"
+        adaptor: "@openfn/language-common@3.3.5"
         enabled: true
         body: |
           // In production: use language-http against real bank / CIBIL / Experian APIs
@@ -159,7 +162,7 @@ workflows:
 
       process-documents:
         name: Process Documents (CURP vision)
-        adaptor: "@openfn/language-http@latest"
+        adaptor: "@openfn/language-http@7.3.3"
         enabled: true
         body: |
           // CURP constancias (RENAPO) are read by a local Ollama vision model, then validated
@@ -332,7 +335,7 @@ workflows:
 
       specialist-assessments:
         name: Specialist Assessments (Income / Expense / Credit)
-        adaptor: "@openfn/language-common@latest"
+        adaptor: "@openfn/language-common@3.3.5"
         enabled: true
         body: |
           fn(state => {
@@ -373,7 +376,7 @@ workflows:
       ollama-decide:
         # The key stays ollama-decide: the job's id in Lightning is derived from it.
         name: Decision (agent-decision + guardrail)
-        adaptor: "@openfn/language-http@latest"
+        adaptor: "@openfn/language-http@7.3.3"
         credential: super@openfn.org-agent-decision
         enabled: true
         body: |
@@ -528,7 +531,7 @@ workflows:
 
       callback-gateway:
         name: Callback Gateway – PENDING_HUMAN_REVIEW
-        adaptor: "@openfn/language-http@latest"
+        adaptor: "@openfn/language-http@7.3.3"
         enabled: true
         body: |
           // Retried with backoff: one failed request (a DNS or network blip)
@@ -632,7 +635,7 @@ workflows:
     jobs:
       prepare-review:
         name: Prepare Review Context
-        adaptor: "@openfn/language-common@latest"
+        adaptor: "@openfn/language-common@3.3.5"
         enabled: true
         body: |
           fn(state => {
@@ -679,7 +682,7 @@ workflows:
 
       create-fineract-loan:
         name: Create + Approve Loan in Fineract
-        adaptor: "@openfn/language-http@latest"
+        adaptor: "@openfn/language-http@7.3.3"
         credential: super@openfn.org-fineract
         enabled: true
         body: |
@@ -927,7 +930,7 @@ workflows:
 
       callback-fineract-done:
         name: Callback Gateway – COMPLETED
-        adaptor: "@openfn/language-http@latest"
+        adaptor: "@openfn/language-http@7.3.3"
         enabled: true
         body: |
           // Retried with backoff, like the other callback jobs (see

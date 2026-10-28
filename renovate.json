@@ -2,5 +2,27 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "config:recommended"
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "OpenFn adaptors of the jobs in the OpenFn project spec",
+      "managerFilePatterns": [
+        "/^agentic-banking-openfn/openfn/project\\.yaml$/"
+      ],
+      "matchStrings": [
+        "adaptor: \"(?<depName>@openfn/language-[a-z0-9-]+)@(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "OpenFn adaptors: one PR for all of them",
+      "matchPackageNames": [
+        "@openfn/language-*"
+      ],
+      "groupName": "OpenFn adaptors"
+    }
   ]
 }
