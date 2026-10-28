@@ -5,11 +5,13 @@ on:
     branches: ['main']
     paths:
       - 'agentic-mifos-sandbox/**'
+      - 'agentic-banking-openfn/openfn/project.yaml'
       - '.github/workflows/sandbox-ci.yml'
   pull_request:
     branches: ['main']
     paths:
       - 'agentic-mifos-sandbox/**'
+      - 'agentic-banking-openfn/openfn/project.yaml'
       - '.github/workflows/sandbox-ci.yml'
 
 permissions:
@@ -35,6 +37,32 @@ jobs:
         run: |
           docker compose --profile ollama --profile agents config --format json > "$RUNNER_TEMP/compose.json"
           python3 scripts/check-hardening.py < "$RUNNER_TEMP/compose.json"
+
+  adaptors:
+    name: OpenFn adaptors pinned
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Every job's adaptor must be an exact version (@latest, a range or no
+      # version installs whatever npm serves), written in the form
+      # renovate.json updates. yq reads the values themselves, so a comment
+      # on the line cannot hide one.
+      - name: Check the adaptor versions
+        run: |
+          spec=agentic-banking-openfn/openfn/project.yaml
+          adaptors=$(yq '.workflows[].jobs[].adaptor' "$spec")
+          jobs=$(grep -c . <<< "$adaptors" || true)
+          unpinned=$(grep -vxE '@openfn/language-[a-z0-9-]+@[0-9]+\.[0-9]+\.[0-9]+' <<< "$adaptors" || true)
+          renovate=$(grep -cxE '\s*adaptor: "@openfn/language-[a-z0-9-]+@[0-9]+\.[0-9]+\.[0-9]+"' "$spec" || true)
+          if [ "$jobs" -eq 0 ] || [ -n "$unpinned" ] || [ "$renovate" -ne "$jobs" ]; then
+            echo "::error file=$spec::Pin each job's adaptor to an exact version, written as adaptor: \"@openfn/language-<name>@x.y.z\""
+            echo "jobs: $jobs, written in Renovate's form: $renovate"
+            if [ -n "$unpinned" ]; then echo "not pinned: $unpinned"; fi
+            exit 1
+          fi
 
   agent-runner:
     name: Agent runner tests

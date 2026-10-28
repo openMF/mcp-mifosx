@@ -390,7 +390,7 @@ services:
       LIGHTNING_URL: http://lightning:4000
       LIGHTNING_ADMIN_EMAIL: ${LIGHTNING_ADMIN_EMAIL}
       LIGHTNING_API_TOKEN_FILE: /state/lightning-api-token
-      OPENFN_PROJECT_SPEC: /spec/project.yaml
+      OPENFN_PROJECT_SPEC: /spec/openfn/project.yaml
       OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
       OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
       # Agent service users and their roles (fineract-rbac.json).
@@ -405,7 +405,9 @@ services:
       AGENT_DECISION_TOKEN: ${AGENT_DECISION_TOKEN:?run scripts/gen-secrets.sh}
     volumes:
       - bootstrap-state:/state:ro
-      - ../agentic-banking-openfn/openfn/project.yaml:/spec/project.yaml:ro
+      # The folder, not the file: Docker Desktop cannot start a container
+      # again once a file mounted on its own was replaced (git pull does).
+      - ../agentic-banking-openfn/openfn:/spec/openfn:ro
       - ./fineract-rbac.json:/spec/fineract-rbac.json:ro
     user: "1000:1000"
     networks: [core, openfn]
