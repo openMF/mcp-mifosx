@@ -50,10 +50,17 @@ public class OpenFnClient {
     public OpenFnTriggerResult triggerWebhook(String webhookUrl, Map<String, Object> payload) {
         log.info("Triggering OpenFn webhook {} with workflowId={}",
                 webhookUrl, payload.get("workflowId"));
+        String apiKey = props.getWebhooks().getApiKey();
         try {
             ResponseEntity<Map<String, Object>> response = restClient.post()
                     .uri(webhookUrl)
                     .contentType(MediaType.APPLICATION_JSON)
+                    // Triggers with an API-key auth method refuse requests without it.
+                    .headers(h -> {
+                        if (apiKey != null && !apiKey.isBlank()) {
+                            h.set("x-api-key", apiKey);
+                        }
+                    })
                     .body(payload)
                     .retrieve()
                     .toEntity(new ParameterizedTypeReference<>() {});
