@@ -18,6 +18,7 @@ It shows how agents can take part in lending while the rules, the guardrails and
 | | `lightning-setup` | One-shot: migrations, admin user, API token for the bootstrap | — | default |
 | | `lightning-worker` | Runs the OpenFn jobs | — | default |
 | | `bootstrap` | One-shot: loan product, agent users and roles in Fineract, Lightning credentials, the OpenFn project | — | default |
+| | `lightning-webhook-auth` | One-shot: makes both webhook triggers require the gateway's API key | — | default |
 | | `state-init` | One-shot: hands the bootstrap's state volume to an unprivileged user | — | default |
 | Loan API | `gateway` | Agentic gateway: loan API, case state, human review | 8080 | default |
 | Commercial | `los` | Loan origination service: opportunities before they reach Fineract ([los/README.md](los/README.md)) | 8090 | default |
@@ -78,7 +79,7 @@ flowchart LR
 
 Each step with the status the gateway reports for the case:
 
-1. **Submit**: `POST /api/loans/submit` (`OPENFN_TRIGGERED`). The gateway keeps the case and starts the OpenFn workflow through a webhook.
+1. **Submit**: `POST /api/loans/submit` (`OPENFN_TRIGGERED`). The gateway keeps the case and starts the OpenFn workflow through a webhook, sending its API key (`x-api-key`).
 2. **Gather**: the application is normalised and the bank and credit data fetched; both are simulated in the sandbox (`GATHERING_DATA`).
 3. **Documents**: a vision model reads and validates the CURP when a document is sent. The gateway reads the document paths from its own file system and the sandbox mounts none, so this step is skipped here; the identity document agent is planned.
 4. **Assess**: the specialist assessments (income, expense, credit) give the rules' recommendation.
@@ -133,7 +134,7 @@ flowchart LR
 |---|---|---|
 | `fineract-db` | yes | Fineract, its database |
 | `core` | yes | Fineract and its API clients: web app, worker, bootstrap, MCP servers |
-| `lightning-db` | yes | Lightning, its setup job, its database |
+| `lightning-db` | yes | Lightning, its setup jobs, its database |
 | `openfn` | yes | Lightning, worker, gateway, bootstrap |
 | `llm` | yes | Ollama, its download job, the worker |
 | `agents-llm` | yes | Ollama, the agents |
@@ -207,10 +208,11 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 **Rotating secrets**
 
 - Agent passwords (`FINERACT_AGENT_*_PASSWORD`), agent tokens (`AGENT_*_TOKEN`) and `OPENFN_CALLBACK_SECRET`: change the value in `.env` and run `docker compose --profile ollama up -d`. The bootstrap updates the agents' Fineract users and replaces the agents' Lightning credentials, including the write-back job's `fineract`. An edit made to one of them in Lightning lasts until its settings in `.env` change.
+- `OPENFN_WEBHOOK_API_KEY`: the same. `lightning-webhook-auth` replaces the triggers' key, and the gateway restarts with the new one.
 - **The database passwords and Lightning's admin password cannot be rotated through `.env`**: they are set when the volumes are first created. Changing them later breaks the connection (databases) or changes nothing (Lightning admin). Change them inside Postgres and Lightning first, or reset the volumes.
 - `./scripts/gen-secrets.sh` fills only empty values: blank one and run it again to generate a new value.
 
-**Updating**: `git pull`, then `docker compose --profile ollama up -d --build --wait`. Volumes are kept.
+**Updating**: `git pull`, `./scripts/gen-secrets.sh` (it adds any secret a new version needs), then `docker compose --profile ollama up -d --build --wait`. Volumes are kept.
 
 **Resetting**
 
@@ -227,6 +229,7 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_li
 - **After a reboot (Docker Desktop on WSL), `fineract-db`, `lightning-db` or `web-app` exit with code 127**: Docker started them before WSL mounted the folder they read files from. Run `docker compose --profile ollama up -d` again.
 - **After a `git pull`, a container fails to start with `error mounting ... no such file or directory`** (Docker Desktop): one of the files mounted on their own (`fineract-rbac.json`, the database init scripts, the web app's nginx template) was replaced, and the container still points at the old one. Recreate it, e.g. `docker compose up -d --force-recreate bootstrap`.
 - **A case stays in `LLM_DECISION`, or Ollama's log shows a model load that never finishes**: there is not enough free memory for the model. Free memory (or stop services you do not need) and submit again; the case itself turns `FAILED` after 15 minutes and the rules decide when the agent does not answer in time.
+- **A submit returns 500, and the gateway log shows `OpenFn webhook trigger failed: 401` or `404 ... Webhook not found`**: the gateway's API key is not the triggers' key. Run `docker compose --profile ollama up -d`, which applies `OPENFN_WEBHOOK_API_KEY` from `.env` to both.
 - **An agent run never returns in a script**: stdin is open; add `-T` and `< /dev/null`.
 - **`docker compose up` fails on the first start**: read `docker compose logs lightning-setup bootstrap`; the bootstrap stops with the request that failed.
 
@@ -272,7 +275,7 @@ This is a local evaluation sandbox. The model below says what protects what toda
 | A compromised container moves sideways | Segmented networks: each database only from its application, agents only to their MCP server and Ollama | The worker is on `core` (the write-back job) |
 | Data leaves the machine | Fineract, the MCP servers and the agents have no route out | The web app, gateway and LOS (published ports), and Lightning, the worker and Ollama (downloads), do |
 | Container escape or privilege escalation | Read-only file systems, no capabilities, no privilege escalation, non-root users, process limits; root only in two one-shot jobs without a network | — |
-| Spoofed callbacks or agent calls | `X-OpenFn-Secret` on the gateway callbacks; a bearer token per agent runner | The Lightning webhook triggers (7.4) |
+| Spoofed callbacks or agent calls | `X-OpenFn-Secret` on the gateway callbacks; a bearer token per agent runner; an API key on the Lightning webhook triggers (`[REDACTED]` in run data) | — |
 | Exhausted memory or processes | Memory and process limits; one case at a time per agent with a timeout; the 15-minute stall check | — |
 | Supply chain | Images pinned by tag or digest, Pi from a lockfile, OpenFn adaptors pinned to exact versions (unpinned ones refused in CI), Renovate updates, images built in CI | The adaptors' own dependencies (7.4) |
 
@@ -283,7 +286,7 @@ This is a local evaluation sandbox. The model below says what protects what toda
 - **The OpenFn worker is on `core`**, because the write-back job calls Fineract directly (as `agent-writeback`)
 - **Services with a published port have outbound internet**: Docker publishes ports only from networks with a route out
 - **The gateway and LOS APIs have no authentication** (127.0.0.1 only), and the LOS trusts `X-Actor` as sent
-- **The Lightning webhook triggers have no authentication**, and their ids are in this compose file: any local process can start a workflow directly, bypassing the gateway
+- **The webhook API key is set through Lightning's internal functions** (`lightning-webhook-auth`), as Lightning has no API for it: a Lightning upgrade that changes them makes the job, and so `up`, fail. On a new sandbox the triggers are open for the few seconds before the job's first run
 - **OpenFn adaptors are installed from npm on first use**: pinned to exact versions that Renovate bumps, but without a lockfile, so an adaptor's own dependencies are resolved when it is installed, and the worker needs a route to npm
 - **No TLS between services**, and Fineract's self-signed certificate is not verified
 - **Application data and the callback secret are stored in Lightning's run data** (the webhook bodies)
