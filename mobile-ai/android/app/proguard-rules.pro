@@ -8,11 +8,6 @@
 -keep class com.facebook.react.** { *; }
 -keep class com.facebook.hermes.** { *; }
 
-# MobX (reflection-based)
--keepclassmembers class * {
-    @mobx.* <fields>;
-}
-
 # Keep native method names for JNI
 -keepclasseswithmembernames class * {
     native <methods>;
