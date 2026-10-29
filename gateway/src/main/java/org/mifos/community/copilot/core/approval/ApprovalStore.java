@@ -8,6 +8,8 @@
 package org.mifos.community.copilot.core.approval;
 
 import org.mifos.community.copilot.core.auth.CallContext;
+import org.mifos.community.copilot.core.audit.ActionAudit;
+import org.mifos.community.copilot.core.audit.ActionAudit.State;
 import org.mifos.community.copilot.core.llm.LlmToolCall;
 
 import java.time.Duration;
@@ -27,9 +29,56 @@ public final class ApprovalStore {
 
     private final Map<String, PendingApproval> pending = new ConcurrentHashMap<>();
     private final Duration ttl;
+    private final ActionAudit audit;
 
+    /** Legacy gateway approvals only. MCP proposals require an explicit durable audit store. */
     public ApprovalStore(Duration ttl) {
+        this(ttl, null);
+    }
+
+    public ApprovalStore(Duration ttl, ActionAudit audit) {
         this.ttl = ttl;
+        this.audit = audit;
+    }
+
+    private boolean audited(PendingApproval approval) {
+        return "create_client".equals(approval.toolCall().name()) && approval.session().containsKey("mcpSessionId");
+    }
+
+    private ActionAudit audit() {
+        if (audit == null) { throw new IllegalStateException("Action audit unavailable"); }
+        return audit;
+    }
+
+    private void transition(PendingApproval approval, State state) {
+        if (audited(approval)) { audit().transition(approval.cardId(), state, null); }
+    }
+
+    /** A session reference is safe to persist; the live transport ID and decision ticket are not retained. */
+    private static String sessionReference(String session) {
+        return new CallContext(session, "", "").fingerprint();
+    }
+
+    public void complete(String cardId, CallContext context, String session, ActionAudit.Outcome outcome) {
+        var entry = audit().find(cardId).orElseThrow(() -> new IllegalStateException("Unknown action"));
+        if (!context.hasCredential() || !entry.callerFingerprint().equals(context.fingerprint())
+                || !entry.tenant().equals(context.tenantId()) || !entry.sessionReference().equals(sessionReference(session))) {
+            throw new IllegalArgumentException("Action ownership mismatch");
+        }
+        audit().transition(cardId, outcome.success() ? State.succeeded : State.failed, outcome);
+    }
+
+    /** A callback blocked before the claim is known not to have executed. After claim,
+     * a lost callback is ambiguous: preserve executing rather than inventing a result. */
+    public void callbackBlocked(String cardId, CallContext context, String session) {
+        pending.computeIfPresent(cardId, (id, approval) -> {
+            if (!owned(approval, context) || !session.equals(approval.session().get("mcpSessionId"))) {
+                throw new IllegalArgumentException("Action ownership mismatch");
+            }
+            if (approval.claimToken() == null) { return approval; }
+            audit().transition(cardId, State.failed, new ActionAudit.Outcome(false, 0, "execution_blocked"));
+            return null;
+        });
     }
 
     /** Create and register a card for this tool call, bound to the asking identity. */
@@ -46,6 +95,12 @@ public final class ApprovalStore {
                 Instant.now().plus(ttl),
                 rows == null ? java.util.Map.of() : java.util.Map.copyOf(rows),
                 context.session());
+        if (audited(approval)) {
+            String now = Instant.now().toString();
+            audit().create(new ActionAudit.Entry(approval.cardId(), "create_client", context.tenantId(),
+                    approval.securityFingerprint(), sessionReference((String) approval.session().get("mcpSessionId")),
+                    State.proposed, now, now, null, null));
+        }
         pending.put(approval.cardId(), approval);
         return approval;
     }
@@ -56,7 +111,7 @@ public final class ApprovalStore {
      * retried execution stays exactly-once even if the failed attempt partially ran.
      */
     public void restore(PendingApproval approval) {
-        if (!approval.isExpired(Instant.now())) {
+        if (!audited(approval) && !approval.isExpired(Instant.now())) {
             pending.put(approval.cardId(), approval);
         }
     }
@@ -71,7 +126,7 @@ public final class ApprovalStore {
      * pointing at a call the history has already settled.
      */
     public void discardFor(String conversationId, CallContext context) {
-        pending.values().removeIf((approval) -> approval.conversationId().equals(conversationId)
+        pending.values().removeIf((approval) -> !audited(approval) && approval.conversationId().equals(conversationId)
                 && approval.securityFingerprint().equals(context.fingerprint()));
     }
 
@@ -88,19 +143,25 @@ public final class ApprovalStore {
 
     public Optional<PendingApproval> take(String cardId, CallContext context,
             java.util.function.Predicate<PendingApproval> additionalChecks) {
-        PendingApproval approval = pending.get(cardId);
-        if (approval == null) {
-            return Optional.empty();
-        }
-        if (approval.isExpired(Instant.now())) {
-            pending.remove(cardId, approval);
-            return Optional.empty();
-        }
-        if (!owned(approval, context) || !additionalChecks.test(approval)) {
-            return Optional.empty(); // Different identity, so the card stays for its owner.
-        }
-        // Two-arg remove keeps consumption atomic against a concurrent take of the same card.
-        return pending.remove(cardId, approval) ? Optional.of(approval) : Optional.empty();
+        return consume(cardId, context, additionalChecks, State.executing);
+    }
+
+    public Optional<PendingApproval> reject(String cardId, CallContext context,
+            java.util.function.Predicate<PendingApproval> additionalChecks) {
+        return consume(cardId, context, additionalChecks, State.rejected);
+    }
+
+    private Optional<PendingApproval> consume(String cardId, CallContext context,
+            java.util.function.Predicate<PendingApproval> checks, State state) {
+        var taken = new java.util.concurrent.atomic.AtomicReference<PendingApproval>();
+        pending.computeIfPresent(cardId, (id, approval) -> {
+            if (approval.isExpired(Instant.now())) { transition(approval, State.expired); return null; }
+            if (!owned(approval, context) || !checks.test(approval)) { return approval; }
+            transition(approval, state); // Persistence failure leaves the card unconsumed.
+            taken.set(approval);
+            return null;
+        });
+        return Optional.ofNullable(taken.get());
     }
 
     /** Mark a human decision before handing a single-use claim ticket to an executor.
@@ -109,11 +170,12 @@ public final class ApprovalStore {
             java.util.function.Predicate<PendingApproval> additionalChecks) {
         java.util.concurrent.atomic.AtomicReference<String> ticket = new java.util.concurrent.atomic.AtomicReference<>();
         pending.computeIfPresent(cardId, (id, approval) -> {
-            if (approval.isExpired(Instant.now())) { return null; }
+            if (approval.isExpired(Instant.now())) { transition(approval, State.expired); return null; }
             if (!owned(approval, context) || !additionalChecks.test(approval) || approval.claimToken() != null) {
                 return approval;
             }
             String token = UUID.randomUUID().toString();
+            transition(approval, State.approved);
             ticket.set(token);
             return new PendingApproval(approval.cardId(), approval.conversationId(), approval.toolCall(),
                     approval.humanSummary(), approval.idempotencyKey(), approval.securityFingerprint(),
@@ -129,6 +191,11 @@ public final class ApprovalStore {
 
     private void sweep() {
         Instant now = Instant.now();
-        pending.values().removeIf((approval) -> approval.isExpired(now));
+        for (String id : pending.keySet()) {
+            pending.computeIfPresent(id, (key, approval) -> {
+                if (approval.isExpired(now)) { transition(approval, State.expired); return null; }
+                return approval;
+            });
+        }
     }
 }

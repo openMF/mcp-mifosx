@@ -249,3 +249,37 @@ The gateway also hosts Go MCP client-creation proposals in the existing `Approva
 The adapter uses the standard action-card fields and TTL. Its separate human decision
 route is `/copilot/api/v1/mcp/actions/{cardId}/decision`; it does not enter `AgentLoop`
 or expose approval as an LLM tool.
+
+The existing `card_id` is the canonical correlation ID, including Fineract's
+`X-Correlation-Id`. The separate `cop-…` idempotency key still prevents duplicate
+execution; it is not the correlation ID. Only this Go MCP `create_client` flow is audited.
+
+`MCP_CREATE_CLIENT_AUDIT_PATH` selects a durable append-only JSONL journal (default:
+`./data/create-client-audit.jsonl`, relative to the gateway's working directory).
+Mount its directory on persistent storage in production, restrict directory access,
+and retain the journal according to your audit policy. Each append is flushed before
+the corresponding approval transition becomes effective. The journal has owner-only
+permissions when created and an exclusive process lock; use one gateway instance per
+journal. Do not rotate or replace the active file. No database or telemetry service is needed.
+
+Records contain `correlationId`, tool, original tenant, the existing SHA-256 caller/tenant
+fingerprint, a hashed session reference, timestamps, state, HTTP status, and an
+allow-listed failure classification. States are `proposed`, `approved`, `rejected`,
+`expired`, `executing`, `succeeded`, and `failed`. No authorization, decision tokens,
+idempotency keys, client arguments, names, or response bodies are persisted. Logs name
+only the correlation ID, tool, and state. Keep Spring Web request-body logging disabled.
+
+Journal failure blocks proposal, confirmation, and the execution claim. If recording
+the outcome fails after Fineract has been called, Go returns an explicit audit error
+and never retries the write. Lost callbacks after a claim leave `executing` for manual
+reconciliation; transport/read failures also cannot prove whether Fineract committed.
+A callback refused before the claim records `failed` with `execution_blocked`.
+HTTP success is recorded even if credential screening refuses to return the response.
+
+`ActionAudit.find(cardId)` provides internal retrieval, including after restart; no
+admin query API is exposed. Pending approvals remain in memory and are not restored.
+Expiry is recorded when observed by a decision/claim or the existing lazy sweep.
+A torn or unreadable journal fails closed and requires operator recovery. The plugin's
+`mcp_tool_execution_log` migration currently has no writer or gateway connection;
+an adapter to that table, shared storage, retention/rotation, and automatic reconciliation
+are deferred behind the small `ActionAudit` interface.

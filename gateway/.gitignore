@@ -11,3 +11,6 @@
 # Runtime / local
 *.log
 keystore.jks
+
+# Durable local MCP action journal (mount separately in production)
+/data/
