@@ -1,3 +1,4 @@
+import math
 from typing import Any, Dict
 
 
@@ -13,7 +14,12 @@ def _require_positive_int(params: Dict[str, Any], name: str) -> None:
 
 def _require_positive_number(params: Dict[str, Any], name: str) -> None:
     value = params.get(name)
-    if not isinstance(value, (int, float)) or value <= 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value <= 0
+    ):
         raise ValidationError(f"{name} must be positive")
 
 
@@ -62,3 +68,9 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
 
     if tool_name == "record_journal_entry":
         _require_non_blank_str(params, "currencyCode")
+
+    if tool_name == "deposit":
+        _require_positive_number(params, "amount")
+
+    if tool_name == "withdraw":
+        _require_positive_number(params, "amount")
