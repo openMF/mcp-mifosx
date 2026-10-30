@@ -124,3 +124,28 @@ def get_savings_product(product_id: int):
             for c in data.get("charges", [])
         ],
     }
+
+
+def product_required(kind: str) -> dict:
+    """Error for a new loan or savings account without a productId, listing the products Fineract has.
+
+    kind is "loan" or "savings". Product ids are tenant-specific, so there is no id that is
+    right everywhere and the configured products are returned instead of guessing one.
+    """
+    if kind == "loan":
+        response, key = list_loan_products.func(), "loanProducts"
+    else:
+        response, key = list_savings_products.func(), "savingsProducts"
+    if not isinstance(response, dict) or key not in response:
+        reason = response.get("error") if isinstance(response, dict) else response
+        return {"error": f"productId is required for a new {kind} account, and the {kind} products could "
+                         f"not be loaded: {reason}"}
+    options = [{"id": p["productId"], "name": p["name"]} for p in response[key] if p.get("productId") is not None]
+    if not options:
+        return {"error": f"productId is required for a new {kind} account, but no {kind} products are "
+                         f"configured. Add a {kind} product in Fineract first."}
+    # The MCP wrapper (safe_tool) passes on only the message, so the options have to be in it
+    listed = "; ".join(f"{o['id']} = {o['name']}" for o in options)
+    return {"error": f"productId is required for a new {kind} account. Ask the user which {kind} product "
+                     f"applies: {listed}.",
+            f"{kind}_products": options}
