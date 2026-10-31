@@ -8,6 +8,7 @@ from typing import Optional
 
 from langchain_core.tools import tool
 
+from tools.domains.products import product_required
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
 
@@ -32,9 +33,13 @@ def get_savings_transactions(account_id: int):
 # --- SAVINGS LIFECYCLE OPERATIONS (WRITE) ---
 
 @tool
-def create_savings_account(client_id: int, product_id: int = 1):
-    """Answers: 'Open a new savings account for this client'"""
+def create_savings_account(client_id: int, product_id: Optional[int] = None):
+    """Answers: 'Open a new savings account for this client'
+    product_id has to be one of this tenant's savings products; without it nothing is created
+    and the error lists them."""
     print(f"[Tool] Opening Savings Account for Client #{client_id}...")
+    if product_id is None:
+        return product_required("savings")
     today = get_fineract_today()
 
     payload = {

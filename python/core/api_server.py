@@ -71,12 +71,12 @@ class LoanCreate(BaseModel):
     client_id: int
     principal: float
     months: int
-    product_id: int = 1
+    product_id: Optional[int] = None
 
 class GroupLoanCreate(BaseModel):
     principal: float
     months: int
-    product_id: int = 1
+    product_id: Optional[int] = None
 
 class LoanDisburse(BaseModel):
     amount: Optional[float] = None
@@ -86,7 +86,7 @@ class LoanReject(BaseModel):
 
 class SavingsCreate(BaseModel):
     client_id: int
-    product_id: int = 1
+    product_id: Optional[int] = None
 
 class Transaction(BaseModel):
     amount: float
