@@ -5,7 +5,7 @@
 #
 #   ./scripts/gen-secrets.sh   # creates .env with generated passwords and keys
 #   docker compose up -d
-#   open http://localhost:4200   Mifos X web app (mifos / password)
+#   open http://localhost:4200   Mifos X web app (mifos / FINERACT_ADMIN_PASSWORD in .env)
 #   open http://localhost:4000   OpenFn Lightning (LIGHTNING_ADMIN_* in .env)
 #   curl http://localhost:8080/actuator/health   Agentic gateway (loan API)
 #   open http://localhost:8090/docs   LOS: commercial opportunities (los/README.md)
@@ -385,7 +385,9 @@ services:
     environment:
       FINERACT_URL: https://fineract:8443/fineract-provider/api/v1
       FINERACT_USERNAME: ${FINERACT_USERNAME:-mifos}
-      FINERACT_PASSWORD: ${FINERACT_PASSWORD:-password}
+      FINERACT_PASSWORD: ${FINERACT_ADMIN_PASSWORD:?run scripts/gen-secrets.sh}
+      # The image's default, tried only to change it to FINERACT_ADMIN_PASSWORD.
+      FINERACT_DEFAULT_PASSWORD: password
       FINERACT_TENANT: default
       LIGHTNING_URL: http://lightning:4000
       LIGHTNING_ADMIN_EMAIL: ${LIGHTNING_ADMIN_EMAIL}
@@ -414,6 +416,72 @@ services:
     mem_limit: 128m
     pids_limit: 128
     restart: "no"
+
+  # Makes both webhook triggers require the gateway's API key (x-api-key).
+  # Lightning has no API for a trigger's auth, so this runs Lightning's own
+  # code, as lightning-setup does, once the bootstrap has provisioned the
+  # triggers. Safe to run on every `up`: a key changed in .env replaces the
+  # stored one, and it fails unless both triggers end up with exactly this
+  # key, so a Lightning upgrade that changes these functions shows here.
+  lightning-webhook-auth:
+    <<: *lightning
+    depends_on:
+      bootstrap:
+        condition: service_completed_successfully
+    environment:
+      <<: *lightning-env
+      LIGHTNING_ADMIN_PASSWORD: ""
+      OPENFN_WEBHOOK_API_KEY: ${OPENFN_WEBHOOK_API_KEY:?run scripts/gen-secrets.sh}
+      OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
+      OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
+    command:
+      - /app/bin/lightning
+      - eval
+      - |
+        {:ok, _} = Application.ensure_all_started(:tzdata)
+        alias Lightning.{Repo, WebhookAuthMethods}
+        alias Lightning.Workflows.Trigger
+        key = System.fetch_env!("OPENFN_WEBHOOK_API_KEY")
+        trigger_ids = Enum.map(~w(OPENFN_TRIGGER_LOAN_SUBMIT OPENFN_TRIGGER_LOAN_REVIEW), &System.fetch_env!/1)
+        {:ok, _, _} =
+          Lightning.Setup.with_minimum_setup(fn ->
+            actor = Lightning.Accounts.get_user_by_email(System.fetch_env!("LIGHTNING_ADMIN_EMAIL"))
+            triggers = Enum.map(trigger_ids, &(Repo.get!(Trigger, &1) |> Repo.preload(workflow: :project)))
+            project = hd(triggers).workflow.project
+            # One transaction: a failure keeps the key and links as they were.
+            {:ok, _} =
+              Repo.transaction(fn ->
+                existing = Enum.find(WebhookAuthMethods.list_for_project(project), &(&1.name == "gateway"))
+                method =
+                  if existing && existing.auth_type == :api && existing.api_key == key do
+                    IO.puts("Webhook API key unchanged")
+                    existing
+                  else
+                    # A method's key cannot be updated, and its name is unique
+                    # in the project: replace it.
+                    if existing, do: {:ok, _} = WebhookAuthMethods.delete_auth_method(existing)
+                    {:ok, method} =
+                      WebhookAuthMethods.create_auth_method(
+                        %{"name" => "gateway", "auth_type" => "api", "api_key" => key, "project_id" => project.id},
+                        actor: actor
+                      )
+                    IO.puts(if existing, do: "Replaced the webhook API key", else: "Created the webhook API key")
+                    method
+                  end
+                for trigger <- triggers do
+                  linked = Enum.map(WebhookAuthMethods.list_for_trigger(trigger), & &1.id)
+                  if linked != [method.id] do
+                    {:ok, _} = WebhookAuthMethods.update_trigger_auth_methods(trigger, [method], actor: actor)
+                  end
+                  linked = Enum.map(WebhookAuthMethods.list_for_trigger(trigger), & &1.id)
+                  linked == [method.id] ||
+                    raise "trigger #{trigger.id}: auth methods #{inspect(linked)}, expected only the gateway's"
+                end
+              end)
+            IO.puts("Both webhook triggers require the gateway's API key")
+          end)
+    volumes: []
+    networks: [lightning-db]
 
   # Hands the model volume to the unprivileged user Ollama runs as. Quick on
   # every start (it changes ownership only), and converts a volume created
@@ -493,6 +561,9 @@ services:
     depends_on:
       bootstrap:
         condition: service_completed_successfully
+      # The webhook triggers accept only the API key the gateway sends.
+      lightning-webhook-auth:
+        condition: service_completed_successfully
       # Only with `--profile ollama`: wait until the models are present.
       ollama-pull:
         condition: service_completed_successfully
@@ -503,6 +574,8 @@ services:
       OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
       OPENFN_WEBHOOK_LOAN_SUBMIT: http://lightning:4000/i/$${OPENFN_TRIGGER_LOAN_SUBMIT}
       OPENFN_WEBHOOK_LOAN_REVIEW: http://lightning:4000/i/$${OPENFN_TRIGGER_LOAN_REVIEW}
+      # Sent as x-api-key: lightning-webhook-auth makes the triggers require it.
+      OPENFN_WEBHOOK_API_KEY: ${OPENFN_WEBHOOK_API_KEY:?run scripts/gen-secrets.sh}
       OPENFN_BASE_URL: http://lightning:4000
       # Where OpenFn jobs (run by the worker) call back into the gateway.
       OPENFN_GATEWAY_BASE_URL: http://gateway:8080
