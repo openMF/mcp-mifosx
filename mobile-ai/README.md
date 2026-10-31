@@ -64,7 +64,8 @@ This POC mirrors the [PocketPal AI](https://github.com/a-ghorbani/pocketpal-ai) 
 
 The `DeviceGate` module profiles the device at startup and blocks model loading if:
 - Total RAM < model's `minRamGb` (hard floor)
-- Estimated runtime memory (file size × 1.5) would leave < 1.5 GB for the OS
+- Estimated runtime memory (file size, mmap-backed) would leave < 1.5 GB for the OS
+- Free disk storage is insufficient for the model file
 - Emulators get a warning but are allowed for development
 
 ---
@@ -75,13 +76,13 @@ The `DeviceGate` module profiles the device at startup and blocks model loading 
 
 1. Before generation starts, an `AbortController` (the "lease") is acquired
 2. The lease is held for the entire duration of the completion
-3. To stop generation: `modelStore.stopGeneration()` signals the lease
-4. Before unloading: `unloadModel()` **aborts any active generation and waits** for it to settle before releasing the native context
+3. To stop generation: `modelStore.stopGeneration()` signals the lease and calls `context.stopCompletion()`
+4. Before unloading: `unloadModel()` **aborts active generation, stops the decode thread, and awaits the in-flight promise** before releasing the native context
 
 ```typescript
 // Safe: always stop before unload
-modelStore.stopGeneration();  // signals abort
-await modelStore.unloadModel(); // waits, then releases
+modelStore.stopGeneration();  // signals abort + stops decode
+await modelStore.unloadModel(); // awaits completion, then releases
 ```
 
 ---

@@ -65,6 +65,10 @@ export async function runBenchmark(
     throw new Error('Model must be loaded before benchmarking.');
   }
 
+  if (runs < 1) {
+    throw new Error('Benchmark requires at least 1 run.');
+  }
+
   const allRuns: BenchmarkRun[] = [];
 
   for (let i = 0; i < runs; i++) {
@@ -102,7 +106,13 @@ export async function runBenchmark(
     runs: allRuns,
   };
 
-  console.log('[Benchmark] Summary:', JSON.stringify(summary, null, 2));
+  console.log(
+    `[Benchmark] Summary: ${summary.totalRuns} runs, ` +
+    `avg=${summary.avgTokPerSec} tok/s, ` +
+    `TTFT=${summary.avgTtftMs}ms, ` +
+    `total=${summary.avgTotalMs}ms, ` +
+    `range=${summary.minTokPerSec}-${summary.maxTokPerSec} tok/s`,
+  );
 
   return summary;
 }
