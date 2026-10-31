@@ -76,6 +76,7 @@ export class ModelStore {
   // ── Private State ──────────────────────────────────────────────────
   private context: LlamaContext | null = null;
   private generationLease: AbortController | null = null;
+  private generationPromise: Promise<GenerationResult> | null = null;
   private downloadJobId: number | null = null;
 
   constructor() {
@@ -96,11 +97,6 @@ export class ModelStore {
     return `${RNFS.DocumentDirectoryPath}/models/${this.activeModel.ggufFilename}`;
   }
 
-  get isModelDownloaded(): boolean {
-    // This is checked asynchronously; use checkModelExists() for accuracy
-    return false;
-  }
-
   // ── Device Profiling ───────────────────────────────────────────────
 
   /**
@@ -108,9 +104,12 @@ export class ModelStore {
    */
   async profileAndGate(model?: ModelConfig): Promise<GateResult> {
     const target = model ?? getDefaultModel();
-    const profile = await profileDevice();
+    const [profile, exists] = await Promise.all([
+      profileDevice(),
+      this.checkModelExists(target),
+    ]);
 
-    const result = gateModel(target, profile);
+    const result = gateModel(target, profile, exists);
 
     runInAction(() => {
       this.deviceProfile = profile;
@@ -134,6 +133,10 @@ export class ModelStore {
 
   /**
    * Download the model GGUF from HuggingFace to local storage.
+   *
+   * Downloads to a temporary .part file first, then moves to the
+   * final path on success. Cleans up the .part file on failure
+   * or cancellation.
    */
   async downloadModel(model?: ModelConfig): Promise<void> {
     const target = model ?? this.activeModel ?? getDefaultModel();
@@ -146,6 +149,7 @@ export class ModelStore {
     }
 
     const destPath = `${modelsDir}/${target.ggufFilename}`;
+    const partPath = `${destPath}.part`;
 
     // Skip if already downloaded
     const exists = await RNFS.exists(destPath);
@@ -168,14 +172,15 @@ export class ModelStore {
     try {
       const download = RNFS.downloadFile({
         fromUrl: target.downloadUrl,
-        toFile: destPath,
+        toFile: partPath,
         progressInterval: 500,
         progress: (res) => {
           runInAction(() => {
+            const contentLength = res.contentLength > 0 ? res.contentLength : target.fileSizeBytes;
             this.downloadProgress = {
               bytesWritten: res.bytesWritten,
-              contentLength: res.contentLength,
-              percent: Math.round((res.bytesWritten / res.contentLength) * 100),
+              contentLength,
+              percent: Math.round((res.bytesWritten / contentLength) * 100),
             };
           });
         },
@@ -185,8 +190,16 @@ export class ModelStore {
       const result = await download.promise;
 
       if (result.statusCode !== 200) {
+        // Clean up failed download
+        const partExists = await RNFS.exists(partPath);
+        if (partExists) {
+          await RNFS.unlink(partPath);
+        }
         throw new Error(`Download failed with status ${result.statusCode}`);
       }
+
+      // Move .part to final destination
+      await RNFS.moveFile(partPath, destPath);
 
       runInAction(() => {
         this.state = 'idle';
@@ -196,9 +209,23 @@ export class ModelStore {
 
       console.log(`[ModelStore] Download complete: ${destPath}`);
     } catch (err: any) {
+      // Clean up partial file on error
+      try {
+        const partExists = await RNFS.exists(partPath);
+        if (partExists) {
+          await RNFS.unlink(partPath);
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      // If cancelled via cancelDownload(), state is already 'idle' —
+      // don't overwrite it to 'error'.
       runInAction(() => {
-        this.state = 'error';
-        this.error = `Download failed: ${err.message}`;
+        if (this.state === 'downloading') {
+          this.state = 'error';
+          this.error = `Download failed: ${err.message}`;
+        }
         this.downloadProgress = null;
         this.downloadJobId = null;
       });
@@ -227,28 +254,45 @@ export class ModelStore {
    * This allocates native memory for the model weights, KV-cache,
    * and tokenizer. The context must be released before loading
    * another model.
+   *
+   * Rejects immediately unless state is 'idle', and sets state to
+   * 'loading' synchronously before any async work to prevent
+   * concurrent loadModel calls from invoking initLlama twice.
    */
   async loadModel(): Promise<void> {
+    if (this.state !== 'idle') {
+      throw new Error(`Cannot load model in state '${this.state}'. Model must be in 'idle' state.`);
+    }
+
     if (!this.activeModel) {
       throw new Error('No active model set. Call profileAndGate() first.');
     }
 
+    // Set loading state synchronously to prevent concurrent calls
+    this.state = 'loading';
+    this.error = null;
+    this.loadProgress = 0;
+
     // Safety: unload any existing context
     if (this.context) {
       await this.unloadModel();
+      // Re-check state after unload
+      runInAction(() => {
+        this.state = 'loading';
+        this.error = null;
+        this.loadProgress = 0;
+      });
     }
 
     const modelPath = this.modelFilePath;
     const exists = await RNFS.exists(modelPath);
     if (!exists) {
+      runInAction(() => {
+        this.state = 'error';
+        this.error = `Model file not found at ${modelPath}. Download it first.`;
+      });
       throw new Error(`Model file not found at ${modelPath}. Download it first.`);
     }
-
-    runInAction(() => {
-      this.state = 'loading';
-      this.error = null;
-      this.loadProgress = 0;
-    });
 
     try {
       const gpuLayers = this.gateResult?.recommendedGpuLayers ?? 0;
@@ -279,6 +323,7 @@ export class ModelStore {
         this.error = `Failed to load model: ${err.message}`;
         this.loadProgress = 0;
       });
+      throw err;
     }
   }
 
@@ -286,29 +331,47 @@ export class ModelStore {
    * Unload the model context and free native memory.
    *
    * CRITICAL: This implements the "generation lease" pattern.
-   * If a generation is in progress, we MUST abort it and wait
-   * for completion before releasing the context. Releasing a
-   * llama.rn context while a completion is running causes
-   * use-after-free crashes on Android.
+   * If a generation is in progress, we stop the completion,
+   * await the in-flight promise, then release the context.
+   * Releasing a llama.rn context while a completion is running
+   * causes use-after-free crashes on Android.
    */
   async unloadModel(): Promise<void> {
-    if (!this.context) return;
+    if (!this.context) {
+      runInAction(() => {
+        this.state = 'idle';
+      });
+      return;
+    }
 
     runInAction(() => {
       this.state = 'unloading';
     });
 
-    // Step 1: Abort any active generation
+    // Step 1: Stop any active generation and await its completion
     if (this.generationLease) {
-      console.log('[ModelStore] Aborting active generation before unload...');
+      console.log('[ModelStore] Stopping active generation before unload...');
       this.generationLease.abort();
 
-      // Wait for the generation promise to settle
-      // The completion call should observe the abort and return
-      await new Promise<void>(resolve => setTimeout(resolve, 500));
+      // Stop the llama.cpp decode thread
+      try {
+        await this.context?.stopCompletion();
+      } catch {
+        // Ignore — completion may have already finished
+      }
+
+      // Wait for the in-flight generation promise to settle
+      if (this.generationPromise) {
+        try {
+          await this.generationPromise;
+        } catch {
+          // Expected — aborted generations may reject
+        }
+      }
 
       runInAction(() => {
         this.generationLease = null;
+        this.generationPromise = null;
       });
     }
 
@@ -340,143 +403,174 @@ export class ModelStore {
    * @param prompt - The input prompt
    * @param maxTokens - Maximum tokens to generate (default: 512)
    * @param temperature - Sampling temperature (default: 0.7)
+   * @param systemPrompt - System prompt (default: banking assistant)
    * @returns GenerationResult with metrics
    */
   async generate(
     prompt: string,
     maxTokens: number = 512,
     temperature: number = 0.7,
+    systemPrompt: string = 'You are a helpful banking assistant for Mifos X / Apache Fineract.',
   ): Promise<GenerationResult> {
     if (!this.context) {
       throw new Error('No model loaded. Call loadModel() first.');
     }
 
-    if (this.state === 'generating') {
-      throw new Error('A generation is already in progress. Stop it first.');
+    if (this.state !== 'ready') {
+      throw new Error(`Cannot generate in state '${this.state}'. Model must be in 'ready' state.`);
     }
 
-    // Acquire generation lease
+    // Acquire generation lease and set state synchronously
     const lease = new AbortController();
     this.generationLease = lease;
-
-    runInAction(() => {
-      this.state = 'generating';
-      this.streamingTokens = '';
-      this.lastResult = null;
-      this.error = null;
-    });
+    this.state = 'generating';
+    this.streamingTokens = '';
+    this.lastResult = null;
+    this.error = null;
 
     const startTime = performance.now();
     let firstTokenTime: number | null = null;
     let tokenCount = 0;
 
-    try {
-      const result = await this.context.completion(
-        {
-          messages: [
-            {role: 'system', content: 'You are a helpful banking assistant for Mifos X / Apache Fineract.'},
-            {role: 'user', content: prompt},
-          ],
-          n_predict: maxTokens,
-          temperature,
-          top_p: 0.9,
-          top_k: 40,
-          stop: ['</s>', '<|endoftext|>', '<|im_end|>'],
-        },
-        (data) => {
-          // Streaming token callback
-          if (lease.signal.aborted) return;
+    const generationWork = (async (): Promise<GenerationResult> => {
+      try {
+        const result = await this.context!.completion(
+          {
+            messages: [
+              {role: 'system', content: systemPrompt},
+              {role: 'user', content: prompt},
+            ],
+            n_predict: maxTokens,
+            temperature,
+            top_p: 0.9,
+            top_k: 40,
+            stop: ['</s>', '<|endoftext|>', '<|im_end|>'],
+          },
+          (data) => {
+            // Streaming token callback
+            if (lease.signal.aborted) return;
 
-          if (firstTokenTime === null) {
-            firstTokenTime = performance.now();
-          }
-          tokenCount++;
+            if (firstTokenTime === null) {
+              firstTokenTime = performance.now();
+            }
+            tokenCount++;
 
-          runInAction(() => {
-            this.streamingTokens += data.token;
-          });
-        },
-      );
+            runInAction(() => {
+              this.streamingTokens += data.token;
+            });
+          },
+        );
 
-      const endTime = performance.now();
-      const totalMs = endTime - startTime;
-      const ttftMs = firstTokenTime ? firstTokenTime - startTime : totalMs;
-      const tokPerSec = tokenCount > 0 ? (tokenCount / (totalMs / 1000)) : 0;
+        const endTime = performance.now();
+        const totalMs = endTime - startTime;
+        const ttftMs = firstTokenTime !== null ? firstTokenTime - startTime : totalMs;
+        // Use decode duration (after first token) for fallback tok/s calculation
+        const decodeDuration = firstTokenTime !== null ? endTime - firstTokenTime : totalMs;
+        const fallbackTokPerSec = firstTokenTime !== null && decodeDuration > 0
+          ? (tokenCount / (decodeDuration / 1000))
+          : 0;
 
-      const genResult: GenerationResult = {
-        text: result.text ?? this.streamingTokens,
-        tokensGenerated: tokenCount,
-        tokPerSec: Math.round(tokPerSec * 100) / 100,
-        ttftMs: Math.round(ttftMs),
-        totalMs: Math.round(totalMs),
-        peakMemoryMb: 0, // Would need native instrumentation
-        stopped: lease.signal.aborted,
-      };
+        const tokensGenerated = result.timings?.predicted_n ?? result.tokens_predicted ?? tokenCount;
+        const tokPerSec = result.timings?.predicted_per_second ?? fallbackTokPerSec;
 
-      runInAction(() => {
-        this.lastResult = genResult;
-        this.state = 'ready';
-        this.generationLease = null;
-      });
-
-      return genResult;
-    } catch (err: any) {
-      const endTime = performance.now();
-
-      if (lease.signal.aborted) {
-        // Clean abort — not an error
         const genResult: GenerationResult = {
-          text: this.streamingTokens,
-          tokensGenerated: tokenCount,
-          tokPerSec: 0,
-          ttftMs: firstTokenTime ? firstTokenTime - startTime : 0,
-          totalMs: Math.round(endTime - startTime),
-          peakMemoryMb: 0,
-          stopped: true,
+          text: result.text ?? this.streamingTokens,
+          tokensGenerated,
+          tokPerSec: Math.round(tokPerSec * 100) / 100,
+          ttftMs: Math.round(ttftMs),
+          totalMs: Math.round(totalMs),
+          peakMemoryMb: 0, // Would need native instrumentation
+          stopped: lease.signal.aborted || Boolean(result.interrupted),
         };
 
         runInAction(() => {
           this.lastResult = genResult;
-          this.state = 'ready';
+          if (this.state === 'generating') {
+            this.state = 'ready';
+          }
           this.generationLease = null;
+          this.generationPromise = null;
         });
 
         return genResult;
+      } catch (err: any) {
+        const endTime = performance.now();
+
+        if (lease.signal.aborted) {
+          // Clean abort — not an error
+          const genResult: GenerationResult = {
+            text: this.streamingTokens,
+            tokensGenerated: tokenCount,
+            tokPerSec: 0,
+            ttftMs: firstTokenTime !== null ? firstTokenTime - startTime : 0,
+            totalMs: Math.round(endTime - startTime),
+            peakMemoryMb: 0,
+            stopped: true,
+          };
+
+          runInAction(() => {
+            this.lastResult = genResult;
+            // Only restore to 'ready' if we're not being unloaded
+            if (this.state === 'generating') {
+              this.state = 'ready';
+            }
+            this.generationLease = null;
+            this.generationPromise = null;
+          });
+
+          return genResult;
+        }
+
+        runInAction(() => {
+          this.state = 'error';
+          this.error = `Generation failed: ${err.message}`;
+          this.generationLease = null;
+          this.generationPromise = null;
+        });
+
+        throw err;
       }
+    })();
 
-      runInAction(() => {
-        this.state = 'error';
-        this.error = `Generation failed: ${err.message}`;
-        this.generationLease = null;
-      });
-
-      throw err;
-    }
+    this.generationPromise = generationWork;
+    return generationWork;
   }
 
   /**
    * Stop an in-progress generation.
    *
    * This cleanly aborts the llama.cpp decode thread without
-   * leaking memory by signalling the generation lease.
+   * leaking memory by signalling the generation lease and
+   * invoking stopCompletion on the context.
    */
   stopGeneration(): void {
     if (this.generationLease) {
       console.log('[ModelStore] Stopping generation...');
       this.generationLease.abort();
+
+      // Signal llama.cpp to stop the decode thread
+      this.context?.stopCompletion().catch(() => {
+        // Ignore — completion may have already finished
+      });
     }
   }
 
   // ── Cleanup ────────────────────────────────────────────────────────
 
   /**
-   * Full cleanup — unload model, reset all state.
+   * Full cleanup — stop generation, unload model, reset all state.
    */
   async dispose(): Promise<void> {
     this.cancelDownload();
+
+    if (this.generationLease) {
+      this.stopGeneration();
+    }
+
     await this.unloadModel();
 
     runInAction(() => {
+      this.state = 'idle';
       this.activeModel = null;
       this.deviceProfile = null;
       this.gateResult = null;

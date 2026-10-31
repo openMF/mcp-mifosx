@@ -7,6 +7,7 @@ from typing import Optional
 
 from langchain_core.tools import tool
 
+from tools.domains.products import product_required
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
 
@@ -144,9 +145,13 @@ def _product_terms(template_query: str, product_id: int) -> dict:
 
 
 @tool
-def create_loan(client_id: int, principal: float, months: int, product_id: int = 1):
-    """Answers: 'Create a new loan for Client X for MXN 20,000 over 12 months'"""
+def create_loan(client_id: int, principal: float, months: int, product_id: Optional[int] = None):
+    """Answers: 'Create a new loan for Client X for MXN 20,000 over 12 months'
+    product_id has to be one of this tenant's loan products; without it nothing is created
+    and the error lists them."""
     print(f"[Tool] Creating {principal} loan for Client #{client_id}...")
+    if product_id is None:
+        return product_required("loan")
     terms = _product_terms(f"templateType=individual&clientId={client_id}&productId={product_id}", product_id)
     if "error" in terms:
         return terms
@@ -171,9 +176,13 @@ def create_loan(client_id: int, principal: float, months: int, product_id: int =
     return fineract_client.execute_post("loans", payload)
 
 @tool
-def create_group_loan(group_id: int, principal: float, months: int, product_id: int = 1):
-    """Answers: 'Create a group loan for Group #5 for $10,000 over 6 months'"""
+def create_group_loan(group_id: int, principal: float, months: int, product_id: Optional[int] = None):
+    """Answers: 'Create a group loan for Group #5 for $10,000 over 6 months'
+    product_id has to be one of this tenant's loan products; without it nothing is created
+    and the error lists them."""
     print(f"[Tool] Creating {principal} group loan for Group #{group_id}...")
+    if product_id is None:
+        return product_required("loan")
     terms = _product_terms(f"templateType=group&groupId={group_id}&productId={product_id}", product_id)
     if "error" in terms:
         return terms

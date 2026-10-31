@@ -2,17 +2,19 @@
 # This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 """One-shot sandbox bootstrap. Safe to run on every `docker compose up`.
 
-1. Fineract: create the loan product the agentic flow submits loans against
+1. Fineract: move the admin user off the image's default password onto the
+   one from .env (only while the default still works).
+2. Fineract: create the loan product the agentic flow submits loans against
    (looked up by short name, created only if missing).
-2. Fineract: one service user per agent, with a role granting exactly the
+3. Fineract: one service user per agent, with a role granting exactly the
    permissions in fineract-rbac.json, then check that each agent is allowed
    inside its role and refused (HTTP 403) outside it.
-3. Lightning: the raw credentials the jobs use, built from the environment and
+4. Lightning: the raw credentials the jobs use, built from the environment and
    replaced when their settings change (a rotated password or token):
    "fineract" (the write-back job's login, the agent-writeback user) and
    "agent-<name>" (the URL and token of an agent's runner, for the job that
    calls it).
-4. Lightning: provision the OpenFn project from project.yaml.
+5. Lightning: provision the OpenFn project from project.yaml.
 
 Every id in the provisioned project is derived from its key in project.yaml
 (UUID v5), and the two webhook trigger ids come from the compose file, so
@@ -112,6 +114,34 @@ def fineract_headers(username=None, password=None):
     password = password or env("FINERACT_PASSWORD")
     auth = b64encode(f"{username}:{password}".encode()).decode()
     return {"Authorization": f"Basic {auth}", "Fineract-Platform-TenantId": env("FINERACT_TENANT")}
+
+
+def ensure_admin_password():
+    """Sign in as the admin with FINERACT_PASSWORD; while the image's default
+    password still works instead, change it to FINERACT_PASSWORD. The old
+    password is not known after that, so a later change starts in the web app."""
+    base = env("FINERACT_URL")
+    username = env("FINERACT_USERNAME")
+    probe = f"{base}/clients?limit=1"
+    code = status("GET", probe, fineract_headers())
+    if code == 200:
+        log(f"Fineract admin '{username}' signs in with the password from .env")
+        return
+    if code != 401:
+        sys.exit(f"bootstrap: signing in to Fineract as '{username}' failed with HTTP {code}")
+    default = fineract_headers(password=env("FINERACT_DEFAULT_PASSWORD"))
+    if status("GET", probe, default) != 200:
+        sys.exit(
+            f"bootstrap: the password of Fineract's admin '{username}' is neither FINERACT_ADMIN_PASSWORD"
+            " nor the default: set FINERACT_ADMIN_PASSWORD to the current one, or change it in the web app"
+        )
+    users = request("GET", f"{base}/users", default, insecure=True)
+    user = next(u for u in users if u["username"] == username)
+    password = env("FINERACT_PASSWORD")
+    request("PUT", f"{base}/users/{user['id']}", default, {"password": password, "repeatPassword": password}, insecure=True)
+    if status("GET", probe, fineract_headers()) != 200:
+        sys.exit(f"bootstrap: Fineract admin '{username}' does not sign in with the new password")
+    log(f"changed the password of Fineract's admin '{username}' from the default to the one from .env")
 
 
 def ensure_loan_product():
@@ -355,6 +385,7 @@ def main():
     else:
         sys.exit(f"bootstrap: {token_file} was not written by lightning-setup")
 
+    ensure_admin_password()
     product_id = ensure_loan_product()
     ensure_agent_users()
     provision_project(product_id)

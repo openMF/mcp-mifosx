@@ -15,6 +15,8 @@ import org.springframework.web.client.RestClient;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.headerDoesNotExist;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
@@ -57,5 +59,35 @@ class OpenFnClientTest {
 
         assertEquals("run-789", result.runId());
         assertEquals("wo-1", result.workOrderId());
+    }
+
+    @Test
+    void triggerSendsTheWebhookApiKeyWhenSet() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        OpenFnProperties props = new OpenFnProperties();
+        props.getWebhooks().setApiKey("key-123");
+        OpenFnClient client = new OpenFnClient(props, builder);
+
+        server.expect(requestTo(WEBHOOK))
+                .andExpect(header("x-api-key", "key-123"))
+                .andRespond(withSuccess("{\"work_order_id\":\"wo-2\"}", MediaType.APPLICATION_JSON));
+
+        client.triggerWebhook(WEBHOOK, Map.of("workflowId", "loan-3"));
+        server.verify();
+    }
+
+    @Test
+    void triggerSendsNoApiKeyWhenNoneIsSet() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        OpenFnClient client = new OpenFnClient(new OpenFnProperties(), builder);
+
+        server.expect(requestTo(WEBHOOK))
+                .andExpect(headerDoesNotExist("x-api-key"))
+                .andRespond(withSuccess("{\"work_order_id\":\"wo-3\"}", MediaType.APPLICATION_JSON));
+
+        client.triggerWebhook(WEBHOOK, Map.of("workflowId", "loan-4"));
+        server.verify();
     }
 }

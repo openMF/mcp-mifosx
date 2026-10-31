@@ -239,6 +239,9 @@ mvn clean package
 
 export OPENFN_WEBHOOK_LOAN_SUBMIT=http://localhost:4000/i/<loan-submit-trigger-id>   # step 5
 export OPENFN_WEBHOOK_LOAN_REVIEW=http://localhost:4000/i/<loan-review-trigger-id>   # step 5
+# Optional: in Lightning, give both triggers an API-key auth method (the trigger's
+# settings in the workflow canvas) and use its key here
+export OPENFN_WEBHOOK_API_KEY=<the triggers' API key>
 export OPENFN_GATEWAY_BASE_URL=http://host.docker.internal:8080   # see below for WSL2
 export OPENFN_OLLAMA_URL=http://host.docker.internal:11434        # see below for Windows
 export OLLAMA_MODEL=llama3.2:3b
@@ -343,6 +346,7 @@ The same loan, client and notes are visible in the Mifos X web app (loan → *No
 |---|---|---|
 | `OPENFN_WEBHOOK_LOAN_SUBMIT` | `http://localhost:4000/i/loan-submit` | Loan Submit trigger URL |
 | `OPENFN_WEBHOOK_LOAN_REVIEW` | `http://localhost:4000/i/loan-review` | Loan Review trigger URL |
+| `OPENFN_WEBHOOK_API_KEY` | – | Key of the triggers' API-key auth method, sent as `x-api-key`; leave empty when they have none |
 | `OPENFN_GATEWAY_BASE_URL` | `http://host.docker.internal:8080` | Where OpenFn jobs call back to the gateway |
 | `OPENFN_CALLBACK_SECRET` | `change-me-in-prod` | Shared secret sent by jobs as `X-OpenFn-Secret` |
 | `OPENFN_BASE_URL` | `http://localhost:4000` | Lightning base URL (run status lookups) |
@@ -366,7 +370,7 @@ The same loan, client and notes are visible in the Mifos X web app (loan → *No
 |---|---|
 | Status stays `OPENFN_TRIGGERED`, job log shows `ECONNREFUSED` | Lightning cannot reach the gateway – set `OPENFN_GATEWAY_BASE_URL` (step 6). |
 | Status stays `OPENFN_TRIGGERED`, job log shows `returned 401` | `OPENFN_CALLBACK_SECRET` differs between the gateway that submitted the loan and the one receiving callbacks. |
-| Submit returns `500`, gateway log shows `OpenFn webhook trigger failed` | Wrong or stale webhook URL – re-read it from `.state.json` after each deploy to a new instance. |
+| Submit returns `500`, gateway log shows `OpenFn webhook trigger failed` | Wrong or stale webhook URL – re-read it from `.state.json` after each deploy to a new instance. With `401 Unauthorized` or `404 ... Webhook not found`, the triggers require an API key and `OPENFN_WEBHOOK_API_KEY` is missing or wrong. |
 | `openfn deploy` fails with `source_job_id or source_trigger_id must be present` | Outdated `project.yaml` – pull the latest version of this folder. |
 | Runs never start | No worker connected – check `docker compose logs web` for the built-in worker. |
 | Deploy fails with an error about the `fineract` credential | Create the credential (step 4) before deploying, owned by the user named in `project.yaml`. |
