@@ -33,7 +33,7 @@ ROOT_JOBS = {
 INTERNAL_NETWORKS = {
     "fineract-db": {"fineract-db", "fineract"},
     "core": {"fineract", "web-app", "lightning-worker", "bootstrap", "mcp-*"},
-    "lightning-db": {"lightning-db", "lightning", "lightning-setup"},
+    "lightning-db": {"lightning-db", "lightning", "lightning-setup", "lightning-webhook-auth"},
     "openfn": {"lightning", "lightning-worker", "bootstrap", "gateway"},
     "llm": {"ollama", "ollama-pull", "lightning-worker"},
     "agents-llm": {"ollama", "agent-*"},

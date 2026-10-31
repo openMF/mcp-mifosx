@@ -16,10 +16,12 @@ def list_reports(report_type: str = None):
     """Answers: 'What reports are available in Fineract?' or 'Show me all loan reports'.
     report_type options: 'Table', 'Chart', 'SMS', 'Text', 'Pentaho' (or None for all)."""
     print("[Tool] Fetching all report definitions...")
-    params = {}
-    if report_type:
-        params["type"] = report_type
-    return fineract_client.execute_get("reports", params=params)
+    # Fineract's GET /reports has no type filter (it ignores ?type=), so filter here.
+    reports = fineract_client.execute_get("reports")
+    if not report_type or not isinstance(reports, list):
+        return reports
+    wanted = report_type.strip().lower()
+    return [r for r in reports if str(r.get("reportType", "")).lower() == wanted]
 
 
 @tool

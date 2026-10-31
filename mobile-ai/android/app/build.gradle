@@ -14,6 +14,7 @@ apply plugin: "com.facebook.react"
 
 react {
     // Autolinking configuration
+    autolinkLibrariesWithApp()
 }
 
 def enableProguardInReleaseBuilds = true
@@ -37,17 +38,11 @@ android {
         // Required for on-device inference with GPU offloading.
         externalNativeBuild {
             cmake {
-                // Enable OpenCL backend for llama.cpp
-                arguments "-DGGML_OPENCL=ON"
-                // Allow large buffer allocations on Adreno (>256MB)
-                arguments "-DGGML_OPENCL_ADRENO_LARGE_BUFFER=ON"
+                // Enable OpenCL backend and large buffer allocations on Adreno (>256MB)
+                arguments "-DGGML_OPENCL=ON", "-DGGML_OPENCL_ADRENO_LARGE_BUFFER=ON"
             }
         }
 
-        // Enable large heap for model loading (5+ GB GGUF files)
-        manifestPlaceholders = [
-            largeHeap: "true"
-        ]
 
         // NDK ABI filters — only 64-bit architectures
         ndk {
@@ -62,6 +57,19 @@ android {
             keyAlias 'androiddebugkey'
             keyPassword 'android'
         }
+        release {
+            def releaseStoreFile = System.getenv("RELEASE_STORE_FILE") ?: project.findProperty("RELEASE_STORE_FILE") ?:
+                System.getenv("MIFOS_RELEASE_STORE_FILE") ?: project.findProperty("MIFOS_RELEASE_STORE_FILE")
+            if (releaseStoreFile) {
+                storeFile file(releaseStoreFile)
+                storePassword System.getenv("RELEASE_STORE_PASSWORD") ?: project.findProperty("RELEASE_STORE_PASSWORD") ?:
+                    System.getenv("MIFOS_RELEASE_STORE_PASSWORD") ?: project.findProperty("MIFOS_RELEASE_STORE_PASSWORD")
+                keyAlias System.getenv("RELEASE_KEY_ALIAS") ?: project.findProperty("RELEASE_KEY_ALIAS") ?:
+                    System.getenv("MIFOS_RELEASE_KEY_ALIAS") ?: project.findProperty("MIFOS_RELEASE_KEY_ALIAS")
+                keyPassword System.getenv("RELEASE_KEY_PASSWORD") ?: project.findProperty("RELEASE_KEY_PASSWORD") ?:
+                    System.getenv("MIFOS_RELEASE_KEY_PASSWORD") ?: project.findProperty("MIFOS_RELEASE_KEY_PASSWORD")
+            }
+        }
     }
 
     buildTypes {
@@ -71,13 +79,14 @@ android {
         release {
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
         }
 
         // Production debug variant — optimized builds with debug symbols
         prodDebug {
             initWith release
             debuggable true
+            signingConfig signingConfigs.debug
             matchingFallbacks = ['release']
         }
     }
@@ -104,5 +113,3 @@ dependencies {
         implementation jscFlavor
     }
 }
-
-apply from: file("../../node_modules/@react-native-community/cli-platform-android/native_modules.gradle"); applyNativeModulesAppBuildGradle(project)

@@ -56,11 +56,21 @@ public class OpenFnProperties {
     public static class Webhooks {
         private String loanSubmit = "http://localhost:4000/i/loan-submit";
         private String loanReview = "http://localhost:4000/i/loan-review";
+        private String apiKey = "";
 
         public String getLoanSubmit() { return loanSubmit; }
         public void setLoanSubmit(String loanSubmit) { this.loanSubmit = loanSubmit; }
 
         public String getLoanReview() { return loanReview; }
         public void setLoanReview(String loanReview) { this.loanReview = loanReview; }
+
+        /**
+         * Key of the triggers' API-key auth method in Lightning, sent as {@code x-api-key}
+         * ({@code openfn.webhooks.api-key}); empty when the triggers have none.
+         */
+        public String getApiKey() { return apiKey; }
+
+        /** @param apiKey see {@link #getApiKey()}; empty sends no key */
+        public void setApiKey(String apiKey) { this.apiKey = apiKey; }
     }
 }

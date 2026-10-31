@@ -57,6 +57,7 @@ go/mysql-init/
 # The sandbox's Markdown files are part of it: the agents' system prompt and
 # skills are built into their image.
 !agentic-mifos-sandbox/**/*.md
+!mobile-ai/README.md
 !rust/benches/results.md
 !rust/benches/README.md
 

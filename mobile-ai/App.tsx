@@ -26,62 +26,98 @@ import {runBenchmark} from './src/services/BenchmarkRunner';
 const App = observer(() => {
   const [prompt, setPrompt] = useState('');
   const [initialized, setInitialized] = useState(false);
+  const [isBenchmarking, setIsBenchmarking] = useState(false);
+  const [modelExists, setModelExists] = useState(false);
 
   // ── Initialization: Profile device and check model ──
   useEffect(() => {
     (async () => {
-      const model = getDefaultModel();
-      const gate = await modelStore.profileAndGate(model);
+      try {
+        const model = getDefaultModel();
+        const gate = await modelStore.profileAndGate(model);
 
-      if (!gate.allowed) {
+        if (!gate.allowed) {
+          Alert.alert(
+            'Device Not Supported',
+            gate.reason ?? 'This device does not meet minimum hardware requirements.',
+          );
+          return;
+        }
+
+        if (gate.reason) {
+          // Warning (e.g., emulator)
+          Alert.alert('Notice', gate.reason);
+        }
+
+        const exists = await modelStore.checkModelExists(model);
+        setModelExists(exists);
+        setInitialized(true);
+      } catch (err: any) {
         Alert.alert(
-          'Device Not Supported',
-          gate.reason ?? 'This device does not meet minimum hardware requirements.',
+          'Initialization Error',
+          err?.message ?? 'Failed to profile device or initialize model.',
         );
-        return;
+        setInitialized(true);
       }
-
-      if (gate.reason) {
-        // Warning (e.g., emulator)
-        Alert.alert('Notice', gate.reason);
-      }
-
-      setInitialized(true);
     })();
   }, []);
+
+  // ── Sync model existence on state change ──
+  useEffect(() => {
+    if (modelStore.state === 'idle' || modelStore.state === 'error') {
+      modelStore.checkModelExists().then(setModelExists).catch(() => setModelExists(false));
+    }
+  }, [modelStore.state]);
 
   // ── Handlers ──
   const handleDownload = useCallback(async () => {
     try {
+      if (modelStore.state === 'error') {
+        await modelStore.unloadModel();
+      }
       await modelStore.downloadModel();
-      Alert.alert('Success', 'Model downloaded successfully.');
-    } catch {
-      Alert.alert('Error', modelStore.error ?? 'Download failed.');
+      const exists = await modelStore.checkModelExists();
+      setModelExists(exists);
+      if (modelStore.error || modelStore.state === 'error') {
+        Alert.alert('Error', modelStore.error ?? 'Download failed.');
+      } else if (exists) {
+        Alert.alert('Success', 'Model downloaded successfully.');
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? modelStore.error ?? 'Download failed.');
     }
   }, []);
 
   const handleLoad = useCallback(async () => {
     try {
+      if (modelStore.state === 'error') {
+        await modelStore.unloadModel();
+      }
       await modelStore.loadModel();
-    } catch {
-      Alert.alert('Error', modelStore.error ?? 'Failed to load model.');
+      if (modelStore.error || modelStore.state === 'error') {
+        Alert.alert('Error', modelStore.error ?? 'Failed to load model.');
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err?.message ?? modelStore.error ?? 'Failed to load model.');
     }
   }, []);
 
   const handleGenerate = useCallback(async () => {
-    if (!prompt.trim()) return;
+    if (!prompt.trim() || isBenchmarking) return;
     try {
       await modelStore.generate(prompt.trim());
     } catch {
       Alert.alert('Error', modelStore.error ?? 'Generation failed.');
     }
-  }, [prompt]);
+  }, [prompt, isBenchmarking]);
 
   const handleStop = useCallback(() => {
     modelStore.stopGeneration();
   }, []);
 
   const handleBenchmark = useCallback(async () => {
+    if (isBenchmarking || modelStore.isGenerating) return;
+    setIsBenchmarking(true);
     try {
       const summary = await runBenchmark(3, 256);
       Alert.alert(
@@ -92,12 +128,15 @@ const App = observer(() => {
       );
     } catch (err: any) {
       Alert.alert('Benchmark Error', err.message);
+    } finally {
+      setIsBenchmarking(false);
     }
-  }, []);
+  }, [isBenchmarking]);
 
   const handleUnload = useCallback(async () => {
+    if (isBenchmarking || modelStore.isGenerating) return;
     await modelStore.unloadModel();
-  }, []);
+  }, [isBenchmarking]);
 
   // ── Render ──
   return (
@@ -138,7 +177,7 @@ const App = observer(() => {
           <ActivityIndicator size="large" color="#e94560" />
         ) : (
           <>
-            {modelStore.state === 'idle' && (
+            {(modelStore.state === 'idle' || modelStore.state === 'error') && (
               <View style={styles.buttonRow}>
                 <TouchableOpacity
                   style={styles.button}
@@ -146,8 +185,13 @@ const App = observer(() => {
                   <Text style={styles.buttonText}>Download Model</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[styles.button, styles.buttonSecondary]}
-                  onPress={handleLoad}>
+                  style={[
+                    styles.button,
+                    styles.buttonSecondary,
+                    !modelExists && styles.buttonDisabled,
+                  ]}
+                  onPress={handleLoad}
+                  disabled={!modelExists}>
                   <Text style={styles.buttonText}>Load Model</Text>
                 </TouchableOpacity>
               </View>
@@ -197,7 +241,7 @@ const App = observer(() => {
                     placeholder="Ask a banking question..."
                     placeholderTextColor="#666"
                     multiline
-                    editable={!modelStore.isGenerating}
+                    editable={!modelStore.isGenerating && !isBenchmarking}
                   />
                   {modelStore.isGenerating ? (
                     <TouchableOpacity
@@ -207,23 +251,38 @@ const App = observer(() => {
                     </TouchableOpacity>
                   ) : (
                     <TouchableOpacity
-                      style={styles.sendButton}
-                      onPress={handleGenerate}>
+                      style={[
+                        styles.sendButton,
+                        isBenchmarking && styles.buttonDisabled,
+                      ]}
+                      onPress={handleGenerate}
+                      disabled={isBenchmarking}>
                       <Text style={styles.sendText}>Send</Text>
                     </TouchableOpacity>
                   )}
                 </View>
                 <View style={styles.buttonRow}>
                   <TouchableOpacity
-                    style={[styles.button, styles.buttonSmall]}
+                    style={[
+                      styles.button,
+                      styles.buttonSmall,
+                      (modelStore.isGenerating || isBenchmarking) && styles.buttonDisabled,
+                    ]}
                     onPress={handleBenchmark}
-                    disabled={modelStore.isGenerating}>
-                    <Text style={styles.buttonTextSmall}>Benchmark</Text>
+                    disabled={modelStore.isGenerating || isBenchmarking}>
+                    <Text style={styles.buttonTextSmall}>
+                      {isBenchmarking ? 'Benchmarking...' : 'Benchmark'}
+                    </Text>
                   </TouchableOpacity>
                   <TouchableOpacity
-                    style={[styles.button, styles.buttonSmall, styles.buttonDanger]}
+                    style={[
+                      styles.button,
+                      styles.buttonSmall,
+                      styles.buttonDanger,
+                      (modelStore.isGenerating || isBenchmarking) && styles.buttonDisabled,
+                    ]}
                     onPress={handleUnload}
-                    disabled={modelStore.isGenerating}>
+                    disabled={modelStore.isGenerating || isBenchmarking}>
                     <Text style={styles.buttonTextSmall}>Unload</Text>
                   </TouchableOpacity>
                 </View>
@@ -311,6 +370,7 @@ const styles = StyleSheet.create({
   },
   buttonSecondary: {backgroundColor: '#0f3460'},
   buttonDanger: {backgroundColor: '#c0392b'},
+  buttonDisabled: {opacity: 0.5},
   buttonSmall: {paddingVertical: 8},
   buttonText: {color: '#fff', fontWeight: '600', fontSize: 15},
   buttonTextSmall: {color: '#fff', fontWeight: '600', fontSize: 13},
