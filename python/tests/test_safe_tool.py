@@ -128,7 +128,7 @@ def test_validation_blocks_negative_withdraw() -> None:
 def test_validation_blocks_boolean_and_non_finite_amounts() -> None:
     from mcp_server import deposit, withdraw
 
-    for bad in (True, False, float("nan"), float("inf")):
+    for bad in (True, False, float("nan"), float("inf"), 10**309):
         with pytest.raises(ToolError, match="amount must be positive"):
             deposit(accountId=1, amount=bad)
 
@@ -164,6 +164,9 @@ def test_validate_input_rejects_negative_or_zero_amount_for_deposit_and_withdraw
 
     with pytest.raises(ValidationError, match="amount must be positive"):
         validate_input("withdraw", {"accountId": 1, "amount": 0})
+
+    with pytest.raises(ValidationError, match="amount must be positive"):
+        validate_input("deposit", {"accountId": 1, "amount": 10**309})
 
 def test_validate_input_rejects_non_positive_resource_ids() -> None:
     """Resource IDs are checked for *every* tool, not only the two with
