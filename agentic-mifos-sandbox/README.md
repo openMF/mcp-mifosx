@@ -50,7 +50,7 @@ The first start takes about 3 minutes, most of it Fineract's database migrations
 
 | Open | Login |
 |---|---|
-| Web app: http://localhost:4200 | `mifos` / `password` |
+| Web app: http://localhost:4200 | `mifos` / `FINERACT_ADMIN_PASSWORD` from `.env` |
 | Lightning: http://localhost:4000 | `LIGHTNING_ADMIN_EMAIL` / `LIGHTNING_ADMIN_PASSWORD` from `.env` |
 | Gateway: http://localhost:8080/actuator/health | none (see 7.4) |
 | LOS API docs: http://localhost:8090/docs | none (see 7.4) |
@@ -211,6 +211,7 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 - `OPENFN_WEBHOOK_API_KEY`: the same. `lightning-webhook-auth` replaces the triggers' key, and the gateway restarts with the new one.
 - **The database passwords and Lightning's admin password cannot be rotated through `.env`**: they are set when the volumes are first created. Changing them later breaks the connection (databases) or changes nothing (Lightning admin). Change them inside Postgres and Lightning first, or reset the volumes.
 - `./scripts/gen-secrets.sh` fills only empty values: blank one and run it again to generate a new value.
+- Fineract's admin password (`FINERACT_ADMIN_PASSWORD`): the bootstrap sets it only while the image's default (`password`) still works. To change it later, change it in the web app first (the user menu, then change password), then in `.env`.
 
 **Updating**: `git pull`, `./scripts/gen-secrets.sh` (it adds any secret a new version needs), then `docker compose --profile ollama up -d --build --wait`. Volumes are kept.
 
@@ -232,6 +233,7 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_li
 - **A submit returns 500, and the gateway log shows `OpenFn webhook trigger failed: 401` or `404 ... Webhook not found`**: the gateway's API key is not the triggers' key. Run `docker compose --profile ollama up -d`, which applies `OPENFN_WEBHOOK_API_KEY` from `.env` to both.
 - **An agent run never returns in a script**: stdin is open; add `-T` and `< /dev/null`.
 - **`docker compose up` fails on the first start**: read `docker compose logs lightning-setup bootstrap`; the bootstrap stops with the request that failed.
+- **The bootstrap stops with `the password of Fineract's admin 'mifos' is neither FINERACT_ADMIN_PASSWORD nor the default`**: the password was changed in the web app, or this `.env` is new while Fineract's volume is not. Set `FINERACT_ADMIN_PASSWORD` to the current password.
 
 ## 6. Adding an agent
 
@@ -282,7 +284,6 @@ This is a local evaluation sandbox. The model below says what protects what toda
 ### 7.4 Known limits
 
 - **Secrets are environment variables**: anyone who can run `docker inspect` can read them
-- **Fineract's default admin login** (`mifos` / `password`) is used by the bootstrap to set up the loan product, the roles and the agent users; change it for anything beyond a laptop
 - **The OpenFn worker is on `core`**, because the write-back job calls Fineract directly (as `agent-writeback`)
 - **Services with a published port have outbound internet**: Docker publishes ports only from networks with a route out
 - **The gateway and LOS APIs have no authentication** (127.0.0.1 only), and the LOS trusts `X-Actor` as sent
