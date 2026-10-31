@@ -15,6 +15,8 @@ export interface DeviceProfile {
   totalRamGb: number;
   /** Available (free) RAM in GB at check time */
   availableRamGb: number;
+  /** Free disk storage in GB */
+  freeDiskGb: number;
   /** Device brand (e.g., "Google", "Samsung") */
   brand: string;
   /** Device model (e.g., "Pixel 8", "SM-S911B") */
@@ -26,12 +28,6 @@ export interface DeviceProfile {
   /** Whether GPU acceleration (OpenCL/Metal) is likely available */
   hasGpuAcceleration: boolean;
 }
-
-/**
- * RAM safety factor: the model's file size × this factor estimates
- * peak runtime memory (KV-cache, activations, tokenizer overhead).
- */
-const RAM_SAFETY_FACTOR = 1.5;
 
 /**
  * Minimum free RAM headroom (in GB) to leave for the OS and other apps.
@@ -53,6 +49,7 @@ export async function profileDevice(): Promise<DeviceProfile> {
     ]);
 
   const totalRamGb = totalRam / (1024 * 1024 * 1024);
+  const freeDiskGb = freeDiskStorage / (1024 * 1024 * 1024);
 
   // Estimate available RAM — on Android we can't get free RAM directly
   // from react-native-device-info, so we use a conservative heuristic:
@@ -69,6 +66,7 @@ export async function profileDevice(): Promise<DeviceProfile> {
   return {
     totalRamGb,
     availableRamGb,
+    freeDiskGb,
     brand,
     model,
     osVersion,
@@ -95,11 +93,15 @@ export interface GateResult {
  * Rules:
  * 1. Total RAM must meet the model's minimum.
  * 2. Estimated runtime footprint must leave OS_HEADROOM_GB free.
- * 3. Emulators get a warning but are allowed (for dev/testing).
+ *    Note: mmap-backed weights are paged on demand (not fully resident),
+ *    so we use file size directly rather than a 1.5× multiplier.
+ * 3. Free disk storage must be sufficient for the model file.
+ * 4. Emulators get a warning but are allowed (for dev/testing).
  */
 export function gateModel(
   model: ModelConfig,
   device: DeviceProfile,
+  modelAlreadyDownloaded: boolean = false,
 ): GateResult {
   // Rule 1: Hard RAM floor
   if (device.totalRamGb < model.minRamGb) {
@@ -114,8 +116,12 @@ export function gateModel(
   }
 
   // Rule 2: Runtime memory estimate
-  const estimatedRuntimeGb =
-    (model.fileSizeBytes / (1024 * 1024 * 1024)) * RAM_SAFETY_FACTOR;
+  // With use_mmap enabled, model weights are memory-mapped and paged on
+  // demand by the OS — they don't occupy resident RAM all at once.
+  // The primary resident cost is the KV-cache and activations, which is
+  // much smaller than the file size. Use the file size as a conservative
+  // upper bound for the memory footprint check.
+  const estimatedRuntimeGb = model.fileSizeBytes / (1024 * 1024 * 1024);
   const remainingAfterLoad = device.totalRamGb - estimatedRuntimeGb;
 
   if (remainingAfterLoad < OS_HEADROOM_GB) {
@@ -129,12 +135,22 @@ export function gateModel(
     };
   }
 
-  // Determine GPU layers
-  const gpuLayers = device.hasGpuAcceleration
-    ? model.recommendedGpuLayers
-    : 0;
+  // Rule 3: Disk space check (only required if model is not already downloaded)
+  if (!modelAlreadyDownloaded) {
+    const modelFileSizeGb = model.fileSizeBytes / (1024 * 1024 * 1024);
+    if (device.freeDiskGb < modelFileSizeGb) {
+      return {
+        allowed: false,
+        reason:
+          `Insufficient disk space: ${device.freeDiskGb.toFixed(1)} GB free, ` +
+          `but ${model.name} requires ${modelFileSizeGb.toFixed(1)} GB.`,
+        recommendedGpuLayers: 0,
+      };
+    }
+  }
 
-  // Emulator warning (still allowed)
+  // Emulator warning (still allowed) — checked before GPU layer calc
+  // since emulators don't support GPU acceleration
   if (device.isEmulator) {
     return {
       allowed: true,
@@ -144,6 +160,11 @@ export function gateModel(
       recommendedGpuLayers: 0,
     };
   }
+
+  // Determine GPU layers (only for real devices)
+  const gpuLayers = device.hasGpuAcceleration
+    ? model.recommendedGpuLayers
+    : 0;
 
   return {
     allowed: true,
