@@ -5,7 +5,7 @@
 #
 #   ./scripts/gen-secrets.sh   # creates .env with generated passwords and keys
 #   docker compose up -d
-#   open http://localhost:4200   Mifos X web app (mifos / password)
+#   open http://localhost:4200   Mifos X web app (mifos / FINERACT_ADMIN_PASSWORD in .env)
 #   open http://localhost:4000   OpenFn Lightning (LIGHTNING_ADMIN_* in .env)
 #   curl http://localhost:8080/actuator/health   Agentic gateway (loan API)
 #   open http://localhost:8090/docs   LOS: commercial opportunities (los/README.md)
@@ -385,7 +385,9 @@ services:
     environment:
       FINERACT_URL: https://fineract:8443/fineract-provider/api/v1
       FINERACT_USERNAME: ${FINERACT_USERNAME:-mifos}
-      FINERACT_PASSWORD: ${FINERACT_PASSWORD:-password}
+      FINERACT_PASSWORD: ${FINERACT_ADMIN_PASSWORD:?run scripts/gen-secrets.sh}
+      # The image's default, tried only to change it to FINERACT_ADMIN_PASSWORD.
+      FINERACT_DEFAULT_PASSWORD: password
       FINERACT_TENANT: default
       LIGHTNING_URL: http://lightning:4000
       LIGHTNING_ADMIN_EMAIL: ${LIGHTNING_ADMIN_EMAIL}
