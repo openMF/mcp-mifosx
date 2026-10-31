@@ -355,6 +355,46 @@ services:
       WORKER_CAPACITY: ${LIGHTNING_WORKER_CAPACITY:-2}
       WORKER_MAX_RUN_DURATION_SECONDS: *max-run-seconds
       NODE_OPTIONS: --dns-result-order=ipv4first
+      # The watchdog below listens for the claim attempts an idle worker logs
+      # at debug level, every few seconds.
+      WORKER_LOG_LEVEL: debug
+      # Longer than any run may take (WORKER_MAX_RUN_DURATION_SECONDS).
+      WORKER_WATCHDOG_SECONDS: ${LIGHTNING_WORKER_WATCHDOG_SECONDS:-900}
+    # Watchdog for a ws-worker bug (still in 1.30.0): a claim sent just before
+    # the socket drops is never answered and keeps a capacity slot, so after
+    # the reconnect the worker believes it is full and never claims again,
+    # while staying alive. A working worker logs every few seconds when idle
+    # and ends every run within WORKER_MAX_RUN_DURATION_SECONDS, so silence
+    # for WORKER_WATCHDOG_SECONDS means it is stuck: stop it and exit, and the
+    # restart policy starts a fresh one.
+    command:
+      - sh
+      - -c
+      - |
+        fifo=/tmp/worker.log
+        rm -f "$$fifo" && mkfifo "$$fifo"
+        node ./dist/start.js > "$$fifo" 2>&1 &
+        pid=$$!
+        # The read end stays open on fd 3: reopening a FIFO blocks once the
+        # worker, its only writer, has exited.
+        exec 3< "$$fifo"
+        # docker stop: stop the worker, keep its last lines, exit with its code
+        trap 'kill -TERM "$$pid" 2>/dev/null; cat <&3; wait "$$pid"; exit $$?' TERM INT
+        while IFS= read -r -t "$$WORKER_WATCHDOG_SECONDS" line <&3; do
+          printf '%s\n' "$$line"
+        done
+        # read fails at the end of the output (the worker exited, and the shell
+        # has reaped it) and on the timeout (the worker is still running).
+        if kill -0 "$$pid" 2>/dev/null; then
+          echo "watchdog: no output from the worker for $$WORKER_WATCHDOG_SECONDS s, restarting it"
+          kill -TERM "$$pid"
+          (sleep 10; kill -KILL "$$pid" 2>/dev/null) &
+          wait "$$pid"
+          exit 1
+        fi
+        wait "$$pid"
+    # Reaps the processes the shell above does not wait for.
+    init: true
     user: node
     tmpfs: ["/tmp:size=64m"]
     # The adaptors the worker installs at run time (~70 MB): on disk rather
