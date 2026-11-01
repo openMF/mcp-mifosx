@@ -202,6 +202,7 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 | `OLLAMA_MEM_LIMIT` | `6g` | Ollama's memory cap; keep it below Docker's total |
 | `OLLAMA_URL` | the sandbox's Ollama | An Ollama server you already run, for the OpenFn jobs (the agents always use the sandbox's own) |
 | `LIGHTNING_WORKER_CAPACITY` | 2 | Runs the worker takes at a time |
+| `LIGHTNING_WORKER_WATCHDOG_SECONDS` | 900 | Seconds without worker output before the worker is restarted (7.4); keep it above a run's longest time (600) |
 | `FINERACT_TIMEZONE` | `UTC` | The default tenant's time zone |
 | `FINERACT_IMAGE`, `WEBAPP_IMAGE`, `LIGHTNING_IMAGE`, `LIGHTNING_WORKER_IMAGE`, `OLLAMA_IMAGE` | pinned | Test another version |
 
@@ -229,6 +230,7 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_li
 
 - **After a reboot (Docker Desktop on WSL), `fineract-db`, `lightning-db` or `web-app` exit with code 127**: Docker started them before WSL mounted the folder they read files from. Run `docker compose --profile ollama up -d` again.
 - **After a `git pull`, a container fails to start with `error mounting ... no such file or directory`** (Docker Desktop): one of the files mounted on their own (`fineract-rbac.json`, the database init scripts, the web app's nginx template) was replaced, and the container still points at the old one. Recreate it, e.g. `docker compose up -d --force-recreate bootstrap`.
+- **A case stays in `OPENFN_TRIGGERED`, and its run in Lightning stays `available`**: the worker stopped claiming runs (7.4). The watchdog restarts it within 15 minutes, and its log then shows `watchdog: no output from the worker ...`. To act at once, run `docker compose restart lightning-worker`, then submit the case again.
 - **A case stays in `LLM_DECISION`, or Ollama's log shows a model load that never finishes**: there is not enough free memory for the model. Free memory (or stop services you do not need) and submit again; the case itself turns `FAILED` after 15 minutes and the rules decide when the agent does not answer in time.
 - **A submit returns 500, and the gateway log shows `OpenFn webhook trigger failed: 401` or `404 ... Webhook not found`**: the gateway's API key is not the triggers' key. Run `docker compose --profile ollama up -d`, which applies `OPENFN_WEBHOOK_API_KEY` from `.env` to both.
 - **An agent run never returns in a script**: stdin is open; add `-T` and `< /dev/null`.
@@ -291,6 +293,7 @@ This is a local evaluation sandbox. The model below says what protects what toda
 - **OpenFn adaptors are installed from npm on first use**: pinned to exact versions that Renovate bumps, but without a lockfile, so an adaptor's own dependencies are resolved when it is installed, and the worker needs a route to npm
 - **No TLS between services**, and Fineract's self-signed certificate is not verified
 - **Application data and the callback secret are stored in Lightning's run data** (the webhook bodies)
+- **The OpenFn worker can stop claiming runs after a reconnect** (a ws-worker bug, still in 1.30.0): a watchdog restarts it after 15 minutes without output. Cases submitted meanwhile turn `FAILED` and must be submitted again
 - **Agents can reach each other's runners** on `agents-llm` / `openfn-agents`; each runner requires its own token
 
 ### 7.5 Measured agent reliability
