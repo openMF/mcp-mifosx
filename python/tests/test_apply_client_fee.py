@@ -8,6 +8,8 @@
 from typing import Any, Dict
 from unittest.mock import patch
 
+from fastmcp.exceptions import ToolError
+
 import mcp_server
 from tools.mcp_adapter import fineract_client
 
@@ -31,7 +33,7 @@ def _call(**kwargs: Any) -> Dict[str, Any]:
     fn = getattr(mcp_server.apply_client_fee, "fn", mcp_server.apply_client_fee)
     try:
         return fn(**kwargs)
-    except Exception as exc:  # safe_tool raises ToolError for {"error": ...}
+    except ToolError as exc:
         return {"error": str(exc)}
 
 
