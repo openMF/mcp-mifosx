@@ -476,8 +476,16 @@ def list_client_charges(clientId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("apply_client_fee")
-def apply_client_fee(clientId: int, chargeId: int, amount: float) -> dict:
-    """Apply a one-time fee/charge to a client profile"""
+def apply_client_fee(clientId: int, amount: float, chargeId: int = None) -> dict:
+    """Apply a one-time fee/charge to a client profile, due today. Validates clientId exists before executing.
+    chargeId is the charge to apply (a client charge with a specified due date). If it is
+    missing, nothing is charged and the error lists the available charges
+    (id = name (default amount)) so you can ask the user which one applies."""
+    check = get_client_details.func(clientId)
+    if not isinstance(check, dict) or "error" in check:
+        return _prefetch_failure(check, f"Client ID {clientId} not found.")
+    if chargeId is None:
+        return _charge_required("Client")
     return apply_client_charge.func(clientId, chargeId, amount)
 
 @mcp.tool()
@@ -652,7 +660,7 @@ def apply_loan_fee(loanId: int, feeAmount: float, chargeId: int = None) -> dict:
 
 def _charge_required(applies_to: str) -> dict:
     """Error for a fee without a chargeId, listing the charges that can be applied this way.
-    applies_to is the account type the charge is for, "Loan" or "Savings"."""
+    applies_to is what the charge is for: "Loan", "Savings", or "Client"."""
     charges = list_charges_domain.func()
     if not isinstance(charges, list):
         reason = charges.get("error") if isinstance(charges, dict) else charges
