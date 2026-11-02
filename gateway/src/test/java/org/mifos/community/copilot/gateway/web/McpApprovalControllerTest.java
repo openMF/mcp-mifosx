@@ -2,6 +2,8 @@
 package org.mifos.community.copilot.gateway.web;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.io.TempDir;
@@ -66,11 +68,13 @@ class McpApprovalControllerTest {
         assertThat(store.confirm(id, owner, a -> "session".equals(a.session().get("mcpSessionId")))).isPresent();
     }
 
-    @Test void immutablePayloadAndAtomicClaimReuseExistingStore() throws Exception {
-        Map<String, Object> mutable = new HashMap<>(Map.of("payload", PAYLOAD));
-        var card = store.create("mcp-test", new LlmToolCall("call", "create_client", mutable), "Create Alice",
+    @ParameterizedTest @ValueSource(strings = {"create_client", "update_client"})
+    void immutablePayloadAndAtomicClaimReuseExistingStore(String tool) throws Exception {
+        String payload = tool.equals("update_client") ? "{\"clientId\":123,\"firstname\":\"Alice\"}" : PAYLOAD;
+        Map<String, Object> mutable = new HashMap<>(Map.of("payload", payload));
+        var card = store.create("mcp-test", new LlmToolCall("call", tool, mutable), "Create Alice",
                 new CallContext("Bearer owner", "tenant", "test", Map.of("mcpSessionId", "session")), Map.of());
-        mutable.put("payload", PAYLOAD.replace("\"officeId\":1", "\"officeId\":99"));
+        mutable.put("payload", "{\"clientId\":456,\"firstname\":\"Changed\"}");
         assertThatThrownBy(() -> card.toolCall().arguments().put("payload", "tamper"))
                 .isInstanceOf(UnsupportedOperationException.class);
         assertThat(store.confirm(card.cardId(), new CallContext("Bearer stranger", "tenant", "test"), a -> true)).isEmpty();
@@ -81,7 +85,7 @@ class McpApprovalControllerTest {
         try (var pool = Executors.newFixedThreadPool(8)) {
             var results = pool.invokeAll(IntStream.range(0, 24).mapToObj(i -> (java.util.concurrent.Callable<Boolean>) () ->
                     store.take(card.cardId(), owner, a -> ticket.equals(a.claimToken()))
-                            .map(a -> { assertThat(a.toolCall().arguments().get("payload")).isEqualTo(PAYLOAD);
+                            .map(a -> { assertThat(a.toolCall().arguments().get("payload")).isEqualTo(payload);
                                 assertThat(a.expiresAt()).isEqualTo(card.expiresAt());
                                 assertThat(a.idempotencyKey()).isEqualTo(card.idempotencyKey()); return true; }).orElse(false)).toList());
             assertThat(results.stream().filter(result -> { try { return result.get(); } catch (Exception e) { throw new AssertionError(e); } }).count()).isEqualTo(1);
@@ -162,6 +166,63 @@ class McpApprovalControllerTest {
                 .header("Authorization", "Bearer owner").header("Fineract-Platform-TenantId", "tenant")
                 .header("X-MCP-Session-Id", "session").header("X-MCP-Approval-Bridge", TOKEN)
                 .bodyValue(Map.of("payload", PAYLOAD)).exchange().expectStatus().is5xxServerError();
+    }
+
+    @Test void updateReviewShowsOnlyResourceAndChangesAndClaimsBoundTool() {
+        String payload = "{\"clientId\":123,\"lastname\":\"Updated\"}";
+        var response = web.post().uri("/copilot/api/v1/internal/mcp/proposals/update-client")
+                .header("Authorization", "Bearer owner").header("Fineract-Platform-TenantId", "tenant")
+                .header("X-MCP-Session-Id", "session").header("X-MCP-Approval-Bridge", TOKEN)
+                .bodyValue(Map.of("payload", payload)).exchange().expectStatus().isOk()
+                .expectBody().jsonPath("$.action_card.tool").isEqualTo("update_client")
+                .jsonPath("$.action_card.args.clientId").isEqualTo(123)
+                .jsonPath("$.action_card.args.lastname").isEqualTo("Updated")
+                .jsonPath("$.action_card.args.firstname").doesNotExist()
+                .returnResult().getResponseBody();
+        try {
+            String id = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response).path("action_card").path("card_id").asText();
+            var entry = audit.find(id).orElseThrow();
+            assertThat(entry.tool()).isEqualTo("update_client");
+            assertThat(store.take(id, owner)).isEmpty();
+            claim(id, "model-ticket").expectStatus().isForbidden();
+            String ticket = store.confirm(id, owner, a -> true).orElseThrow();
+            claim(id, ticket).expectStatus().isOk().expectBody()
+                    .jsonPath("$.tool").isEqualTo("update_client").jsonPath("$.payload").isEqualTo(payload);
+            claim(id, ticket).expectStatus().isForbidden();
+        } catch (java.io.IOException e) { throw new AssertionError(e); }
+    }
+
+    @Test void invalidUpdatePayloadCannotEnterApprovalStore() {
+        for (String payload : new String[]{"{}", "{\"clientId\":123}", "{\"clientId\":0,\"firstname\":\"A\"}",
+                "{\"clientId\":1.5,\"firstname\":\"A\"}", "{\"clientId\":123,\"firstname\":null}",
+                "{\"clientId\":123,\"firstname\":\" \"}", "{\"clientId\":123,\"officeId\":2}",
+                "{\"clientId\":123,\"firstname\":\"A\",\"approve\":true}"}) {
+            web.post().uri("/copilot/api/v1/internal/mcp/proposals/update-client")
+                    .header("Authorization", "Bearer owner").header("Fineract-Platform-TenantId", "tenant")
+                    .header("X-MCP-Session-Id", "session").header("X-MCP-Approval-Bridge", TOKEN)
+                    .bodyValue(Map.of("payload", payload)).exchange().expectStatus().isForbidden();
+        }
+    }
+
+    @Test void updateUsesUnicodeCodePointLimitForBothNameFields() {
+        for (String character : new String[]{"A", "é", "𐐀"}) {
+            for (String field : new String[]{"firstname", "lastname"}) {
+                for (int count : new int[]{150, 200, 201}) {
+                    String name = character.repeat(count);
+                    String payload = "{\"clientId\":123,\"" + field + "\":\"" + name + "\"}";
+                    var response = web.post().uri("/copilot/api/v1/internal/mcp/proposals/update-client")
+                            .header("Authorization", "Bearer owner").header("Fineract-Platform-TenantId", "tenant")
+                            .header("X-MCP-Session-Id", "session").header("X-MCP-Approval-Bridge", TOKEN)
+                            .bodyValue(Map.of("payload", payload)).exchange();
+                    if (count > 200) {
+                        response.expectStatus().isForbidden();
+                    } else {
+                        response.expectStatus().isOk().expectBody()
+                                .jsonPath("$.action_card.args." + field).isEqualTo(name);
+                    }
+                }
+            }
+        }
     }
 
     private String propose() {

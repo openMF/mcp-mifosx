@@ -55,17 +55,22 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 		return err == nil && ok && owner == fingerprint
 	}
 	pilot := newCallerScopedHTTPServer(s.caller, hooks)
-	pilot.Registry.RegisterCreateClientProposal(func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		session := server.ClientSessionFromContext(ctx)
-		if session == nil || !owns(ctx, session.SessionID()) {
-			return mcp.NewToolResultError("a live owned MCP session is required"), nil
+	// Keep session ownership enforcement identical for both client proposals.
+	proposalHandler := func(propose func(context.Context, *adapter.ApprovalBridge, string, any) ([]byte, error)) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+			session := server.ClientSessionFromContext(ctx)
+			if session == nil || !owns(ctx, session.SessionID()) {
+				return mcp.NewToolResultError("a live owned MCP session is required"), nil
+			}
+			data, err := propose(ctx, bridge, session.SessionID(), req.Params.Arguments)
+			if err != nil {
+				return mcp.NewToolResultError(err.Error()), nil
+			}
+			return mcp.NewToolResultText(string(data)), nil
 		}
-		data, err := s.caller.ProposeClient(ctx, bridge, session.SessionID(), req.Params.Arguments)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return mcp.NewToolResultText(string(data)), nil
-	})
+	}
+	pilot.Registry.RegisterCreateClientProposal(proposalHandler(s.caller.ProposeClient))
+	pilot.Registry.RegisterUpdateClientProposal(proposalHandler(s.caller.ProposeClientUpdate))
 	sseServer := server.NewSSEServer(pilot.MCPServer)
 
 	mux := http.NewServeMux()
@@ -75,23 +80,31 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 	mux.HandleFunc("/api/capabilities", s.handleCapabilities)
 	// Deliberately outside the tool catalog and REST tool dispatcher. Only the
 	// human-decision gateway can invoke execution, never an MCP tool request.
-	mux.HandleFunc("/internal/approved-create-client/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if !bridge.Authorized(r.Header.Get("X-MCP-Approval-Bridge")) || !owns(r.Context(), r.Header.Get("X-MCP-Session-Id")) {
-			http.Error(w, "approval execution is not authorized", http.StatusForbidden)
-			return
-		}
-		data, err := s.caller.ExecuteApprovedClient(r.Context(), bridge, r.Header.Get("X-MCP-Session-Id"), strings.TrimPrefix(r.URL.Path, "/internal/approved-create-client/"), r.Header.Get("X-MCP-Decision-Token"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadGateway)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(data)
-	})
+	for _, action := range []struct {
+		path    string
+		execute func(context.Context, *adapter.ApprovalBridge, string, string, string) ([]byte, error)
+	}{
+		{"/internal/approved-create-client/", s.caller.ExecuteApprovedClient},
+		{"/internal/approved-update-client/", s.caller.ExecuteApprovedClientUpdate},
+	} {
+		mux.HandleFunc(action.path, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodPost {
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if !bridge.Authorized(r.Header.Get("X-MCP-Approval-Bridge")) || !owns(r.Context(), r.Header.Get("X-MCP-Session-Id")) {
+				http.Error(w, "approval execution is not authorized", http.StatusForbidden)
+				return
+			}
+			data, err := action.execute(r.Context(), bridge, r.Header.Get("X-MCP-Session-Id"), strings.TrimPrefix(r.URL.Path, action.path), r.Header.Get("X-MCP-Decision-Token"))
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadGateway)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(data)
+		})
+	}
 
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -101,7 +114,7 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 	for _, def := range pilot.Registry.ToolDefs {
 		d := def
 		// Writes require the MCP session; no sessionless REST proposal route.
-		if d.Name == "create_client" {
+		if d.Name == "create_client" || d.Name == "update_client" {
 			continue
 		}
 		path := "/api/" + d.Name
@@ -125,7 +138,7 @@ func (s *MifosHTTPServer) Handler() http.Handler {
 			return
 		}
 
-		if strings.HasPrefix(r.URL.Path, "/internal/approved-create-client/") || r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" || r.URL.Path == "/api/search_clients" || r.URL.Path == "/api/get_client_accounts" || r.URL.Path == "/api/capabilities" {
+		if strings.HasPrefix(r.URL.Path, "/internal/approved-create-client/") || strings.HasPrefix(r.URL.Path, "/internal/approved-update-client/") || r.URL.Path == "/sse" || r.URL.Path == "/message" || r.URL.Path == "/api/get_client" || r.URL.Path == "/api/search_clients" || r.URL.Path == "/api/get_client_accounts" || r.URL.Path == "/api/capabilities" {
 			// Exactly one value per identity header; no query/body/session defaults.
 			auth, tenant := r.Header.Values("Authorization"), r.Header.Values("X-Mifos-Tenant-Id")
 			if len(auth) != 1 || len(tenant) != 1 {

@@ -30,7 +30,7 @@ func TestApprovedClientDisablesTransportBodyReplay(t *testing.T) {
 		if r.URL.Path != "/copilot/api/v1/internal/mcp/claims/"+card || r.Header.Get("X-MCP-Decision-Token") != "human-ticket" {
 			t.Error("missing human decision claim")
 		}
-		json.NewEncoder(w).Encode(map[string]string{"payload": payload, "idempotency_key": key, "card_id": card})
+		json.NewEncoder(w).Encode(map[string]string{"tool": "create_client", "payload": payload, "idempotency_key": key, "card_id": card})
 	}))
 	defer gateway.Close()
 	writes := 0
@@ -102,7 +102,7 @@ func TestApprovedClientAuditOutcomes(t *testing.T) {
 						w.WriteHeader(503)
 						return
 					}
-					json.NewEncoder(w).Encode(map[string]string{"payload": payload, "idempotency_key": key, "card_id": card})
+					json.NewEncoder(w).Encode(map[string]string{"tool": "create_client", "payload": payload, "idempotency_key": key, "card_id": card})
 				case "/copilot/api/v1/internal/mcp/results/" + card:
 					reports.Add(1)
 					data, _ := io.ReadAll(r.Body)

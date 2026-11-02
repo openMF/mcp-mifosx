@@ -8,13 +8,16 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ClientCreation is deliberately limited to the existing create_client fields.
@@ -42,6 +45,67 @@ func ParseClientCreation(data []byte) (ClientCreation, error) {
 		}
 	}
 	return action, nil
+}
+
+// ClientUpdate binds the resource and changes in one immutable approval payload.
+// Fields deliberately match the existing update_client schema.
+type ClientUpdate struct {
+	ClientID  int64   `json:"clientId"`
+	Firstname *string `json:"firstname,omitempty"`
+	Lastname  *string `json:"lastname,omitempty"`
+}
+
+func ParseClientUpdate(data []byte) (ClientUpdate, error) {
+	var action ClientUpdate
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	invalid := errors.New("invalid update_client arguments")
+	if dec.Decode(&action) != nil || dec.Decode(new(any)) != io.EOF || action.ClientID <= 0 || (action.Firstname == nil && action.Lastname == nil) {
+		return ClientUpdate{}, invalid
+	}
+	// Explicit nulls are not updates and must not silently disappear from review.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return ClientUpdate{}, invalid
+	}
+	for name, value := range fields {
+		if name != "clientId" && bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			return ClientUpdate{}, invalid
+		}
+	}
+	for _, value := range []*string{action.Firstname, action.Lastname} {
+		if value != nil && (strings.TrimSpace(*value) == "" || utf8.RuneCountInString(*value) > 200 || strings.ContainsAny(*value, "\x00\r\n")) {
+			return ClientUpdate{}, invalid
+		}
+	}
+	return action, nil
+}
+
+func (c *CallerClient) ProposeClientUpdate(ctx context.Context, b *ApprovalBridge, session string, args any) ([]byte, error) {
+	raw, err := json.Marshal(args)
+	if err != nil {
+		return nil, fmt.Errorf("marshal update_client arguments: %w", err)
+	}
+	action, err := ParseClientUpdate(raw)
+	if err != nil {
+		return nil, err
+	}
+	permission, err := c.ClientPermissions(ctx)
+	if err != nil || !permission.Update {
+		return nil, errors.New("update_client is not available for the authenticated caller")
+	}
+	payload, err := json.Marshal(action)
+	if err != nil {
+		return nil, fmt.Errorf("marshal update_client proposal: %w", err)
+	}
+	call, err := callerContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err = safeCallerResponse(payload, call); err != nil {
+		return nil, errors.New("invalid update_client arguments")
+	}
+	return b.request(ctx, "proposals/update-client", session, "", map[string]string{"payload": string(payload)})
 }
 
 // ApprovalBridge has no pending state. The gateway's ApprovalStore remains the
@@ -136,7 +200,17 @@ var approvalCardID = regexp.MustCompile(`^card-[a-f0-9-]{36}$`)
 // ExecuteApprovedClient is reachable only from the trusted gateway callback.
 // It fetches the immutable payload through ApprovalStore.take; even duplicate
 // or concurrent callbacks cannot claim the same action twice. Never retry writes.
-func (c *CallerClient) ExecuteApprovedClient(ctx context.Context, b *ApprovalBridge, session, cardID, ticket string) (data []byte, resultErr error) {
+func (c *CallerClient) ExecuteApprovedClient(ctx context.Context, b *ApprovalBridge, session, cardID, ticket string) ([]byte, error) {
+	return c.executeApprovedClient(ctx, b, session, cardID, ticket, "create_client")
+}
+
+func (c *CallerClient) ExecuteApprovedClientUpdate(ctx context.Context, b *ApprovalBridge, session, cardID, ticket string) ([]byte, error) {
+	return c.executeApprovedClient(ctx, b, session, cardID, ticket, "update_client")
+}
+
+// Shared only for the two client operations: claim, identity, replay and audit checks
+// stay identical. The stored resource is never supplied by a decision or callback.
+func (c *CallerClient) executeApprovedClient(ctx context.Context, b *ApprovalBridge, session, cardID, ticket, tool string) (data []byte, resultErr error) {
 	call, err := callerContext(ctx)
 	if err != nil {
 		return nil, err
@@ -145,8 +219,8 @@ func (c *CallerClient) ExecuteApprovedClient(ctx context.Context, b *ApprovalBri
 		return nil, errors.New("invalid approval")
 	}
 	permission, err := c.ClientPermissions(ctx)
-	if err != nil || !permission.Create {
-		return nil, errors.New("create_client is not available for the authenticated caller")
+	if err != nil || (tool == "create_client" && !permission.Create) || (tool == "update_client" && !permission.Update) {
+		return nil, errors.New(tool + " is not available for the authenticated caller")
 	}
 	raw, err := b.request(ctx, "claims/"+cardID, session, ticket, struct{}{})
 	if err != nil {
@@ -160,21 +234,43 @@ func (c *CallerClient) ExecuteApprovedClient(ctx context.Context, b *ApprovalBri
 		defer cancel()
 		if _, err := b.request(reportCtx, "results/"+cardID, session, ticket, outcome); err != nil {
 			data = nil
-			resultErr = errors.New("create_client outcome could not be audited; do not retry")
+			resultErr = errors.New(tool + " outcome could not be audited; do not retry")
 		}
 	}()
 	var claim struct {
+		Tool           string `json:"tool"`
 		Payload        string `json:"payload"`
 		IdempotencyKey string `json:"idempotency_key"`
 		CardID         string `json:"card_id"`
 	}
-	if json.Unmarshal(raw, &claim) != nil || claim.CardID != cardID || !regexp.MustCompile(`^cop-[a-f0-9-]{36}$`).MatchString(claim.IdempotencyKey) {
+	if json.Unmarshal(raw, &claim) != nil || claim.CardID != cardID || claim.Tool != tool || !regexp.MustCompile(`^cop-[a-f0-9-]{36}$`).MatchString(claim.IdempotencyKey) {
 		return nil, errors.New("invalid approval gateway response")
 	}
-	if _, err := ParseClientCreation([]byte(claim.Payload)); err != nil {
+	method, endpoint, payload := http.MethodPost, "/clients", claim.Payload
+	if tool == "update_client" {
+		action, err := ParseClientUpdate([]byte(claim.Payload))
+		if err != nil {
+			return nil, err
+		}
+		endpoint += "/" + strconv.FormatInt(action.ClientID, 10)
+		method = http.MethodPut
+		// Only approved change fields enter the Fineract body; the resource enters the URL.
+		changes := map[string]string{}
+		if action.Firstname != nil {
+			changes["firstname"] = *action.Firstname
+		}
+		if action.Lastname != nil {
+			changes["lastname"] = *action.Lastname
+		}
+		body, err := json.Marshal(changes)
+		if err != nil {
+			return nil, fmt.Errorf("marshal approved update_client changes: %w", err)
+		}
+		payload = string(body)
+	} else if _, err := ParseClientCreation([]byte(claim.Payload)); err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/clients", strings.NewReader(claim.Payload))
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, strings.NewReader(payload))
 	if err != nil {
 		return nil, errors.New("could not construct Fineract request")
 	}

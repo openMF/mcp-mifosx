@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -23,13 +24,29 @@ func clientCreationArgs() map[string]any {
 		"active": true, "activationDate": "2026-10-23", "dateFormat": "yyyy-MM-dd", "locale": "en"}
 }
 
-func TestHTTPCreateClientProposalBoundary(t *testing.T) {
-	for _, permission := range []string{"CREATE_CLIENT", "ALL_FUNCTIONS", "READ_CLIENT", "ALL_FUNCTIONS_READ", "CREATE_CLIENT_CHECKER", "CREATE_CLIENTIMAGE", "create_client", " CREATE_CLIENT "} {
+func clientUpdateArgs() map[string]any {
+	return map[string]any{"clientId": 123, "firstname": "Alice", "lastname": "Officer"}
+}
+
+func TestHTTPClientProposalBoundary(t *testing.T) {
+	for _, tool := range []string{"create_client", "update_client"} {
+		t.Run(tool, func(t *testing.T) { testHTTPClientProposalBoundary(t, tool) })
+	}
+}
+
+func testHTTPClientProposalBoundary(t *testing.T, tool string) {
+	args := clientCreationArgs()
+	proposalPath := "/copilot/api/v1/internal/mcp/proposals"
+	if tool == "update_client" {
+		args = clientUpdateArgs()
+		proposalPath += "/update-client"
+	}
+	for _, permission := range []string{"CREATE_CLIENT", "UPDATE_CLIENT", "UPDATE_CLIENT_CHECKER", "UPDATE_CLIENTNOTE", "update_client", " UPDATE_CLIENT ", "ALL_FUNCTIONS", "READ_CLIENT", "ALL_FUNCTIONS_READ", "CREATE_CLIENT_CHECKER", "CREATE_CLIENTIMAGE", "create_client", " CREATE_CLIENT "} {
 		t.Run(permission, func(t *testing.T) {
-			allowed := permission == "CREATE_CLIENT" || permission == "ALL_FUNCTIONS"
+			allowed := permission == strings.ToUpper(tool) || permission == "ALL_FUNCTIONS"
 			var writes, proposals atomic.Int32
 			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/copilot/api/v1/internal/mcp/proposals" || r.Header.Get("Authorization") != "Bearer officer-secret" || r.Header.Get("Fineract-Platform-TenantId") != "tenant-X" || r.Header.Get("X-MCP-Approval-Bridge") != bridgeSecret || r.Header.Get("X-MCP-Session-Id") == "" {
+				if r.URL.Path != proposalPath || r.Header.Get("Authorization") != "Bearer officer-secret" || r.Header.Get("Fineract-Platform-TenantId") != "tenant-X" || r.Header.Get("X-MCP-Approval-Bridge") != bridgeSecret || r.Header.Get("X-MCP-Session-Id") == "" {
 					t.Error("proposal changed caller, tenant, session or bridge identity")
 				}
 				var proposed struct {
@@ -38,9 +55,16 @@ func TestHTTPCreateClientProposalBoundary(t *testing.T) {
 				if json.NewDecoder(r.Body).Decode(&proposed) != nil {
 					t.Error("invalid proposal envelope")
 				}
-				action, err := adapter.ParseClientCreation([]byte(proposed.Payload))
-				if err != nil || action.Firstname != "Alice" || action.OfficeID != 1 {
-					t.Error("invalid proposal payload")
+				if tool == "update_client" {
+					action, err := adapter.ParseClientUpdate([]byte(proposed.Payload))
+					if err != nil || action.ClientID != 123 || action.Firstname == nil || *action.Firstname != "Alice" {
+						t.Error("invalid update payload")
+					}
+				} else {
+					action, err := adapter.ParseClientCreation([]byte(proposed.Payload))
+					if err != nil || action.Firstname != "Alice" || action.OfficeID != 1 {
+						t.Error("invalid create payload")
+					}
 				}
 				proposals.Add(1)
 				io.WriteString(w, `{"status":"pending_approval","action_card":{"card_id":"card-test","tool":"create_client"}}`)
@@ -58,14 +82,18 @@ func TestHTTPCreateClientProposalBoundary(t *testing.T) {
 			})
 			c := connect(t, h.URL, "Bearer officer-secret", "tenant-X")
 			want := []string{}
-			if allowed {
+			if permission == "ALL_FUNCTIONS" || permission == "CREATE_CLIENT" {
 				want = append(want, "create_client")
+			}
+			if permission == "ALL_FUNCTIONS" || permission == "UPDATE_CLIENT" {
+				want = append(want, "update_client")
 			}
 			if permission == "ALL_FUNCTIONS" || permission == "READ_CLIENT" || permission == "ALL_FUNCTIONS_READ" {
 				want = append(want, clientReadNames...)
 			}
+			sort.Strings(want)
 			assertToolList(t, c, want)
-			result, err := c.CallTool(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "create_client", Arguments: clientCreationArgs()}})
+			result, err := c.CallTool(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: tool, Arguments: args}})
 			if allowed {
 				if err != nil || result.IsError || !strings.Contains(result.Content[0].(mcp.TextContent).Text, "pending_approval") {
 					t.Fatalf("proposal failed: %v %v", result, err)
@@ -89,12 +117,16 @@ func TestHTTPCreateClientProposalBoundary(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if _, err := caller.ProposeClient(ctx, adapter.NewApprovalBridge(), "session", clientCreationArgs()); err == nil {
+				propose := caller.ProposeClient
+				if tool == "update_client" {
+					propose = caller.ProposeClientUpdate
+				}
+				if _, err := propose(ctx, adapter.NewApprovalBridge(), "session", args); err == nil {
 					t.Fatal("direct proposal bypassed capability enforcement")
 				}
 			}
 
-			for _, name := range []string{"approve", "approve_action", "execute_create_client"} {
+			for _, name := range []string{"approve", "approve_action", "execute_create_client", "execute_update_client"} {
 				_, err := c.CallTool(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: name}})
 				if err == nil {
 					t.Fatal("model can access an approval tool")
@@ -177,5 +209,55 @@ func TestHTTPCreateClientExecutionRequiresCallerAndBridge(t *testing.T) {
 	}
 	if calls.Load() != 0 {
 		t.Fatal("missing/foreign identity reached Fineract")
+	}
+}
+
+func TestHTTPUpdateValidationAndExecutionBoundary(t *testing.T) {
+	t.Setenv("MIFOSX_APPROVAL_GATEWAY_URL", "")
+	t.Setenv("MCP_APPROVAL_BRIDGE_TOKEN", "")
+	var calls atomic.Int32
+	h, _ := pilot(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/userdetails" {
+			io.WriteString(w, `{"authenticated":true,"permissions":["UPDATE_CLIENT"]}`)
+			return
+		}
+		calls.Add(1)
+	})
+	c := connect(t, h.URL, "Bearer officer-secret", "tenant-X")
+	for _, args := range []map[string]any{
+		{"clientId": 123}, {"clientId": -1, "firstname": "A"}, {"clientId": 1.5, "firstname": "A"},
+		{"clientId": "123", "firstname": "A"}, {"clientId": 123, "firstname": " "},
+		{"clientId": 123, "firstname": "A", "approve": true}, {"clientId": 123, "firstname": nil, "lastname": "B"},
+		clientUpdateArgs(), // Valid fields also fail closed when the bridge is unavailable.
+	} {
+		result, err := c.CallTool(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "update_client", Arguments: args}})
+		if err == nil && !result.IsError {
+			t.Fatal("invalid or unavailable proposal accepted")
+		}
+	}
+	for _, identity := range [][2]string{{"", "tenant-X"}, {"Bearer officer-secret", ""}, {"Bearer other", "tenant-X"}, {"Bearer officer-secret", "other"}} {
+		req, _ := http.NewRequest(http.MethodPost, h.URL+"/internal/approved-update-client/card-00000000-0000-0000-0000-000000000001", nil)
+		req.Header.Set("Authorization", identity[0])
+		req.Header.Set("X-Mifos-Tenant-Id", identity[1])
+		req.Header.Set("X-MCP-Session-Id", "unowned-session")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 401 && resp.StatusCode != 403 {
+			t.Fatal("unauthorized execution accepted")
+		}
+	}
+	resp, err := http.Get(h.URL + "/api/update_client")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatal("sessionless update exposed")
+	}
+	if calls.Load() != 0 {
+		t.Fatal("invalid proposal or callback reached Fineract")
 	}
 }

@@ -43,10 +43,15 @@ func CallerCapabilities(ctx context.Context, caller *adapter.CallerClient) ([]To
 	if !permitted.Create {
 		createReason = "missing_permission"
 	}
+	updateReason := ""
+	if !permitted.Update {
+		updateReason = "missing_permission"
+	}
 	return []ToolCapability{
 		{Tool: "get_client", Available: permitted.Read, Reason: reason},
 		{Tool: "search_clients", Available: permitted.Read, Reason: reason},
 		{Tool: "get_client_accounts", Available: permitted.Read, Reason: reason},
 		{Tool: "create_client", Available: permitted.Create, Reason: createReason},
+		{Tool: "update_client", Available: permitted.Update, Reason: updateReason},
 	}, nil
 }

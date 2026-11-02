@@ -42,7 +42,7 @@ public final class ApprovalStore {
     }
 
     private boolean audited(PendingApproval approval) {
-        return "create_client".equals(approval.toolCall().name()) && approval.session().containsKey("mcpSessionId");
+        return ("create_client".equals(approval.toolCall().name()) || "update_client".equals(approval.toolCall().name())) && approval.session().containsKey("mcpSessionId");
     }
 
     private ActionAudit audit() {
@@ -97,7 +97,7 @@ public final class ApprovalStore {
                 context.session());
         if (audited(approval)) {
             String now = Instant.now().toString();
-            audit().create(new ActionAudit.Entry(approval.cardId(), "create_client", context.tenantId(),
+            audit().create(new ActionAudit.Entry(approval.cardId(), approval.toolCall().name(), context.tenantId(),
                     approval.securityFingerprint(), sessionReference((String) approval.session().get("mcpSessionId")),
                     State.proposed, now, now, null, null));
         }

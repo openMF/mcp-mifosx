@@ -252,7 +252,7 @@ or expose approval as an LLM tool.
 
 The existing `card_id` is the canonical correlation ID, including Fineract's
 `X-Correlation-Id`. The separate `cop-…` idempotency key still prevents duplicate
-execution; it is not the correlation ID. Only this Go MCP `create_client` flow is audited.
+execution; it is not the correlation ID. The Go MCP `create_client` and `update_client` flows share this audit journal.
 
 `MCP_CREATE_CLIENT_AUDIT_PATH` selects a durable append-only JSONL journal (default:
 `./data/create-client-audit.jsonl`, relative to the gateway's working directory).
@@ -283,3 +283,12 @@ A torn or unreadable journal fails closed and requires operator recovery. The pl
 `mcp_tool_execution_log` migration currently has no writer or gateway connection;
 an adapter to that table, shared storage, retention/rotation, and automatic reconciliation
 are deferred behind the small `ActionAudit` interface.
+
+Caller-scoped `update_client` reuses the same action cards, human decision endpoint,
+session binding, atomic claim, and audit lifecycle. Its proposal route is
+`/copilot/api/v1/internal/mcp/proposals/update-client`; approval calls the Go
+`/internal/approved-update-client/{cardId}` route. The immutable payload includes
+`clientId` and the supplied `firstname` / `lastname` changes. Claims include the
+stored tool name so Go refuses operation substitution. Deploy both services
+together. The existing `MCP_CREATE_CLIENT_AUDIT_PATH` setting deliberately remains
+unchanged and now stores both client operations.
