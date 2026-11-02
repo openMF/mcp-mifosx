@@ -17,7 +17,7 @@
 5. Lightning: provision the OpenFn project from project.yaml.
 
 Every id in the provisioned project is derived from its key in project.yaml
-(UUID v5), and the two webhook trigger ids come from the compose file, so
+(UUID v5), and the three webhook trigger ids come from the compose file, so
 webhook URLs never change and a re-run updates the same project instead of
 creating a second one.
 """
@@ -268,6 +268,9 @@ def credential_body(name, product_id):
             # Fineract inside the sandbox uses a self-signed certificate.
             "tls": {"rejectUnauthorized": False},
         }
+    if name == "los":
+        # The LOS API, for the intake job.
+        return {"baseUrl": env("LOS_URL")}
     if name.startswith("agent-"):
         # An agent's HTTP runner: AGENT_<NAME>_URL and AGENT_<NAME>_TOKEN.
         prefix = "AGENT_" + name.removeprefix("agent-").upper().replace("-", "_")
@@ -324,7 +327,11 @@ def provisioning_document(spec, trigger_ids, owner):
         for key, trigger in (wf.get("triggers") or {}).items():
             trigger_id = trigger_ids.get(key) or stable_id(project_key, wf_key, "trigger", key)
             trigger_ids_by_key[key] = trigger_id
-            triggers.append({"id": trigger_id, "type": trigger["type"], "enabled": trigger.get("enabled", True)})
+            entry = {"id": trigger_id, "type": trigger["type"], "enabled": trigger.get("enabled", True)}
+            # after_completion: the webhook answers with the run's result.
+            if trigger.get("webhook_reply"):
+                entry["webhook_reply"] = trigger["webhook_reply"]
+            triggers.append(entry)
         jobs = []
         for key, job in (wf.get("jobs") or {}).items():
             entry = {"id": job_ids[key], "name": job["name"], "adaptor": job["adaptor"], "body": job["body"]}
@@ -364,6 +371,7 @@ def provision_project(product_id):
     trigger_ids = {
         "webhook-loan-submit": env("OPENFN_TRIGGER_LOAN_SUBMIT"),
         "webhook-loan-review": env("OPENFN_TRIGGER_LOAN_REVIEW"),
+        "webhook-opportunity-intake": env("OPENFN_TRIGGER_OPPORTUNITY_INTAKE"),
     }
     for cred in (spec.get("credentials") or {}).values():
         name = cred["name"]
