@@ -206,7 +206,7 @@ public class McpApprovalController {
                 if (field.getKey().equals("clientId")) { continue; }
                 if (!Set.of("firstname", "lastname").contains(field.getKey())) { throw invalid(); }
                 JsonNode value = field.getValue();
-                if (!value.isTextual() || value.asText().isBlank() || value.asText().length() > 200
+                if (!value.isTextual() || value.asText().isBlank() || value.asText().codePointCount(0, value.asText().length()) > 200
                         || value.asText().contains("\r") || value.asText().contains("\n") || value.asText().contains("\0")) { throw invalid(); }
             }
             return args;

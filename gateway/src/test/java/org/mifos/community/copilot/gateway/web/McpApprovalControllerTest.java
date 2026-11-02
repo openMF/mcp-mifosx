@@ -204,6 +204,27 @@ class McpApprovalControllerTest {
         }
     }
 
+    @Test void updateUsesUnicodeCodePointLimitForBothNameFields() {
+        for (String character : new String[]{"A", "é", "𐐀"}) {
+            for (String field : new String[]{"firstname", "lastname"}) {
+                for (int count : new int[]{150, 200, 201}) {
+                    String name = character.repeat(count);
+                    String payload = "{\"clientId\":123,\"" + field + "\":\"" + name + "\"}";
+                    var response = web.post().uri("/copilot/api/v1/internal/mcp/proposals/update-client")
+                            .header("Authorization", "Bearer owner").header("Fineract-Platform-TenantId", "tenant")
+                            .header("X-MCP-Session-Id", "session").header("X-MCP-Approval-Bridge", TOKEN)
+                            .bodyValue(Map.of("payload", payload)).exchange();
+                    if (count > 200) {
+                        response.expectStatus().isForbidden();
+                    } else {
+                        response.expectStatus().isOk().expectBody()
+                                .jsonPath("$.action_card.args." + field).isEqualTo(name);
+                    }
+                }
+            }
+        }
+    }
+
     private String propose() {
         var response = web.post().uri("/copilot/api/v1/internal/mcp/proposals")
                 .header("Authorization", "Bearer owner").header("Fineract-Platform-TenantId", "tenant")

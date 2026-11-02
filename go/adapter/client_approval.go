@@ -8,6 +8,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // ClientCreation is deliberately limited to the existing create_client fields.
@@ -72,7 +74,7 @@ func ParseClientUpdate(data []byte) (ClientUpdate, error) {
 		}
 	}
 	for _, value := range []*string{action.Firstname, action.Lastname} {
-		if value != nil && (strings.TrimSpace(*value) == "" || len(*value) > 200 || strings.ContainsAny(*value, "\x00\r\n")) {
+		if value != nil && (strings.TrimSpace(*value) == "" || utf8.RuneCountInString(*value) > 200 || strings.ContainsAny(*value, "\x00\r\n")) {
 			return ClientUpdate{}, invalid
 		}
 	}
@@ -82,7 +84,7 @@ func ParseClientUpdate(data []byte) (ClientUpdate, error) {
 func (c *CallerClient) ProposeClientUpdate(ctx context.Context, b *ApprovalBridge, session string, args any) ([]byte, error) {
 	raw, err := json.Marshal(args)
 	if err != nil {
-		return nil, errors.New("invalid update_client arguments")
+		return nil, fmt.Errorf("marshal update_client arguments: %w", err)
 	}
 	action, err := ParseClientUpdate(raw)
 	if err != nil {
@@ -92,7 +94,10 @@ func (c *CallerClient) ProposeClientUpdate(ctx context.Context, b *ApprovalBridg
 	if err != nil || !permission.Update {
 		return nil, errors.New("update_client is not available for the authenticated caller")
 	}
-	payload, _ := json.Marshal(action)
+	payload, err := json.Marshal(action)
+	if err != nil {
+		return nil, fmt.Errorf("marshal update_client proposal: %w", err)
+	}
 	call, err := callerContext(ctx)
 	if err != nil {
 		return nil, err
@@ -257,7 +262,10 @@ func (c *CallerClient) executeApprovedClient(ctx context.Context, b *ApprovalBri
 		if action.Lastname != nil {
 			changes["lastname"] = *action.Lastname
 		}
-		body, _ := json.Marshal(changes)
+		body, err := json.Marshal(changes)
+		if err != nil {
+			return nil, fmt.Errorf("marshal approved update_client changes: %w", err)
+		}
 		payload = string(body)
 	} else if _, err := ParseClientCreation([]byte(claim.Payload)); err != nil {
 		return nil, err

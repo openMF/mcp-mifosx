@@ -5,6 +5,7 @@ package adapter
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -127,5 +128,33 @@ func TestApprovedClientCannotSubstituteOperation(t *testing.T) {
 				t.Fatal("operation substitution accepted")
 			}
 		})
+	}
+}
+
+func TestClientUpdateUnicodeCharacterLimit(t *testing.T) {
+	for _, character := range []string{"A", "é", "𐐀"} {
+		for _, field := range []string{"firstname", "lastname"} {
+			for _, count := range []int{150, 200, 201} {
+				t.Run(fmt.Sprintf("%s/%s/%d", character, field, count), func(t *testing.T) {
+					raw, err := json.Marshal(map[string]any{"clientId": 123, field: strings.Repeat(character, count)})
+					if err != nil {
+						t.Fatal(err)
+					}
+					_, err = ParseClientUpdate(raw)
+					if (err != nil) != (count > 200) {
+						t.Fatalf("%d code points: %v", count, err)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestClientUpdateMarshalErrorIsWrapped(t *testing.T) {
+	caller := &CallerClient{}
+	_, err := caller.ProposeClientUpdate(context.Background(), &ApprovalBridge{}, "session", map[string]any{"firstname": make(chan int)})
+	var marshalErr *json.UnsupportedTypeError
+	if !errors.As(err, &marshalErr) {
+		t.Fatalf("marshal error was not wrapped: %v", err)
 	}
 }
