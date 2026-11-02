@@ -104,7 +104,7 @@ public final class FileActionAudit implements ActionAudit, AutoCloseable {
             channel.force(true);
             latest.put(entry.correlationId(), entry);
             System.getLogger(FileActionAudit.class.getName()).log(System.Logger.Level.INFO,
-                    "[correlationId={0}] create_client {1}", entry.correlationId(), entry.state());
+                    "[correlationId={0}] {1} {2}", entry.correlationId(), entry.tool(), entry.state());
         } catch (IOException failure) {
             unavailable = true;
             throw unavailable();

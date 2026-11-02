@@ -23,7 +23,7 @@ func (c *CallerClient) ClientReadPermitted(ctx context.Context) (bool, error) {
 }
 
 // ClientPermissions is the narrow CLIENT capability projection, never raw auth data.
-type ClientPermissions struct{ Read, Create bool }
+type ClientPermissions struct{ Read, Create, Update bool }
 
 func (c *CallerClient) ClientPermissions(ctx context.Context) (ClientPermissions, error) {
 	return c.clientPermissions(ctx)
@@ -97,13 +97,16 @@ func (c *CallerClient) clientPermissions(ctx context.Context) (ClientPermissions
 		// Verified in Fineract AppUser.validateHasReadPermission and
 		// ClientsApiResource: the read endpoints read CLIENT. CREATE_CLIENT is
 		// seeded in tenant/parts/0002_initial_data.xml (permission ID 111).
+		// UPDATE_CLIENT is seeded alongside it for the client PUT operation.
 		switch permission {
 		case "READ_CLIENT", "ALL_FUNCTIONS_READ":
 			permitted.Read = true
+		case "UPDATE_CLIENT":
+			permitted.Update = true
 		case "CREATE_CLIENT":
 			permitted.Create = true
 		case "ALL_FUNCTIONS":
-			permitted.Read, permitted.Create = true, true
+			permitted.Read, permitted.Create, permitted.Update = true, true, true
 		}
 	}
 	return permitted, nil

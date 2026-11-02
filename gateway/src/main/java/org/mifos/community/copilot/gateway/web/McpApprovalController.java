@@ -65,20 +65,30 @@ public class McpApprovalController {
 
     @PostMapping("/internal/mcp/proposals")
     public Map<String, Object> propose(@RequestBody Proposal proposal, ServerHttpRequest request) {
+        return proposeClient(proposal, request, "create_client");
+    }
+
+    @PostMapping("/internal/mcp/proposals/update-client")
+    public Map<String, Object> proposeUpdate(@RequestBody Proposal proposal, ServerHttpRequest request) {
+        return proposeClient(proposal, request, "update_client");
+    }
+
+    private Map<String, Object> proposeClient(Proposal proposal, ServerHttpRequest request, String tool) {
         requireBridge(request);
         CallContext context = context(request);
         String session = header(request, "X-MCP-Session-Id");
-        JsonNode args = parsePayload(proposal.payload());
+        JsonNode args = tool.equals("update_client") ? parseUpdatePayload(proposal.payload()) : parsePayload(proposal.payload());
         Map<String, String> rows = new LinkedHashMap<>();
         args.fields().forEachRemaining(field -> rows.put(field.getKey(), field.getValue().asText()));
-        String summary = "Create client " + args.get("firstname").asText() + " " + args.get("lastname").asText();
+        String summary = tool.equals("update_client") ? "Update client " + args.get("clientId").asText()
+                : "Create client " + args.get("firstname").asText() + " " + args.get("lastname").asText();
         // Payload is an immutable String, held in an immutable map. Never reconstruct
         // it from decision arguments, session facts, defaults or mutable UI state.
         PendingApproval approval = approvals.create("mcp-" + UUID.randomUUID(),
-                new LlmToolCall("mcp-" + UUID.randomUUID(), "create_client", Map.of("payload", proposal.payload())),
+                new LlmToolCall("mcp-" + UUID.randomUUID(), tool, Map.of("payload", proposal.payload())),
                 summary, new CallContext(context.authorizationHeader(), context.tenantId(), context.correlationId(),
                         Map.of("mcpSessionId", session)), rows);
-        Map<String, Object> card = StreamEvent.actionCard(approval.cardId(), "create_client",
+        Map<String, Object> card = StreamEvent.actionCard(approval.cardId(), tool,
                 mapper.convertValue(args, new TypeReference<Map<String, Object>>() {}), summary, approval.idempotencyKey(),
                 approval.expiresAt().toString(), approval.rows()).data();
         return Map.of("status", "pending_approval", "action_card", card);
@@ -95,7 +105,7 @@ public class McpApprovalController {
         PendingApproval approval = approvals.take(cardId, context, belongsToSession(session).and(a ->
                 a.claimToken() != null && MessageDigest.isEqual(a.claimToken().getBytes(StandardCharsets.UTF_8),
                         ticket.getBytes(StandardCharsets.UTF_8)))).orElseThrow(McpApprovalController::invalid);
-        return Map.of("payload", (String) approval.toolCall().arguments().get("payload"),
+        return Map.of("tool", approval.toolCall().name(), "payload", (String) approval.toolCall().arguments().get("payload"),
                 "idempotency_key", approval.idempotencyKey(), "card_id", approval.cardId());
     }
 
@@ -124,11 +134,15 @@ public class McpApprovalController {
             return Mono.just(ResponseEntity.ok("{\"status\":\"cancelled\"}"));
         }
         requireConfigured();
-        String ticket = approvals.confirm(cardId, context, belongsToSession(session))
+        var tool = new java.util.concurrent.atomic.AtomicReference<String>();
+        String ticket = approvals.confirm(cardId, context, belongsToSession(session).and(a -> {
+            tool.set(a.toolCall().name()); return true;
+        }))
                 .orElseThrow(McpApprovalController::invalid);
         return Mono.fromCallable(() -> {
             try {
-                HttpRequest callback = HttpRequest.newBuilder(URI.create(callerUrl + "/internal/approved-create-client/" + cardId))
+                HttpRequest callback = HttpRequest.newBuilder(URI.create(callerUrl + ("update_client".equals(tool.get())
+                        ? "/internal/approved-update-client/" : "/internal/approved-create-client/") + cardId))
                         .timeout(Duration.ofSeconds(45)).header("Authorization", context.authorizationHeader())
                         .header("X-Mifos-Tenant-Id", context.tenantId()).header("X-MCP-Session-Id", session)
                         .header("X-MCP-Approval-Bridge", bridgeToken).header("X-MCP-Decision-Token", ticket)
@@ -149,7 +163,7 @@ public class McpApprovalController {
     }
 
     private Predicate<PendingApproval> belongsToSession(String session) {
-        return a -> "create_client".equals(a.toolCall().name()) && session.equals(a.session().get("mcpSessionId"));
+        return a -> ("create_client".equals(a.toolCall().name()) || "update_client".equals(a.toolCall().name())) && session.equals(a.session().get("mcpSessionId"));
     }
 
     private CallContext context(ServerHttpRequest request) {
@@ -176,6 +190,27 @@ public class McpApprovalController {
         requireConfigured();
         if (!MessageDigest.isEqual(bridgeToken.getBytes(StandardCharsets.UTF_8),
                 header(request, "X-MCP-Approval-Bridge").getBytes(StandardCharsets.UTF_8))) { throw invalid(); }
+    }
+
+    private JsonNode parseUpdatePayload(String payload) {
+        try {
+            if (payload == null || payload.length() > 4096) { throw invalid(); }
+            JsonNode args = mapper.reader().with(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readTree(payload);
+            if (args == null || !args.isObject() || args.size() < 2 || args.size() > 3
+                    || !args.path("clientId").isIntegralNumber() || !args.path("clientId").canConvertToLong()
+                    || args.path("clientId").asLong() <= 0) { throw invalid(); }
+            var fields = args.fields();
+            while (fields.hasNext()) {
+                var field = fields.next();
+                if (field.getKey().equals("clientId")) { continue; }
+                if (!Set.of("firstname", "lastname").contains(field.getKey())) { throw invalid(); }
+                JsonNode value = field.getValue();
+                if (!value.isTextual() || value.asText().isBlank() || value.asText().length() > 200
+                        || value.asText().contains("\r") || value.asText().contains("\n") || value.asText().contains("\0")) { throw invalid(); }
+            }
+            return args;
+        } catch (java.io.IOException e) { throw invalid(); }
     }
 
     private JsonNode parsePayload(String payload) {
