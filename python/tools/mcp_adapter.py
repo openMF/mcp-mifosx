@@ -154,6 +154,38 @@ class FineractAdapter:
                 }
             return {"error": f"Connection failed: {str(e)}"}
 
+    def execute_multipart(self, endpoint: str, form: dict, file_path: str):
+        """Executes a multipart POST (file upload, e.g. client documents).
+
+        `form` carries the string fields Fineract expects alongside the file
+        (name/description); the file goes out under the part name `file`,
+        which is what Fineract's document upload endpoints read.
+
+        The Content-Type header is deliberately left out: the boundary a
+        multipart body is framed with only exists once requests encodes it.
+        Everything else (tenant header, auth, timeout, TLS behaviour, error
+        shape) matches the other executors.
+        """
+        url = f"{self.base_url}/{endpoint}"
+        headers = self._get_headers()
+        headers.pop("Content-Type", None)
+        try:
+            with open(file_path, "rb") as fh:
+                response = requests.post(
+                    url, headers=headers, auth=(self.username, self.password),
+                    data=form, files={"file": (os.path.basename(file_path), fh)},
+                    verify=self.verify_ssl, timeout=self.timeout
+                )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            if e.response is not None:
+                return {
+                    "error": self._parse_fineract_error(e.response),
+                    "status_code": e.response.status_code,
+                }
+            return {"error": f"Connection failed: {str(e)}"}
+
     def execute_put(self, endpoint: str, payload: dict):
         """Executes a PUT request (for updating records)."""
         url = f"{self.base_url}/{endpoint}"

@@ -1,6 +1,6 @@
 # Mifos MCP Server — Python Implementation
 
-The **Mifos MCP Server** is a standalone, stateless integration tier that bridges any AI assistant or agent framework to the **Apache Fineract** banking backend. It exposes **49 typed tools** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), making it compatible with any MCP-compliant client.
+The **Mifos MCP Server** is a standalone, stateless integration tier that bridges any AI assistant or agent framework to the **Apache Fineract** banking backend. It exposes **52 typed tools** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), making it compatible with any MCP-compliant client.
 
 ---
 
@@ -15,7 +15,7 @@ This is the **Server**, not a client or agent. It does one thing well: translate
                        │ REST API
 ┌──────────────────────▼──────────────────────┐
 │         mcp_server.py  (This Repo)           │
-│    Stateless MCP Server — 49 typed tools     │
+│    Stateless MCP Server — 52 typed tools     │
 └──────────────────────┬──────────────────────┘
                        │ MCP Standard Protocol (stdio / SSE)
          ┌─────────────┼──────────────┐
@@ -140,7 +140,7 @@ This server is **framework-agnostic**. Any application that speaks the MCP proto
 
 ---
 
-## Available Tools (49)
+## Available Tools (52)
 
 All tools are registered in `mcp_server.py` with `@mcp.tool()` and are discoverable by any MCP client.
 
@@ -164,6 +164,14 @@ All tools are registered in `mcp_server.py` with `@mcp.tool()` and are discovera
 | `get_addresses`           | Show a client's registered addresses            |
 | `create_lending_group`    | Create a lending group                          |
 | `get_group`               | Show group details and members                  |
+
+### 📸 Document capture & verification (3 tools)
+
+| Tool                      | Description                                     |
+| ------------------------- | ----------------------------------------------- |
+| `validate_capture_quality` | Deterministic capture-quality gate on a document photo BEFORE upload: verdict `RETAKE` (unreadable — capture again) / `REVIEW` (borderline — human judge) / `PASS` (usable), with reasons and measured signals (sharpness, contrast, ink_ratio, brightness). Offline, no LLM, no CV/ML library — pure NumPy |
+| `upload_client_document`   | Gate-then-upload a photo as a client document. An unreadable (RETAKE) capture is refused with its reasons unless `force=True`; REVIEW verdicts upload but stay flagged in the `capture_gate` audit object |
+| `verify_client_details`    | Verify document details against the client's records: the vision model in the AI client extracts fields (fullName / nationalId / mobileNo) from the photo; this tool fetches the client profile + identity-document identifiers from Fineract and compares each field deterministically — per-field MATCH / REVIEW / MISMATCH (names token-order-free and punctuation-folded; IDs exact; phones tolerate country codes), overall VERIFIED / NEEDS_REVIEW / FAILED. No LLM in the comparison |
 
 ### 👥 Groups & Centers (6 tools)
 
@@ -307,9 +315,9 @@ Once the browser opens:
 
 > ⚠️ Do **not** try to connect to a separately running `mcp_server.py`. The Inspector **spawns** the server itself via stdio.
 
-### Step 3 — Browse All 49 Tools
+### Step 3 — Browse All 52 Tools
 
-After connecting, click the **"Tools"** tab in the left sidebar. You will see all 49 tools listed with their names, descriptions, and input schemas. You can:
+After connecting, click the **"Tools"** tab in the left sidebar. You will see all 52 tools listed with their names, descriptions, and input schemas. You can:
 
 - **Click any tool** to expand its input form
 - **Fill in parameters** and click **"Call Tool"** to invoke it live against Fineract
@@ -327,7 +335,7 @@ pytest tests/ -v
 Expected output:
 
 ```
-  ✅ PASS — All 49 tools registered with unique names
+  ✅ PASS — All 52 tools registered with unique names
   ✅ list_offices          : OK
   ✅ list_staff            : OK
   ✅ search_clients (Bruce): OK

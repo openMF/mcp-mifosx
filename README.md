@@ -5,7 +5,7 @@ This project provides Model Context Protocol (MCP) for the Mifos X Ecosystem, en
 Implementations are available in:
 - **Go (Native)** — 102 typed tools (high-performance, cloud-native with SSE/Stdio).
 - **Java (Quarkus)** — 38 typed tools (across Backoffice and Recommendations).
-- **Python (FastMCP)** — 49 typed tools (modular domain-driven design).
+- **Python (FastMCP)** — 52 typed tools (modular domain-driven design).
 - **Rust** — 89 typed tools (high-performance async I/O with exclusive bulk operations).
 
 ---
@@ -25,7 +25,7 @@ The Mifos MCP Server acts as a standalone, stateless integration tier that bridg
 │  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐  │
 │  │   /go (Native)  │ │ /java (Quarkus) │ │/python (FastMCP)│ │  /rust (Tokio)  │  │
 │  │                 │ │                 │ │                 │ │                 │  │
-│  │ - 102 Tools     │ │ - 38 Tools      │ │ - 49 Tools      │ │ - 89 Tools      │  │
+│  │ - 102 Tools     │ │ - 38 Tools      │ │ - 52 Tools      │ │ - 89 Tools      │  │
 │  │ - Go Routines   │ │ - Backoffice    │ │ - Modular Design│ │ - Async I/O     │  │
 │  │ - SSE / Stdio   │ │ - Recommend.    │ │                 │ │ - Bulk Actions  │  │
 │  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘ └────────┬────────┘  │
@@ -66,7 +66,7 @@ While this repository hosts two different programming languages, they are kept i
 1. **Tool Specification**: All implementations aim to expose the same core banking tools. 
    - **Go** currently leads with **102 tools**, featuring advanced cloud-native features and SSE.
    - **Rust** provides **89 tools**, uniquely featuring high-concurrency Bulk Operations and robust "Fetch-and-Merge" state management.
-   - **Python** provides **49 tools** using a modular domain design.
+   - **Python** provides **52 tools** using a modular domain design.
    - **Java** provides **38 tools** (21 for Backoffice operations and 17 for User Recommendations).
 2. **API Alignment**: All implementations are built against the same **Apache Fineract REST API**. They share identical logic for field routing.
 3. **Stateless Parity**: All implementations follow a strictly **stateless** design. None of the servers store user data, PII, or AI memory.
@@ -195,9 +195,10 @@ The exact number and categorization of tools depend on the core server implement
 - **Staff, Accounting & Charges**: 11 Tools
 - **Bulk Operations**: 11 Tools *(Exclusive to Rust)*
 
-### Python (49 Tools)
+### Python (52 Tools)
 *Domain-driven design bridging AI directly to Fineract.*
 - **Clients & Groups**: 16 Tools
+- **Document Capture & KYC**: 3 Tools
 - **Loans & Savings**: 20 Tools
 - **Staff & Accounting**: 13 Tools
 
