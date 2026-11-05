@@ -23,10 +23,11 @@ never an LLM guess.
 """
 
 import os
+from typing import Optional
 
 from langchain_core.tools import tool
 
-from tools.capture_gate import VERDICT_RETAKE, assess_image
+from tools.capture_gate import VERDICT_RETAKE, UnreadableImageError, assess_image
 from tools.mcp_adapter import fineract_client
 from tools.verify_fields import verify_fields
 
@@ -36,30 +37,54 @@ _GATE_BLOCKED = VERDICT_RETAKE
 _MAX_CAPTURE_BYTES = 40 * 1024 * 1024
 
 
+def _capture_root() -> str:
+    """The configured capture directory (MIFOSX_CAPTURE_DIR)."""
+    return os.environ.get("MIFOSX_CAPTURE_DIR", "")
+
+
+def _resolve_capture_path(image_path: str) -> Optional[str]:
+    """Resolve `image_path` and confine it to the configured capture directory.
+
+    Returns the resolved path, or None when it sits outside the root — the
+    caller rejects before any size probe or open, and the rejection does not
+    echo host filesystem details.
+    """
+    root = os.path.realpath(_capture_root())
+    if not root:
+        return None
+    resolved = os.path.realpath(image_path)
+    if resolved != root and not resolved.startswith(root + os.sep):
+        return None
+    return resolved
+
+
 @tool
-def validate_capture_quality(image_path: str):
+def validate_capture_quality(image_path: str) -> dict:
     """Answers: 'Is this document photo readable?' or 'Gate this capture before upload'"""
     return _gate_response(image_path)
 
 
 def _gate_response(image_path: str) -> dict:
     """Gate one image file by path, with readable errors. No server round-trip."""
+    resolved = _resolve_capture_path(image_path)
+    if resolved is None:
+        return {"error": "capture directory not allowed"}
     try:
-        size = os.path.getsize(image_path)
+        size = os.path.getsize(resolved)
         if size == 0:
             return {"error": f"{image_path} is empty — capture again"}
         if size > _MAX_CAPTURE_BYTES:
             return {"error": (f"{image_path} is {size} bytes; captures over "
                               f"{_MAX_CAPTURE_BYTES} are rejected before reading")}
-        with open(image_path, "rb") as fh:
+        with open(resolved, "rb") as fh:
             return assess_image(fh.read(), filename=image_path)
     except IsADirectoryError:
         return {"error": f"{image_path} is a directory — pass the photo file"}
     except FileNotFoundError:
         return {"error": f"image not found: {image_path}"}
-    except ValueError as e:
+    except UnreadableImageError as e:
         # gate-reported decode failure: which file, why
-        return {"error": str(e)}
+        return {"error": f"unreadable image {image_path!r} ({e})"}
     except ImportError as e:
         return {"error": str(e)}
     except OSError as e:
@@ -70,10 +95,10 @@ def _gate_response(image_path: str) -> dict:
 def upload_client_document(
     clientId: int,
     imagePath: str,
-    name: str = None,
-    description: str = None,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
     force: bool = False,
-):
+) -> dict:
     """Answers: "Gate + upload this photo to the client's documents". Refuses an unreadable capture."""
     gate = _gate_response(imagePath)
     if "error" in gate:
@@ -104,10 +129,10 @@ def upload_client_document(
 @tool
 def verify_client_details(
     clientId: int,
-    fullName: str = None,
-    nationalId: str = None,
-    mobileNo: str = None,
-):
+    fullName: Optional[str] = None,
+    nationalId: Optional[str] = None,
+    mobileNo: Optional[str] = None,
+) -> dict:
     """Answers: 'Verify this ID document belongs to the client' / 'Check the OCR-extracted fields'"""
     extracted = {"full_name": fullName, "national_id": nationalId, "mobile_no": mobileNo}
     if not any(str(v or "").strip() for v in extracted.values()):

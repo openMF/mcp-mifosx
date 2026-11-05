@@ -125,32 +125,43 @@ def test_unreadable_bytes_raise_value_error():
 
 # ── tools: readable errors, fail-closed upload ──────────────────────
 
-def test_validate_missing_file_returns_error_sentinel():
-    r = doc_domain.validate_capture_quality.func("/no/such/photo.png")
-    assert r == {"error": "image not found: /no/such/photo.png"}
+def test_validate_missing_file_returns_error_sentinel(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
+    r = doc_domain.validate_capture_quality.func(str(tmp_path / "nope.png"))
+    assert r == {"error": f"image not found: {tmp_path / 'nope.png'}"}
 
 
-def test_validate_directory_returns_error_sentinel(tmp_path):
+def test_validate_rejects_capture_outside_the_capture_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
+    r = doc_domain.validate_capture_quality.func("/etc/passwd")
+    assert r == {"error": "capture directory not allowed"}
+
+
+def test_validate_directory_returns_error_sentinel(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     r = doc_domain.validate_capture_quality.func(str(tmp_path))
     assert r["error"].startswith(str(tmp_path))
 
 
-def test_validate_corrupt_file_returns_error_sentinel(tmp_path):
+def test_validate_corrupt_file_returns_error_sentinel(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "bad.png"
     p.write_bytes(b"corrupt")
     r = doc_domain.validate_capture_quality.func(str(p))
     assert "unreadable image" in r["error"] and "bad.png" in r["error"]
 
 
-def test_validate_real_crisp_capture_verdict(tmp_path):
+def test_validate_real_crisp_capture_verdict(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "cap.png"
     p.write_bytes(_png_bytes(_crisp_text_page()))
     r = doc_domain.validate_capture_quality.func(str(p))
     assert r["verdict"] == "PASS" and r["signals"]["brightness"] > 0.5
 
 
-def test_upload_refuses_retake_capture(tmp_path):
+def test_upload_refuses_retake_capture(tmp_path, monkeypatch):
     Image = cg._pillow()
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "blank.png"
     p.write_bytes(_png_bytes(Image.new("L", (512, 384), 244)))  # blank → RETAKE
     r = doc_domain.upload_client_document.func(42, str(p))
@@ -160,6 +171,7 @@ def test_upload_refuses_retake_capture(tmp_path):
 
 
 def test_upload_refuses_when_gate_has_no_verdict(tmp_path, monkeypatch):
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "x.png"
     p.write_bytes(b"x")
     monkeypatch.setattr(doc_domain, "assess_image", lambda b, filename="": {"verdict": None})
@@ -175,6 +187,7 @@ def test_upload_gate_passes_then_posts_multipart(tmp_path, monkeypatch):
         return {"resourceId": 42}
 
     monkeypatch.setattr(doc_domain.fineract_client, "execute_multipart", fake_multipart)
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "good.png"
     p.write_bytes(_png_bytes(_crisp_text_page()))
 
@@ -197,6 +210,7 @@ def test_upload_force_overrides_retake(tmp_path, monkeypatch):
         return {"resourceId": 7}
 
     monkeypatch.setattr(doc_domain.fineract_client, "execute_multipart", fake_multipart)
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "blank.png"
     arr = cg._numpy().full((64, 100), 244, dtype="uint8")
     p.write_bytes(_png_bytes(PIL.Image.fromarray(arr)))
@@ -211,6 +225,7 @@ def test_upload_propagates_server_error(tmp_path, monkeypatch):
         return {"error": "409 Conflict", "status_code": 409}
 
     monkeypatch.setattr(doc_domain.fineract_client, "execute_multipart", fake_multipart)
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "good.png"
     p.write_bytes(_png_bytes(_crisp_text_page()))
     r = doc_domain.upload_client_document.func(42, str(p))

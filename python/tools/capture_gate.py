@@ -48,6 +48,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # for annotations only; numpy resolves lazily at runtime
+    from types import ModuleType
+
     import numpy as np
 
 ANALYSIS_MAX_SIDE = 512  # fixed analysis grid: thresholds stay resolution-invariant
@@ -55,6 +57,8 @@ INK_MARGIN = 0.25        # ink pixel: luma < (p90 luma) - INK_MARGIN
 INK_BG_PCT = 90          # background estimate = 90th percentile of luma
 MIN_INK_FOR_CONTRAST = 16  # min ink pixels before contrast uses the ink region
 CONTRAST_PCTS = (0.5, 99.5)  # whole-frame fallback when no ink is detectable
+MAX_IMAGE_PIXELS = 64_000_000  # reject before decoding to a dense array
+_ALLOWED_FORMATS = ("JPEG", "PNG", "WEBP", "TIFF")  # decoders this gate may use
 
 # v3.1 gate thresholds (supervised on 2000 labelled images + field evidence).
 RETAKE_BRIGHT_MIN = 0.10    # mean luma below this -> too dark to read
@@ -68,6 +72,10 @@ REVIEW_SHARP_MIN = 0.13     # soft text edges (mild blur / faint ink)
 VERDICT_RETAKE, VERDICT_REVIEW, VERDICT_PASS = "RETAKE", "REVIEW", "PASS"
 
 
+class UnreadableImageError(ValueError):
+    """Raised when bytes do not decode as a readable image."""
+
+
 def assess_image(image_bytes: bytes, filename: str = "capture") -> dict:
     """Quality gate a document capture by its raw bytes.
 
@@ -78,21 +86,26 @@ def assess_image(image_bytes: bytes, filename: str = "capture") -> dict:
                   "unreadably blurry (sharpness 0.031 < 0.08)"
         signals   sharpness / contrast / ink_ratio / brightness / exposure.
 
-    Raises ValueError when the bytes do not decode as an image.
+    Raises:
+        UnreadableImageError: when the bytes do not decode as an image, or the
+            capture exceeds the analysis-safe pixel budget (MAX_IMAGE_PIXELS).
     """
     np = _numpy()
     Image = _pillow()
     import io
 
     try:
-        with Image.open(io.BytesIO(image_bytes)) as im:
-            rgb = np.asarray(im.convert("RGB"), dtype=np.float64) / 255.0
-    except Exception as e:  # unreadable input (corrupt file, non-image bytes)
-        raise ValueError(f"unreadable image {filename!r} ({e})") from e
+        with Image.open(io.BytesIO(image_bytes), formats=_ALLOWED_FORMATS) as im:
+            if im.width * im.height > MAX_IMAGE_PIXELS:
+                raise ValueError(f"image too large ({im.width}x{im.height})")
+            rgb = np.asarray(im.convert("RGB"), dtype=np.float32)
+            rgb /= 255.0
+    except (OSError, ValueError, SyntaxError, EOFError, Image.DecompressionBombError) as e:
+        raise UnreadableImageError(f"unreadable image {filename!r} ({e})") from e
     return _gate(rgb, np)
 
 
-def _gate(img: np.ndarray, np) -> dict:
+def _gate(img: "np.ndarray", np: "ModuleType") -> dict:
     """Signal extraction + v3.1 decision for one (H, W, 3) float RGB image.
 
     Written in the classic import-argument style so every math step stays
@@ -158,7 +171,7 @@ def _decide(s: dict) -> tuple[str, list[str]]:
     return VERDICT_PASS, []
 
 
-def _analysis_grid(img: np.ndarray, np) -> np.ndarray:
+def _analysis_grid(img: "np.ndarray", np: "ModuleType") -> "np.ndarray":
     """Luma of (H, W, 3) resampled to the fixed analysis grid (pure NumPy
     bilinear, aspect preserved, max side ANALYSIS_MAX_SIDE)."""
     luma = img[..., 0] * 0.2126 + img[..., 1] * 0.7152 + img[..., 2] * 0.0722
@@ -186,7 +199,7 @@ def _analysis_grid(img: np.ndarray, np) -> np.ndarray:
             + bl * wy * (1 - wx) + br * wy * wx)
 
 
-def _grad_mag(luma: np.ndarray, np) -> np.ndarray:
+def _grad_mag(luma: "np.ndarray", np: "ModuleType") -> "np.ndarray":
     """Per-pixel gradient magnitude of the analysis-grid luma."""
     gx = np.abs(np.diff(luma, axis=1))  # (H, W-1)
     gy = np.abs(np.diff(luma, axis=0))  # (H-1, W)
@@ -196,7 +209,7 @@ def _grad_mag(luma: np.ndarray, np) -> np.ndarray:
     return g
 
 
-def _dilate(mask: np.ndarray, np) -> np.ndarray:
+def _dilate(mask: "np.ndarray", np: "ModuleType") -> "np.ndarray":
     """1-px 4-connected dilation of a boolean mask."""
     m = mask.copy()
     for shift in (1, -1):
@@ -205,7 +218,8 @@ def _dilate(mask: np.ndarray, np) -> np.ndarray:
     return m
 
 
-def _numpy():
+def _numpy() -> "ModuleType":
+    """Return the numpy module, raising install guidance when it is missing."""
     try:
         import numpy as np
         return np
@@ -216,7 +230,8 @@ def _numpy():
             "is only used to decode image files)") from e
 
 
-def _pillow():
+def _pillow() -> "ModuleType":
+    """Return the Pillow (PIL.Image) module, raising install guidance when missing."""
     try:
         from PIL import Image
         return Image

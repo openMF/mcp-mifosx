@@ -29,8 +29,7 @@ MATCH, REVIEW, MISMATCH, NO_SOURCE_DATA = "MATCH", "REVIEW", "MISMATCH", "NO_SOU
 # Two names this similar after folding are almost always the same person
 # with an OCR slip ("Jean-Luc vs Jean Luc"); below that, characters really
 # differ ("Reyya" vs "Reyyappa" territory needs a human eye).
-_NAME_REVIEW_RATIO = 0.85
-_MOBILE_MIN_DIGITS = 6  # a phone suffix shorter than this could match anything
+_NAME_REVIEW_RATIO = 0.85  # names at/above this similarity are the same person w/ an OCR slip
 
 
 def _fold(text: Any) -> str:
@@ -44,6 +43,7 @@ def _fold(text: Any) -> str:
 
 
 def _tokens(text: str) -> List[str]:
+    """Whitespace-separated fold tokens of a name-ish string."""
     return [t for t in _fold(text).split() if t]
 
 
@@ -51,54 +51,71 @@ def compare_name(extracted: Any, bank_values: List[Any]) -> Tuple[str, Optional[
     """Names compare as token sets: 'Jean Luc' matches 'LucJean P' order-free.
 
     A nickname never passes on its own; tokens must all be present in the
-    bank name(s) or the fold-equal check must hit.
+    bank name(s) or the fold-equal check must hit. A *partial* extracted
+    name (some but not all bank-name tokens missing) never matches: it goes
+    to REVIEW so a human judges the OCR slip.
     """
     ext = _tokens(extracted)
     if not ext:
         return NO_SOURCE_DATA, None
     folded_ext = _fold(extracted)
+    review_value: Optional[str] = None
     for bank in bank_values or []:
         bank_tokens = _tokens(bank)
         if not bank_tokens:
             continue
         if folded_ext == _fold(bank) or set(ext) == set(bank_tokens):
             return MATCH, str(bank)
-        if set(ext) <= set(bank_tokens):
-            # extracted short-form ("jean luc") inside the full bank name
-            return MATCH, str(bank)
+        partial = set(ext) < set(bank_tokens)
         joint = SequenceMatcher(None, folded_ext, _fold(bank)).ratio()
-        if joint >= _NAME_REVIEW_RATIO:
-            return REVIEW, str(bank)
+        if joint >= _NAME_REVIEW_RATIO and review_value is None:
+            review_value = str(bank)
+        if partial and review_value is None:
+            review_value = str(bank)
+    if review_value is not None:
+        return REVIEW, review_value
     return MISMATCH, None
 
 
 def compare_id(extracted: Any, bank_values: List[Any]) -> Tuple[str, Optional[str]]:
     """Identity numbers compare exact after non-alphanumeric folding: a
     near-miss digit on an ID means the wrong document, so there is no REVIEW."""
-    ext = _fold(extracted)
+    ext = re.sub(r"[^0-9a-z]", "", _fold(extracted))
     if not ext:
         return NO_SOURCE_DATA, None
     for bank in bank_values or []:
-        if _fold(bank) == ext:
+        if re.sub(r"[^0-9a-z]", "", _fold(bank)) == ext:
             return MATCH, str(bank)
     return MISMATCH, None
 
 
+def _normalize_mobile(digits: str) -> str:
+    """Complete-number normalisation: digits only, minus a leading country-code prefix.
+
+    International captures carry a +CC prefix (e.g. '919876543210'); national
+    numbers top out near 10 digits, so a longer digit string gets its country
+    prefix stripped before the full-equality compare. No substring or suffix
+    logic ever runs here — a short extracted number can no longer match a longer
+    bank number as if it were the same subscriber.
+    """
+    d = re.sub(r"\D", "", _fold(digits))
+    while len(d) > 10 and len(d) - 1 >= 6:
+        d = d[1:]
+    return d
+
+
 def compare_mobile(extracted: Any, bank_values: List[Any]) -> Tuple[str, Optional[str]]:
-    """Phone numbers compare digit-exact, tolerating country-code prefixes:
-    '+91 98...' and '98...' are the same subscriber."""
-    ext = re.sub(r"\D", "", _fold(extracted))
+    """Phone numbers compare digit-exact as complete numbers, tolerating a
+    leading country-code prefix: '+91 98765 43210' and '98765 43210' are the same
+    subscriber. Partial/suffix matches are never accepted."""
+    ext = _normalize_mobile(extracted)
     if not ext:
         return NO_SOURCE_DATA, None
     for bank in bank_values or []:
-        bank_digits = re.sub(r"\D", "", str(bank))
+        bank_digits = _normalize_mobile(str(bank))
         if not bank_digits:
             continue
         if ext == bank_digits:
-            return MATCH, str(bank)
-        if len(ext) >= _MOBILE_MIN_DIGITS and bank_digits.endswith(ext):
-            return MATCH, str(bank)
-        if len(bank_digits) >= _MOBILE_MIN_DIGITS and ext.endswith(bank_digits):
             return MATCH, str(bank)
     return MISMATCH, None
 
