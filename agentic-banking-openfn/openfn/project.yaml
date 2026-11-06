@@ -13,13 +13,16 @@ description: >
 # user's email). "fineract" is the write-back job's Fineract login: a user
 # allowed only the job's calls (the sandbox's agent-writeback), not the admin.
 # "agent-decision" ({ "url", "token" } of the agent's runner) is used by the
-# decision job.
+# decision job, and "los" ({ "baseUrl" } of the LOS API) by the intake job.
 credentials:
   super@openfn.org-fineract:
     name: fineract
     owner: super@openfn.org
   super@openfn.org-agent-decision:
     name: agent-decision
+    owner: super@openfn.org
+  super@openfn.org-los:
+    name: los
     owner: super@openfn.org
 
 # Adaptors are pinned to exact versions, so every run uses the code that was
@@ -978,4 +981,111 @@ workflows:
         condition_type: on_job_success
         source_job: create-fineract-loan
         target_job: callback-fineract-done
+        enabled: true
+
+  # -------------------------------------------------------------------------
+  # Workflow 3: Commercial flow intake (a channel posts a lead) → LOS
+  # -------------------------------------------------------------------------
+  opportunity-intake:
+    name: Opportunity Intake
+    jobs:
+      intake-opportunity:
+        name: Check the Lead and Record it in the LOS
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los
+        enabled: true
+        body: |
+          // A lead from a channel (landing page, Mifos Mobile, ...), checked by
+          // rules and recorded in the LOS, the record of opportunities until
+          // they reach Fineract. No model: completeness and duplicates have
+          // exact answers. The eligibility step decides what happens next.
+          // Uses the "los" credential (raw JSON): { baseUrl }, e.g. http://los:8000
+          // The webhook replies with the result (webhook_reply: after_completion):
+          // the final state, which Lightning sends as the reply's "data".
+          fn(async state => {
+            const FIELDS = ['channel', 'external_id', 'full_name', 'phone', 'email', 'national_id',
+              'requested_amount', 'currency', 'term_months', 'productive_use'];
+            // What a complete lead has. The list per product is the institution's
+            // to set; this is the sandbox's.
+            const REQUIRED = ['full_name', 'phone', 'national_id', 'requested_amount', 'term_months', 'productive_use'];
+            const opts = { headers: { 'X-Actor': 'intake' } };
+
+            const input = state.data || {};
+            const lead = {};
+            for (const key of FIELDS) {
+              const value = input[key];
+              if (value !== undefined && value !== null && String(value).trim() !== '') lead[key] = value;
+            }
+            const missingIn = record => REQUIRED.filter(key => record[key] === undefined || record[key] === null);
+            const missing = missingIn(lead);
+            const result = (opportunity, outcome, extra = {}) => ({
+              opportunityId: opportunity.id,
+              externalId: opportunity.external_id,
+              stage: opportunity.stage,
+              outcome,
+              missing: missingIn(opportunity),
+              ...extra
+            });
+
+            const search = async query =>
+              (await get('/opportunities', { ...opts, query: { ...query, limit: 200 } })(state)).data.opportunities;
+            const create = async () => (await post('/opportunities', lead, opts)(state)).data;
+            const move = async (opportunity, stage, reason_code, reason_note) =>
+              (await post(`/opportunities/${opportunity.id}/stage`, { stage, reason_code, reason_note }, opts)(state)).data;
+
+            if (!lead.channel) {
+              return { outcome: 'invalid', errors: ['channel is required'] };
+            }
+            try {
+              // 1. A channel sending the same lead again
+              if (lead.external_id) {
+                const [same] = await search({ external_id: lead.external_id });
+                if (same) return result(same, 'already_received');
+              }
+
+              // 2. Nobody can contact the lead: kept for the numbers, not worked on
+              if (!lead.phone && !lead.email) {
+                const created = await create();
+                return result(await move(created, 'discarded', 'no_contact', 'No phone or email'), 'discarded');
+              }
+
+              // 3. The same person in an open or paused opportunity: a person decides
+              const open = opportunity => !['registered', 'discarded'].includes(opportunity.stage);
+              let match = null;
+              for (const on of ['national_id', 'phone']) {
+                if (!match && lead[on]) {
+                  const [found] = (await search({ [on]: lead[on] })).filter(open);
+                  if (found) match = { opportunity: found, on };
+                }
+              }
+              if (match) {
+                const created = await create();
+                const note = `Matches ${match.opportunity.external_id} on ${match.on}`;
+                return result(await move(created, 'paused', 'possible_duplicate', note), 'possible_duplicate',
+                  { duplicateOf: match.opportunity.external_id });
+              }
+
+              // 4. A new opportunity, complete or not
+              const created = await create();
+              console.log('intake', created.external_id, missing.length ? `incomplete: ${missing.join(', ')}` : 'complete');
+              return result(created, missing.length ? 'incomplete' : 'complete');
+            } catch (e) {
+              // The LOS refused the lead's data (a phone, email or CURP it cannot
+              // read, an amount without a currency): nothing is recorded.
+              if (e.statusCode === 422) return { outcome: 'invalid', errors: e.body };
+              throw e;
+            }
+          });
+
+    triggers:
+      webhook-opportunity-intake:
+        type: webhook
+        enabled: true
+        webhook_reply: after_completion
+
+    edges:
+      webhook-opportunity-intake->intake-opportunity:
+        source_trigger: webhook-opportunity-intake
+        target_job: intake-opportunity
+        condition_type: always
         enabled: true
