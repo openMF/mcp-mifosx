@@ -197,6 +197,11 @@ The exact number and categorization of tools depend on the core server implement
 
 ### Python (76 Tools)
 *Domain-driven design bridging AI directly to Fineract.*
+
+This summary lists only the headline categories and does not add up to the
+full tool count; the complete per-category breakdown lives in the Python
+implementation's [Available Tools (76)](#available-tools-76) list.
+
 - **Clients & Groups**: 16 Tools
 - **Document Capture & KYC**: 3 Tools
 - **Loans & Savings**: 20 Tools

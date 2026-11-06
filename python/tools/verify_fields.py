@@ -31,6 +31,22 @@ MATCH, REVIEW, MISMATCH, NO_SOURCE_DATA = "MATCH", "REVIEW", "MISMATCH", "NO_SOU
 # differ ("Reyya" vs "Reyyappa" territory needs a human eye).
 _NAME_REVIEW_RATIO = 0.85  # names at/above this similarity are the same person w/ an OCR slip
 
+# International country-code prefixes (CC + national number) captured numbers
+# may carry, e.g. '+91 98765 43210' -> '919876543210'. Longest first so wider
+# prefixes win over narrower tails.
+_INTL_PREFIXES = (
+    "1", "7", "20", "27", "30", "31", "36", "40", "41", "43", "44", "45", "46",
+    "47", "48", "49", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60",
+    "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73",
+    "74", "75", "76", "77", "78", "79", "80", "82", "83", "84", "85", "86", "87",
+    "88", "89", "90", "91", "92", "93", "94", "95", "96", "97", "98",
+)
+# Country codes whose national significant numbers are shorter than the
+# domestic ~10-digit budget, so an international capture can be exactly ten
+# digits long while still carrying a leading prefix (Singapore: +65 ->
+# 8-digit national numbers, e.g. '+65 8123 4567' -> national form '81234567').
+_INTL_SHORT_NATIONAL_PREFIXES = frozenset({"65", "852", "853"})
+
 
 def _fold(text: Any) -> str:
     """Case/punctuation folded text: '  Rt. Jean-Luc P.  ' -> 'rt jean luc p'."""
@@ -77,14 +93,35 @@ def compare_name(extracted: Any, bank_values: List[Any]) -> Tuple[str, Optional[
     return MISMATCH, None
 
 
+def _normalize_id(extracted: Any) -> str:
+    """Identity numbers: alphanumeric chars plus decimal digits, separators dropped.
+
+    Unicode decimal digits stay significant (an Arabic-Indic or fullwidth digit is
+    a digit, not punctuation to strip), so they are folded to their ASCII value
+    before comparison; separators and case differences never change an ID's
+    identity.
+    """
+    if not isinstance(extracted, str):
+        return ""
+    norm = unicodedata.normalize("NFKD", extracted)
+    norm = "".join(c for c in norm if not unicodedata.combining(c))
+    chars: List[str] = []
+    for ch in norm.lower():
+        if ch.isdecimal():
+            chars.append(str(unicodedata.digit(ch)))
+        elif "a" <= ch <= "z":
+            chars.append(ch)
+    return "".join(chars)
+
+
 def compare_id(extracted: Any, bank_values: List[Any]) -> Tuple[str, Optional[str]]:
-    """Identity numbers compare exact after non-alphanumeric folding: a
+    """Identity numbers compare exact after alphanumeric folding: a
     near-miss digit on an ID means the wrong document, so there is no REVIEW."""
-    ext = re.sub(r"[^0-9a-z]", "", _fold(extracted))
+    ext = _normalize_id(extracted)
     if not ext:
         return NO_SOURCE_DATA, None
     for bank in bank_values or []:
-        if re.sub(r"[^0-9a-z]", "", _fold(bank)) == ext:
+        if _normalize_id(bank) == ext:
             return MATCH, str(bank)
     return MISMATCH, None
 
@@ -97,11 +134,25 @@ def _normalize_mobile(digits: str) -> str:
     prefix stripped before the full-equality compare. No substring or suffix
     logic ever runs here — a short extracted number can no longer match a longer
     bank number as if it were the same subscriber.
+
+    Country-code prefixes of differing widths (2- and 3-digit codes such as
+    Singapore's +65) are resolved longest-first and only when the remaining
+    digits form a plausible national number, so an international capture like
+    '+65 8123 4567' normalises to its national form ('81234567') and matches the
+    bank record, while domestic numbers pass through unchanged.
     """
     d = re.sub(r"\D", "", _fold(digits))
-    while len(d) > 10 and len(d) - 1 >= 6:
-        d = d[1:]
-    return d
+    national = d
+    if len(national) > 10:
+        for cc in sorted(_INTL_PREFIXES, key=len, reverse=True):
+            if national.startswith(cc) and 4 <= len(national) - len(cc) <= 10:
+                national = national[len(cc):]
+                break
+    elif len(national) == 10 and national[:2] in _INTL_SHORT_NATIONAL_PREFIXES:
+        national = national[2:]
+    while len(national) > 10 and len(national) - 1 >= 6:
+        national = national[1:]
+    return national
 
 
 def compare_mobile(extracted: Any, bank_values: List[Any]) -> Tuple[str, Optional[str]]:

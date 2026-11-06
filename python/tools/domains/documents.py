@@ -23,7 +23,7 @@ never an LLM guess.
 """
 
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 from langchain_core.tools import tool
 
@@ -49,9 +49,12 @@ def _resolve_capture_path(image_path: str) -> Optional[str]:
     caller rejects before any size probe or open, and the rejection does not
     echo host filesystem details.
     """
-    root = os.path.realpath(_capture_root())
-    if not root:
+    configured = _capture_root()
+    if not configured:
+        # Fail closed on an unset capture directory: an empty string would
+        # realpath() to the process working directory and pass as a root.
         return None
+    root = os.path.realpath(configured)
     resolved = os.path.realpath(image_path)
     if resolved != root and not resolved.startswith(root + os.sep):
         return None
@@ -61,34 +64,44 @@ def _resolve_capture_path(image_path: str) -> Optional[str]:
 @tool
 def validate_capture_quality(image_path: str) -> dict:
     """Answers: 'Is this document photo readable?' or 'Gate this capture before upload'"""
-    return _gate_response(image_path)
+    gate, _image_bytes = _assess_capture(image_path)
+    return gate
 
 
-def _gate_response(image_path: str) -> dict:
-    """Gate one image file by path, with readable errors. No server round-trip."""
+def _assess_capture(image_path: str) -> Tuple[dict, Optional[bytes]]:
+    """Gate one capture by path and return the bytes the verdict was computed on.
+
+    Returns ``(gate, image_bytes)`` — the verdict/error dict plus the exact
+    capture bytes it was computed from (``None`` when the capture was rejected).
+
+    Callers that may upload (``upload_client_document``) reuse ``image_bytes``,
+    so assessment and upload run on the same content and a capture that changes
+    between the gate read and the upload cannot reach Fineract unassessed.
+    """
     resolved = _resolve_capture_path(image_path)
     if resolved is None:
-        return {"error": "capture directory not allowed"}
+        return {"error": "capture directory not allowed"}, None
     try:
-        size = os.path.getsize(resolved)
-        if size == 0:
-            return {"error": f"{image_path} is empty — capture again"}
-        if size > _MAX_CAPTURE_BYTES:
-            return {"error": (f"{image_path} is {size} bytes; captures over "
-                              f"{_MAX_CAPTURE_BYTES} are rejected before reading")}
         with open(resolved, "rb") as fh:
-            return assess_image(fh.read(), filename=image_path)
+            image_bytes = fh.read()
+        if not image_bytes:
+            return {"error": f"{image_path} is empty — capture again"}, None
+        if len(image_bytes) > _MAX_CAPTURE_BYTES:
+            return {"error": (f"{image_path} is {len(image_bytes)} bytes; captures over "
+                              f"{_MAX_CAPTURE_BYTES} are rejected before reading")}, None
+        gate = assess_image(image_bytes, filename=image_path)
     except IsADirectoryError:
-        return {"error": f"{image_path} is a directory — pass the photo file"}
+        return {"error": f"{image_path} is a directory — pass the photo file"}, None
     except FileNotFoundError:
-        return {"error": f"image not found: {image_path}"}
+        return {"error": f"image not found: {image_path}"}, None
     except UnreadableImageError as e:
         # gate-reported decode failure: which file, why
-        return {"error": f"unreadable image {image_path!r} ({e})"}
+        return {"error": f"unreadable image {image_path!r} ({e})"}, None
     except ImportError as e:
-        return {"error": str(e)}
+        return {"error": str(e)}, None
     except OSError as e:
-        return {"error": f"cannot read {image_path}: {str(e)}"}
+        return {"error": f"cannot read {image_path}: {str(e)}"}, None
+    return gate, image_bytes
 
 
 @tool
@@ -100,7 +113,7 @@ def upload_client_document(
     force: bool = False,
 ) -> dict:
     """Answers: "Gate + upload this photo to the client's documents". Refuses an unreadable capture."""
-    gate = _gate_response(imagePath)
+    gate, image_bytes = _assess_capture(imagePath)
     if "error" in gate:
         return gate
     verdict = gate.get("verdict")
@@ -117,7 +130,11 @@ def upload_client_document(
     form = {k: v for k, v in {"name": name, "description": description}.items() if v}
     if not form:
         form = {"name": file_name}
-    result = fineract_client.execute_multipart(f"clients/{clientId}/documents", form, imagePath)
+    # Upload the exact bytes the gate assessed — never re-open the mutable
+    # imagePath, so the bytes Fineract receives are the bytes that were gated.
+    result = fineract_client.execute_multipart(
+        f"clients/{clientId}/documents", form, image_bytes, file_name
+    )
     if "error" in result:
         return result
     # the capture made it to Fineract: carry the gate verdict + signals in

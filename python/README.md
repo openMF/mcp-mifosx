@@ -1,6 +1,6 @@
 # Mifos MCP Server — Python Implementation
 
-The **Mifos MCP Server** is a standalone, stateless integration tier that bridges any AI assistant or agent framework to the **Apache Fineract** banking backend. It exposes **76 typed tools** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), making it compatible with any MCP-compliant client.
+The **Mifos MCP Server** is a standalone, stateless integration tier that bridges any AI assistant or agent framework to the **Apache Fineract** banking backend. It registers **76 typed tools** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), making it compatible with any MCP-compliant client. Registering a tool is not the same as exposing it: which tools an agent may see and call is decided by the [tool profile](#tool-profiles-enforced-by-the-server) (`MCP_AGENT_PROFILE` — see [Tool profiles](#tool-profiles-enforced-by-the-server)).
 
 ---
 
@@ -317,11 +317,13 @@ Once the browser opens:
 
 ### Step 3 — Browse All 76 Tools
 
-After connecting, click the **"Tools"** tab in the left sidebar. You will see all 76 tools listed with their names, descriptions, and input schemas. You can:
+After connecting, click the **"Tools"** tab in the left sidebar. You will see all 76 tools listed with their names, descriptions, and input schemas — or, when the server is running its default profile, the tools that profile exposes. You can:
 
 - **Click any tool** to expand its input form
 - **Fill in parameters** and click **"Call Tool"** to invoke it live against Fineract
 - **Inspect the raw JSON response** returned by the tool
+
+> ℹ️ The Inspector lists only the tools of the **active profile**. The default is the `read-only` profile; to browse and call all 76, launch the server with `MCP_AGENT_PROFILE=all` (see [Tool profiles](#tool-profiles-enforced-by-the-server)).
 
 ### Programmatic Tests
 

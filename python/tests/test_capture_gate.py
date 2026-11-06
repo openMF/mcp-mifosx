@@ -18,6 +18,7 @@ import pytest
 from PIL import Image, ImageDraw
 
 from tools import capture_gate as cg
+from tools import verify_fields as vf
 from tools.domains import documents as doc_domain
 
 # ── synthetic capture builders ──────────────────────────────────────
@@ -159,6 +160,12 @@ def test_validate_real_crisp_capture_verdict(tmp_path, monkeypatch):
     assert r["verdict"] == "PASS" and r["signals"]["brightness"] > 0.5
 
 
+def test_validate_capture_root_must_be_configured(tmp_path, monkeypatch):
+    monkeypatch.delenv("MIFOSX_CAPTURE_DIR", raising=False)
+    r = doc_domain.validate_capture_quality.func(str(tmp_path / "x.png"))
+    assert r == {"error": "capture directory not allowed"}
+
+
 def test_upload_refuses_retake_capture(tmp_path, monkeypatch):
     Image = cg._pillow()
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
@@ -182,8 +189,10 @@ def test_upload_refuses_when_gate_has_no_verdict(tmp_path, monkeypatch):
 def test_upload_gate_passes_then_posts_multipart(tmp_path, monkeypatch):
     calls = {}
 
-    def fake_multipart(endpoint, form, file_path):
-        calls["endpoint"], calls["form"], calls["file"] = endpoint, form, file_path
+    def fake_multipart(endpoint, form, file, filename=None):
+        calls["endpoint"], calls["form"], calls["file"], calls["filename"] = (
+            endpoint, form, file, filename,
+        )
         return {"resourceId": 42}
 
     monkeypatch.setattr(doc_domain.fineract_client, "execute_multipart", fake_multipart)
@@ -196,7 +205,8 @@ def test_upload_gate_passes_then_posts_multipart(tmp_path, monkeypatch):
     assert calls == {
         "endpoint": "clients/42/documents",
         "form": {"name": "kyc-id"},
-        "file": str(p),
+        "file": _png_bytes(_crisp_text_page()),
+        "filename": "good.png",
     }
     # audit trail: the gate verdict rode along with the upload
     assert r["capture_gate"]["verdict"] == "PASS"
@@ -206,7 +216,7 @@ def test_upload_gate_passes_then_posts_multipart(tmp_path, monkeypatch):
 def test_upload_force_overrides_retake(tmp_path, monkeypatch):
     import PIL.Image
 
-    def fake_multipart(endpoint, form, file_path):
+    def fake_multipart(endpoint, form, file, filename=None):
         return {"resourceId": 7}
 
     monkeypatch.setattr(doc_domain.fineract_client, "execute_multipart", fake_multipart)
@@ -221,7 +231,7 @@ def test_upload_force_overrides_retake(tmp_path, monkeypatch):
 
 
 def test_upload_propagates_server_error(tmp_path, monkeypatch):
-    def fake_multipart(endpoint, form, file_path):
+    def fake_multipart(endpoint, form, file, filename=None):
         return {"error": "409 Conflict", "status_code": 409}
 
     monkeypatch.setattr(doc_domain.fineract_client, "execute_multipart", fake_multipart)
@@ -308,4 +318,18 @@ def test_domain_verify_propagates_client_error(monkeypatch):
 def test_domain_verify_requires_a_field(monkeypatch):
     r = doc_domain.verify_client_details.func(42)
     assert "error" in r and "non-empty" in r["error"]
+
+
+def test_compare_mobile_strips_international_country_code():
+    # Singapore: '+65 8123 4567' (international) == '81234567' (national form)
+    assert vf._normalize_mobile("+65 8123 4567") == "81234567"
+    assert vf.compare_mobile("+65 8123 4567", ["81234567"])[0] == "MATCH"
+    # domestic numbers pass through unchanged
+    assert vf._normalize_mobile("9876543210") == "9876543210"
+
+
+def test_compare_id_keeps_unicode_digits_significant():
+    # fullwidth digits fold to their ASCII values instead of being stripped
+    assert vf.compare_id("AB-１２３４-５６７８", ["AB-1234-5678"])[0] == "MATCH"
+    assert vf.compare_id("AB-9999-0000", ["AB-1234-5678"])[0] == "MISMATCH"
 

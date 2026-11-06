@@ -146,6 +146,13 @@ def _gate(img: "np.ndarray", np: "ModuleType") -> dict:
 
 
 def _decide(s: dict) -> tuple[str, list[str]]:
+    """Map gate signals to a verdict + the named reasons it tripped.
+
+    RETAKE when a hard gate trips (too dark / blank / unreadable blur); REVIEW
+    when only the softer band trips (dim / washed-out / scant / mild blur) — the
+    readable-blur band keeps human-judged captures flaggable instead of
+    retaking; otherwise PASS with no reasons.
+    """
     reasons: list[str] = []
     if s["brightness"] < RETAKE_BRIGHT_MIN:
         reasons.append(f"too dark to read (brightness {s['brightness']:.3f} < {RETAKE_BRIGHT_MIN})")
