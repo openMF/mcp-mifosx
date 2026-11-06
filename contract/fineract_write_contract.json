@@ -1,0 +1,119 @@
+{
+  "about": "What Fineract accepts for each write operation the MCP tools perform. Language-neutral on purpose: any server's tests can load it. 'allowed' is the validator's supported-parameter set (anything else is a 400), 'required' is what the validator marks notNull/notBlank, and 'tenant_ids' are ids that are tenant data, so a tool may only send one the user chose. Every rule names the Fineract class it comes from.",
+  "fineract": "apache/fineract develop 99548ba58e (2026-10-20); the rules used here are unchanged in the sandbox image apache/fineract:7ac780192",
+  "operations": {
+    "charge.create": {
+      "method": "POST",
+      "path": "charges",
+      "source": "ChargeDefinitionCommandFromApiJsonDeserializer.validateForCreate (SUPPORTED_PARAMETERS)",
+      "allowed": ["name", "amount", "locale", "currencyCode", "currencyOptions", "chargeAppliesTo", "chargeTimeType",
+                  "chargeCalculationType", "chargeCalculationTypeOptions", "penalty", "active", "chargePaymentMode",
+                  "feeOnMonthDay", "feeInterval", "monthDayFormat", "minCap", "maxCap", "feeFrequency",
+                  "enableFreeWithdrawalCharge", "freeWithdrawalFrequency", "restartCountFrequency", "countFrequencyType",
+                  "paymentTypeId", "enablePaymentType", "incomeAccountId", "taxGroupId"],
+      "required": ["name", "amount", "currencyCode", "chargeAppliesTo", "chargeTimeType", "chargeCalculationType"],
+      "required_when": [
+        {"if": {"chargeAppliesTo": 1}, "then": ["chargePaymentMode"]}
+      ],
+      "one_of_when": [
+        {"if": {"chargeAppliesTo": 1}, "field": "chargeTimeType", "in": [1, 2, 8, 9, 12]},
+        {"if": {"chargeAppliesTo": 2}, "field": "chargeTimeType", "in": [2, 3, 4, 5, 6, 7, 10, 11, 16]},
+        {"if": {"chargeAppliesTo": 3}, "field": "chargeTimeType", "in": [2]},
+        {"if": {"chargeAppliesTo": 1}, "field": "chargeCalculationType", "in": [1, 2, 3, 4, 5]},
+        {"if": {"chargeAppliesTo": 2}, "field": "chargeCalculationType", "in": [1, 2]},
+        {"if": {"chargeAppliesTo": 1}, "field": "chargePaymentMode", "in": [0, 1]}
+      ],
+      "codes": {
+        "chargeAppliesTo": {"1": ["Loan"], "2": ["Savings"], "3": ["Client"], "4": ["Shares"]},
+        "chargeTimeType": {
+          "1": ["Disbursement"], "2": ["Specified due date"], "3": ["Savings activation"], "4": ["Savings closure"],
+          "5": ["Withdrawal fee"], "6": ["Annual fee"], "7": ["Monthly fee"], "8": ["Instalment fee", "Installment fee"],
+          "9": ["Overdue instalment", "Overdue installment", "Overdue instalment fee", "Overdue installment fee"],
+          "10": ["Overdraft fee"], "11": ["Weekly fee"], "12": ["Tranche disbursement"], "16": ["Savings no activity fee"]
+        },
+        "chargeCalculationType": {
+          "1": ["Flat"], "2": ["% of Amount", "% Amount", "Percent of amount"],
+          "3": ["% of Amount and Interest", "% Loan Amount + Interest"], "4": ["% of Interest", "% Interest"],
+          "5": ["% of Disbursement Amount", "% Disbursement Amount"]
+        }
+      }
+    },
+    "client.close": {
+      "method": "POST",
+      "path": "clients/{id}",
+      "command": "close",
+      "source": "ClientDataValidator.validateClose (CLIENT_CLOSE_REQUEST_DATA_PARAMETERS); ClientWritePlatformServiceJpaRepositoryImpl.closeClient",
+      "allowed": ["locale", "dateFormat", "closureDate", "closureReasonId"],
+      "required": ["closureDate", "closureReasonId"],
+      "tenant_ids": ["closureReasonId"],
+      "live_probe": true
+    },
+    "savings.deposit": {
+      "method": "POST",
+      "path": "savingsaccounts/{id}/transactions",
+      "command": "deposit",
+      "source": "SavingsAccountTransactionDataValidator.validate (paymentTypeId notNull since FINERACT-1402, 2022)",
+      "allowed": ["locale", "dateFormat", "externalId", "transactionDate", "transactionAmount", "paymentTypeId", "accountNumber",
+                  "checkNumber", "routingCode", "receiptNumber", "bankNumber", "retailEntries", "childAccountId", "note", "amount",
+                  "date", "isManualTransaction", "lienTransaction", "chargesPaidByData", "submittedOnDate", "accountId", "accountNo"],
+      "required": ["transactionDate", "transactionAmount", "paymentTypeId"],
+      "tenant_ids": ["paymentTypeId"],
+      "live_probe": true
+    },
+    "savings.withdrawal": {
+      "method": "POST",
+      "path": "savingsaccounts/{id}/transactions",
+      "command": "withdrawal",
+      "source": "SavingsAccountTransactionDataValidator.validate (same validator as deposit)",
+      "allowed": ["locale", "dateFormat", "externalId", "transactionDate", "transactionAmount", "paymentTypeId", "accountNumber",
+                  "checkNumber", "routingCode", "receiptNumber", "bankNumber", "retailEntries", "childAccountId", "note", "amount",
+                  "date", "isManualTransaction", "lienTransaction", "chargesPaidByData", "submittedOnDate", "accountId", "accountNo"],
+      "required": ["transactionDate", "transactionAmount", "paymentTypeId"],
+      "tenant_ids": ["paymentTypeId"],
+      "live_probe": true
+    },
+    "loan.repayment": {
+      "method": "POST",
+      "path": "loans/{id}/transactions",
+      "command": "repayment",
+      "source": "LoanTransactionValidatorImpl.validatePaymentTransaction (getRepaymentParameters; paymentTypeId ignoreIfNull)",
+      "allowed": ["transactionDate", "transactionAmount", "externalId", "note", "locale", "dateFormat", "paymentTypeId",
+                  "accountNumber", "checkNumber", "routingCode", "receiptNumber", "bankNumber", "loanId", "numberOfRepayments",
+                  "interestRefundCalculation"],
+      "required": ["transactionDate", "transactionAmount"],
+      "tenant_ids": ["paymentTypeId"],
+      "live_probe": true
+    },
+    "loan.add_charge": {
+      "method": "POST",
+      "path": "loans/{id}/charges",
+      "source": "LoanChargeApiJsonValidator.validateAddLoanCharge",
+      "allowed": ["chargeId", "amount", "dueDate", "locale", "dateFormat", "externalId"],
+      "required": ["chargeId", "amount"],
+      "tenant_ids": ["chargeId"],
+      "live_probe": true
+    },
+    "savings.add_charge": {
+      "method": "POST",
+      "path": "savingsaccounts/{id}/charges",
+      "source": "SavingsAccountChargeDataValidator.validateAdd (SAVINGS_ACCOUNT_CHARGES_ADD_REQUEST_DATA_PARAMETERS)",
+      "allowed": ["chargeId", "amount", "dueDate", "dateFormat", "locale", "feeOnMonthDay", "monthDayFormat", "feeInterval"],
+      "required": ["chargeId", "amount"],
+      "tenant_ids": ["chargeId"],
+      "forbidden": {
+        "feeOnMonthDay": "validateAdd parses it with extractMonthDayNamed and no monthDayFormat, so any value is an HTTP 500 (#594)"
+      },
+      "live_probe": true
+    },
+    "loan.reschedule": {
+      "method": "POST",
+      "path": "rescheduleloans",
+      "source": "LoanRescheduleRequestDataValidatorImpl.validateForCreateAction (CREATE_REQUEST_DATA_PARAMETERS)",
+      "allowed": ["locale", "dateFormat", "graceOnPrincipal", "recurringMoratoriumOnPrincipalPeriods", "graceOnInterest",
+                  "extraTerms", "rescheduleFromDate", "newInterestRate", "rescheduleReasonId", "rescheduleReasonComment",
+                  "submittedOnDate", "loanId", "adjustedDueDate", "recalculateInterest", "endDate", "emi"],
+      "required": ["loanId", "rescheduleFromDate", "submittedOnDate", "rescheduleReasonId"],
+      "tenant_ids": ["rescheduleReasonId"]
+    }
+  }
+}
