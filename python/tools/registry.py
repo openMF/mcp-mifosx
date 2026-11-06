@@ -2,6 +2,13 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0.
 
+"""Intent-to-domain tool registry for the Mifos MCP server.
+
+Maps free-text agent intents to the domain tool lists that cover them and
+exposes the aggregated tool list plus the suggestion helper used by the MCP
+server to build agent-facing tool exposure.
+"""
+
 import re
 from typing import Any, List
 
@@ -82,6 +89,7 @@ class DomainRegistry:
     """Domain router that maps user intent to relevant MCP tools."""
 
     def __init__(self):
+        """Seed the domain map with the tool lists per domain key."""
         self.domain_map = {
             "clients": [
                 search_clients_by_name, get_client_details, get_client_accounts,
@@ -130,9 +138,11 @@ class DomainRegistry:
         }
 
     def get_domain(self, domain: str) -> List[Any]:
+        """Return the tool list registered for a domain key (empty when unknown)."""
         return self.domain_map.get(domain, [])
 
     def get_all_tools(self) -> List[Any]:
+        """Return every registered tool, de-duplicated by tool name."""
         all_tools = []
         seen = set()
 
@@ -153,6 +163,7 @@ class DomainRegistry:
         active_domains = set()
 
         def matches(keywords: List[str]) -> bool:
+            """True when the keyword list overlaps the lowered query."""
             for k in keywords:
                 if " " in k:
                     if k in query:
@@ -216,6 +227,7 @@ class DomainRegistry:
         return result
 
     def get_suggestions(self, intent: str, data: Any) -> List[str]:
+        """Return suggestion strings for an intent against the given data."""
         return generate_suggestions(intent, data)
 
 

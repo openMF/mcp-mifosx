@@ -24,6 +24,7 @@ from tools.domains import documents as doc_domain
 # ── synthetic capture builders ──────────────────────────────────────
 
 def _png_bytes(pil_image):
+    """Encode a Pillow image to PNG bytes for the gate."""
     buf = io.BytesIO()
     pil_image.save(buf, "PNG")
     return buf.getvalue()
@@ -42,6 +43,7 @@ def _crisp_text_page():
 # ── gate: verdict classes ────────────────────────────────────────────
 
 def test_crisp_capture_passes():
+    """A crisp synthetic capture gates to PASS with no reasons."""
     r = cg.assess_image(_png_bytes(_crisp_text_page()))
     assert r["verdict"] == "PASS"
     assert r["reasons"] == []
@@ -63,6 +65,7 @@ def test_heavily_blurred_capture_retakes_with_blur_reason():
 
 
 def test_blank_capture_retakes_on_no_content():
+    """A blank (uniform-luma) capture is a RETAKE on ink_ratio alone."""
     Image = cg._pillow()
     r = cg.assess_image(_png_bytes(Image.new("L", (512, 384), 244)))
     assert r["verdict"] == "RETAKE"
@@ -71,6 +74,7 @@ def test_blank_capture_retakes_on_no_content():
 
 
 def test_dark_capture_retakes_on_too_dark():
+    """A capture whose mean luma drops below the RETAKE brightness cut is a RETAKE."""
     import PIL.Image
 
     arr = cg._numpy().asarray(_crisp_text_page(), dtype=float) * 0.05
@@ -82,6 +86,7 @@ def test_dark_capture_retakes_on_too_dark():
 def test_review_band_boundaries():
     """v3.1 readable-blur band: hard-RETAKE < 0.08, 0.08–0.13 → REVIEW, ≥ 0.13 → PASS."""
     def verdict(sharpness):
+        """Map a sharpness value to its v3.1 verdict class."""
         return cg._decide({
             "sharpness": sharpness, "contrast": 0.5, "ink_ratio": 0.01,
             "brightness": 0.95, "exposure": 0.45,
@@ -96,6 +101,7 @@ def test_review_band_boundaries():
 
 
 def test_gate_is_deterministic():
+    """The same bytes always produce the same gate response (pure function)."""
     b = _png_bytes(_crisp_text_page())
     assert cg.assess_image(b) == cg.assess_image(b)
 
@@ -129,18 +135,21 @@ def test_unreadable_bytes_raise_value_error():
 # ── tools: readable errors, fail-closed upload ──────────────────────
 
 def test_validate_missing_file_returns_error_sentinel(tmp_path, monkeypatch):
+    """A capture path that does not exist yields the missing-file error sentinel."""
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     r = doc_domain.validate_capture_quality.func(str(tmp_path / "nope.png"))
     assert r == {"error": f"image not found: {tmp_path / 'nope.png'}"}
 
 
 def test_validate_rejects_capture_outside_the_capture_dir(tmp_path, monkeypatch):
+    """A capture resolved outside the configured capture root is rejected."""
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     r = doc_domain.validate_capture_quality.func("/etc/passwd")
     assert r == {"error": "capture directory not allowed"}
 
 
 def test_validate_directory_returns_error_sentinel(tmp_path, monkeypatch):
+    """A capture path that is a directory yields the is-a-directory error sentinel."""
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     r = doc_domain.validate_capture_quality.func(str(tmp_path))
     assert r["error"].startswith(str(tmp_path))
@@ -165,6 +174,7 @@ def test_validate_real_crisp_capture_verdict(tmp_path, monkeypatch):
 
 
 def test_validate_capture_root_must_be_configured(tmp_path, monkeypatch):
+    """An unset capture root fails closed: no capture directory is allowed."""
     monkeypatch.delenv("MIFOSX_CAPTURE_DIR", raising=False)
     r = doc_domain.validate_capture_quality.func(str(tmp_path / "x.png"))
     assert r == {"error": "capture directory not allowed"}
@@ -183,6 +193,7 @@ def test_upload_refuses_retake_capture(tmp_path, monkeypatch):
 
 
 def test_upload_refuses_when_gate_has_no_verdict(tmp_path, monkeypatch):
+    """A gate response without a verdict fails closed: never upload."""
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "x.png"
     p.write_bytes(b"x")
@@ -192,9 +203,11 @@ def test_upload_refuses_when_gate_has_no_verdict(tmp_path, monkeypatch):
 
 
 def test_upload_gate_passes_then_posts_multipart(tmp_path, monkeypatch):
+    """Gate-PASS upload posts the assessed bytes as the multipart file part."""
     calls = {}
 
     def fake_multipart(endpoint, form, file, filename=None):
+        """Stub the adapter and record the upload arguments."""
         calls["endpoint"], calls["form"], calls["file"], calls["filename"] = (
             endpoint, form, file, filename,
         )
@@ -219,9 +232,11 @@ def test_upload_gate_passes_then_posts_multipart(tmp_path, monkeypatch):
 
 
 def test_upload_force_overrides_retake(tmp_path, monkeypatch):
+    """`force` overrides a RETAKE verdict so the officer can still upload."""
     import PIL.Image
 
     def fake_multipart(endpoint, form, file, filename=None):
+        """Stub the adapter: force-upload succeeds and returns the resource id."""
         return {"resourceId": 7}
 
     monkeypatch.setattr(doc_domain.fineract_client, "execute_multipart", fake_multipart)
@@ -236,7 +251,9 @@ def test_upload_force_overrides_retake(tmp_path, monkeypatch):
 
 
 def test_upload_propagates_server_error(tmp_path, monkeypatch):
+    """A Fineract upload error propagates unchanged to the agent caller."""
     def fake_multipart(endpoint, form, file, filename=None):
+        """Stub the adapter to return a Fineract-style error payload."""
         return {"error": "409 Conflict", "status_code": 409}
 
     monkeypatch.setattr(doc_domain.fineract_client, "execute_multipart", fake_multipart)
@@ -250,6 +267,7 @@ def test_upload_propagates_server_error(tmp_path, monkeypatch):
 # ── registry intent routing ─────────────────────────────────────────
 
 def test_registry_routes_capture_intents():
+    """Capture-intent phrases route to the document tools."""
     from tools.registry import router
 
     routed = router.route_intent("gate this blurry capture photo before upload")
@@ -258,6 +276,7 @@ def test_registry_routes_capture_intents():
 
 
 def test_registry_exposes_exactly_two_new_document_tools():
+    """The client domain registers the two new document-intake tools."""
     from tools.registry import router
 
     client_tools = {t.name for t in router.get_domain("clients")}
@@ -316,6 +335,7 @@ def test_domain_verify_fetches_profile_and_identifiers(monkeypatch):
 
 
 def test_domain_verify_propagates_client_error(monkeypatch):
+    """A Fineract error from the verify flow propagates to the agent caller."""
     monkeypatch.setattr(
         doc_domain.fineract_client, "execute_get",
         lambda e: {"error": "404 not found", "status_code": 404})
@@ -330,6 +350,7 @@ def test_domain_verify_requires_a_field(monkeypatch):
 
 
 def test_compare_mobile_strips_international_country_code():
+    """'+65 …' international captures normalise to their national form."""
     # Singapore: '+65 8123 4567' (international) == '81234567' (national form)
     assert vf._normalize_mobile("+65 8123 4567") == "81234567"
     assert vf.compare_mobile("+65 8123 4567", ["81234567"])[0] == "MATCH"
@@ -338,6 +359,7 @@ def test_compare_mobile_strips_international_country_code():
 
 
 def test_compare_id_keeps_unicode_digits_significant():
+    """Unicode decimal digits in an ID are significant, not stripped as separators."""
     # fullwidth digits fold to their ASCII values instead of being stripped
     assert vf.compare_id("AB-１２３４-５６７８", ["AB-1234-5678"])[0] == "MATCH"
     assert vf.compare_id("AB-9999-0000", ["AB-1234-5678"])[0] == "MISMATCH"

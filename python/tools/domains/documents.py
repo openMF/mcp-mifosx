@@ -63,7 +63,17 @@ def _resolve_capture_path(image_path: str) -> Optional[str]:
 
 @tool
 def validate_capture_quality(image_path: str) -> dict:
-    """Answers: 'Is this document photo readable?' or 'Gate this capture before upload'"""
+    """Answers: 'Is this document photo readable?' or 'Gate this capture before upload'.
+
+    Response fields:
+        verdict: RETAKE | REVIEW | PASS — RETAKE means the capture is not
+            usable (unreadable / blank / too dark) and should be retaken.
+        reasons: named gates that tripped (empty on PASS).
+        signals: measured sharpness / contrast / ink_ratio / brightness /
+            exposure backing the verdict.
+        error: error sentinel instead of a verdict when the capture could not
+            be assessed (missing / unreadable / outside the capture root).
+    """
     gate, _image_bytes = _assess_capture(image_path)
     return gate
 
@@ -112,7 +122,17 @@ def upload_client_document(
     description: Optional[str] = None,
     force: bool = False,
 ) -> dict:
-    """Answers: "Gate + upload this photo to the client's documents". Refuses an unreadable capture."""
+    """Answers: "Gate + upload this photo to the client's documents". Refuses an unreadable capture.
+
+    Response fields:
+        resourceId: the Fineract document resource id on success.
+        error / status_code: Fineract failure shape (see FineractAdapter).
+        upload_rejected: True when the gate refused (verdict RETAKE) and the
+            capture was not uploaded.
+        capture_gate: audit trail of the gate decision — verdict
+            (RETAKE|REVIEW|PASS), reasons (named gates that tripped) and
+            signals (sharpness / contrast / ink_ratio / brightness / exposure).
+    """
     gate, image_bytes = _assess_capture(imagePath)
     if "error" in gate:
         return gate

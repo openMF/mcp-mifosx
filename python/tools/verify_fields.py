@@ -202,6 +202,13 @@ def verify_fields(extracted: Dict[str, Any], profile: Dict[str, Any]) -> Dict[st
     ``extracted`` is the field dict the AI client produced from the document
     photo (full_name / national_id / mobile_no — the fields the bank can
     check). Returns per-field verdicts plus an overall result.
+
+    Return fields:
+        verified: True when overall == VERIFIED.
+        overall: one of VERIFIED | NEEDS_REVIEW | FAILED | NOTHING_TO_VERIFY.
+        fields: per-field entries with verdict / extracted / (source_value |
+            note) — verdict is MATCH | REVIEW | MISMATCH | NO_SOURCE_DATA.
+        message: human-readable roll-up for the agent caller.
     """
     field_verdicts: Dict[str, Dict[str, Any]] = {}
     for field, compare in (

@@ -3,6 +3,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+"""Fineract REST client used by the MCP domain tools.
+
+Thin requests-based adapter over the Apache Fineract backend: tenant + auth
+headers, connect/read timeouts, TLS switch and readable error parsing. Domain
+tools never talk to Fineract directly — they go through this adapter so the
+HTTP contract stays in one place.
+"""
+
 import io
 import logging
 import math
@@ -28,6 +36,12 @@ DEFAULT_READ_TIMEOUT = 60.0
 
 
 class FineractAdapter:
+    """HTTP client for the Fineract REST API used by the MCP domain tools.
+
+    Owns the tenant/auth headers, the request timeouts and the TLS switch;
+    every executor (JSON GET/POST, multipart) lives behind its own method.
+    """
+
     def __init__(self):
         """Configure the Fineract endpoint, credentials and timeouts."""
         self.base_url = os.getenv("MIFOSX_BASE_URL")
