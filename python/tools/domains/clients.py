@@ -124,7 +124,7 @@ def close_client(client_id: int, closure_reason_id: Optional[int] = None):
 # --- GROUP & CENTER OPERATIONS ---
 
 @tool
-def create_group(name: str, office_id: int = 1, client_members: list = None):
+def create_group(name: str, office_id: int, client_members: list = None):
     """Answers: 'Create a new lending group called The Innovators'"""
     print(f"[Tool] Creating Group: {name}...")
     today = get_fineract_today()

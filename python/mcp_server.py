@@ -413,7 +413,7 @@ def delete_client_profile(clientId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("create_lending_group")
-def create_lending_group(name: str, officeId: int = 1, externalId: str = None) -> dict:
+def create_lending_group(name: str, officeId: int, externalId: str = None) -> dict:
     """Create a new lending group"""
     return create_group_domain.func(name, officeId, externalId)
 
