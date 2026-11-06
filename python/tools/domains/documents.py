@@ -162,6 +162,11 @@ def verify_client_details(
         return profile
     identifiers = fineract_client.execute_get(f"clients/{clientId}/identifiers")
     if "error" in identifiers:
+        # A failed identifier lookup must not read as "no identifier on file":
+        # when the extracted document number needs an identifier, surface the
+        # lookup error instead of degrading to NO_SOURCE_DATA.
+        if extracted["national_id"] and not (profile.get("national_id") or profile.get("documentKey")):
+            return identifiers
         identifiers = []
     if isinstance(identifiers, dict):
         identifiers = identifiers.get("items", [])

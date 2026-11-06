@@ -29,6 +29,7 @@ DEFAULT_READ_TIMEOUT = 60.0
 
 class FineractAdapter:
     def __init__(self):
+        """Configure the Fineract endpoint, credentials and timeouts."""
         self.base_url = os.getenv("MIFOSX_BASE_URL")
         self.tenant_id = os.getenv("MIFOSX_TENANT_ID", "default")
         self.username = os.getenv("MIFOSX_USERNAME")
@@ -50,6 +51,7 @@ class FineractAdapter:
 
     @staticmethod
     def _timeout_seconds(name: str, default: float) -> float:
+        """Read a positive finite timeout (seconds) from the environment."""
         value = float(os.getenv(name, str(default)))
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"{name} must be a finite positive number")

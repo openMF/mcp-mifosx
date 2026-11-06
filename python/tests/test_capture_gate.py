@@ -103,6 +103,7 @@ def test_gate_is_deterministic():
 def test_resolution_invariance():
     """The same page rendered natively at different pixel densities → same verdict."""
     def page(width, height, stroke):
+        """Render a crisp text-ish page at the given size."""
         im = Image.new("L", (width, height), 245)
         d = ImageDraw.Draw(im)
         for i, y in enumerate(range(height // 6, height - 40, 24 * stroke)):
@@ -120,6 +121,7 @@ def test_resolution_invariance():
 
 
 def test_unreadable_bytes_raise_value_error():
+    """Bytes that are not a readable image must surface the gate's ValueError."""
     with pytest.raises(ValueError, match="unreadable image"):
         cg.assess_image(b"not an image at all")
 
@@ -145,6 +147,7 @@ def test_validate_directory_returns_error_sentinel(tmp_path, monkeypatch):
 
 
 def test_validate_corrupt_file_returns_error_sentinel(tmp_path, monkeypatch):
+    """A capture dir file that is not a decodable image yields an error sentinel."""
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "bad.png"
     p.write_bytes(b"corrupt")
@@ -153,6 +156,7 @@ def test_validate_corrupt_file_returns_error_sentinel(tmp_path, monkeypatch):
 
 
 def test_validate_real_crisp_capture_verdict(tmp_path, monkeypatch):
+    """A crisp capture inside the capture dir gates to PASS with measured signals."""
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "cap.png"
     p.write_bytes(_png_bytes(_crisp_text_page()))
@@ -167,6 +171,7 @@ def test_validate_capture_root_must_be_configured(tmp_path, monkeypatch):
 
 
 def test_upload_refuses_retake_capture(tmp_path, monkeypatch):
+    """A blank capture is refused by the gate before any upload happens."""
     Image = cg._pillow()
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
     p = tmp_path / "blank.png"
@@ -262,6 +267,7 @@ def test_registry_exposes_exactly_two_new_document_tools():
 # ── verify_client_details ───────────────────────────────────────────
 
 def test_verify_module_aggregation():
+    """End-to-end verdicts across name / ID / mobile comparisons."""
     from tools import verify_fields as vf
 
     profile = {
@@ -292,9 +298,11 @@ def test_verify_module_aggregation():
 
 
 def test_domain_verify_fetches_profile_and_identifiers(monkeypatch):
+    """The domain verify flow fetches the profile and identifier documents."""
     calls = []
 
     def fake_get(endpoint):
+        """Serve the client profile or the identifiers list per endpoint."""
         calls.append(endpoint)
         if "identifiers" in endpoint:
             return [{"documentKey": "AB-1234-5678"}]
@@ -316,6 +324,7 @@ def test_domain_verify_propagates_client_error(monkeypatch):
 
 
 def test_domain_verify_requires_a_field(monkeypatch):
+    """Verify refuses to run without at least one extracted field."""
     r = doc_domain.verify_client_details.func(42)
     assert "error" in r and "non-empty" in r["error"]
 

@@ -200,7 +200,8 @@ The exact number and categorization of tools depend on the core server implement
 
 This summary lists only the headline categories and does not add up to the
 full tool count; the complete per-category breakdown lives in the Python
-implementation's [Available Tools (76)](#available-tools-76) list.
+implementation's [Available Tools (76)](python/README.md#available-tools-76)
+list.
 
 - **Clients & Groups**: 16 Tools
 - **Document Capture & KYC**: 3 Tools
