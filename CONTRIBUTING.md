@@ -316,6 +316,23 @@ OUTPUT:
 - Server errors (API failure): return 5xx and log exception
 - **Never expose internal API errors directly**; normalize for LLM understanding
 
+### Documentation
+
+- **Documentation is part of the definition of done**: a PR that adds or
+  modifies a class, function, or response field without documentation is
+  incomplete.
+- **Module**: every new module starts with a module docstring explaining what
+  it owns and why it exists.
+- **Class**: every new class documents its responsibility and key attributes.
+- **Function**: every new function documents its contract — inputs, behaviour,
+  outputs, raises — including private helpers that carry logic.
+- **Fields**: every new response field (verdicts, reasons, signals, derived
+  results) is listed in the owning function's docstring or the module docs so
+  the field vocabulary stays stable for agents and MCP clients.
+- **Source of truth**: the verdict / response contracts in this guide and the
+  tool docstrings are the canonical references; agents and MCP clients build
+  on them, so renames or semantic changes must update docs in the same PR.
+
 ### Testing
 
 - **Success case**: happy path with valid inputs

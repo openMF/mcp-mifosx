@@ -71,6 +71,9 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
         _require_positive_int(params, "loanId")
         _require_positive_number(params, "amount")
 
+    if tool_name == "validate_capture_quality":
+        _require_non_blank_str(params, "imagePath")
+
     if tool_name == "record_journal_entry":
         _require_non_blank_str(params, "currencyCode")
 

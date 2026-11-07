@@ -2,6 +2,8 @@
 
 Keeps commercial opportunities (leads and applicants) from first contact until they are registered in Fineract or discarded. It has its own database and is linked to Fineract by external ID: only a qualified opportunity reaches Fineract.
 
+Leads from channels arrive through the OpenFn intake workflow, which checks them (duplicates, a way to contact) and creates them here as the actor `intake`; see the sandbox README, section 3.3.
+
 The LOS has no access to Fineract. When an opportunity qualifies, the write-back agent creates the client and the loan application with its own Fineract role, then records their ids here (`POST /opportunities/{id}/registration`). The opportunity's `external_id` becomes the loan's external ID in Fineract.
 
 Run it with the sandbox (`docker compose up -d`); the API and its docs are at http://localhost:8090/docs.
@@ -40,7 +42,7 @@ Consent is the client's act. Bureau, SAT and contact consent are recorded by `PO
 
 Writes take an optional `X-Actor` header (the agent or officer) for the audit trail. Phone numbers are stored without spaces, dashes or brackets and national IDs in upper case, so searches match however they were typed. Amounts are returned as strings (`"15000.00"`). The audit trail names the fields that changed, never their values.
 
-The API has no authentication of its own. No other sandbox service shares a network with it except its database, and its port is published on 127.0.0.1 only.
+The API has no authentication of its own. Besides its database, only the OpenFn worker shares a network with it (`los-api`, for the intake job), and its port is published on 127.0.0.1 only.
 
 ## Tests
 

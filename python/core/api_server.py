@@ -8,7 +8,7 @@ from typing import Annotated, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
 # Import our custom banking domains and AI router
 from tools.domains import accounting, clients, groups, loans, savings, staff
@@ -59,7 +59,8 @@ class ClientChargeApply(BaseModel):
 
 class GroupCreate(BaseModel):
     name: str
-    office_id: int = 1
+    # strict, so true is not taken as office 1
+    office_id: Annotated[int, Field(strict=True, gt=0)]
     client_members: Optional[list] = None
 
 class CenterCreate(BaseModel):

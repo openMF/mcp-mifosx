@@ -206,6 +206,14 @@ In Lightning: **Credentials → New credential → Raw JSON**, name it **`finera
   expects `credential_bodies: [{"name": "main", "body": {...}}]`), which leaves the
   credential empty.
 
+`project.yaml` names two more credentials. Create them the same way, even if you do not
+run what they point to, or the deploy fails:
+
+- **`agent-decision`**: `{"url": "http://<agent runner>:8080", "token": "<its token>"}`, the
+  decision agent's runner. Without a reachable one, the decision job uses its rules.
+- **`los`**: `{"baseUrl": "http://<LOS host>:8000"}`, the LOS API for the Opportunity Intake
+  workflow. Without a reachable LOS, only that workflow fails.
+
 ## 5. Deploy the OpenFn project
 
 Create an API token in Lightning at **http://localhost:4000/profile/tokens**, then from
@@ -225,7 +233,7 @@ of this Lightning instance (gitignored). **Keep this file:** re-running the same
 with it updates the existing project; without it, a second project with the same name is
 created, with different webhook URLs.
 
-Print the two webhook URLs (or copy them from the trigger node of each workflow in the UI):
+Print the webhook URLs (or copy them from the trigger node of each workflow in the UI):
 
 ```bash
 python3 -c "import json;s=json.load(open('.state.json'));[print(w['name'],'->','http://localhost:4000/i/'+t['id']) for w in s['workflows'].values() for t in w['triggers'].values()]"
@@ -373,7 +381,7 @@ The same loan, client and notes are visible in the Mifos X web app (loan → *No
 | Submit returns `500`, gateway log shows `OpenFn webhook trigger failed` | Wrong or stale webhook URL – re-read it from `.state.json` after each deploy to a new instance. With `401 Unauthorized` or `404 ... Webhook not found`, the triggers require an API key and `OPENFN_WEBHOOK_API_KEY` is missing or wrong. |
 | `openfn deploy` fails with `source_job_id or source_trigger_id must be present` | Outdated `project.yaml` – pull the latest version of this folder. |
 | Runs never start | No worker connected – check `docker compose logs web` for the built-in worker. |
-| Deploy fails with an error about the `fineract` credential | Create the credential (step 4) before deploying, owned by the user named in `project.yaml`. |
+| Deploy fails with an error about a credential (`fineract`, `agent-decision`, `los`) | Create the credentials (step 4) before deploying, owned by the user named in `project.yaml`. |
 | Write-back run fails with `Credential environment mismatch ... 'unknown'` | The credential has no body for the `main` environment – recreate it in the UI (step 4). |
 | `final` shows `FINERACT_ERROR` / status `FAILED` | Fineract rejected a request; the error body is in `fineractLoan.details`. Fix the cause (e.g. missing loan product) and `POST /review` again – the job reuses the client/loan already created. |
 | Deploy created a second project with the same name | `.state.json` was missing or stale. Delete the extra project in Lightning (*Settings*) and redeploy with the original `.state.json`, or use the new project's webhook URLs. |

@@ -48,6 +48,15 @@ from tools.domains.clients import (
 from tools.domains.codetables import get_code_values as get_code_values_domain
 from tools.domains.codetables import list_codes as list_codes_domain
 from tools.domains.codetables import list_datatables as list_datatables_domain
+from tools.domains.documents import (
+    upload_client_document as upload_client_document_domain,
+)
+from tools.domains.documents import (
+    validate_capture_quality as validate_capture_quality_domain,
+)
+from tools.domains.documents import (
+    verify_client_details as verify_client_details_domain,
+)
 from tools.domains.groups import activate_group as activate_group_domain
 from tools.domains.groups import add_group_member, list_centers, list_groups
 from tools.domains.groups import create_center as create_center_domain
@@ -404,7 +413,7 @@ def delete_client_profile(clientId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("create_lending_group")
-def create_lending_group(name: str, officeId: int = 1, externalId: str = None) -> dict:
+def create_lending_group(name: str, officeId: int, externalId: str = None) -> dict:
     """Create a new lending group"""
     return create_group_domain.func(name, officeId, externalId)
 
@@ -469,6 +478,42 @@ def list_documents(clientId: int) -> dict:
     return get_client_documents.func(clientId)
 
 @mcp.tool()
+@safe_tool("validate_capture_quality")
+def validate_capture_quality(imagePath: str) -> dict:
+    """Run the document capture-quality gate on a photo BEFORE uploading it.
+    Deterministic, offline (no LLM): returns verdict RETAKE (unreadable — capture again)
+    / REVIEW (borderline — a human should judge) / PASS (usable), the exact reasons,
+    and the measured signals (sharpness, contrast, ink_ratio, brightness).
+    Any MCP client can pass local image paths (jpg/png/webp/tiff...)."""
+    return validate_capture_quality_domain.func(imagePath)
+
+@mcp.tool()
+@safe_tool("upload_client_document")
+def upload_client_document(clientId: int, imagePath: str, name: str = None, description: str = None, force: bool = False) -> dict:
+    """Gate-then-upload a photo as a client document. The capture-quality gate runs first:
+    an unreadable (RETAKE) capture is refused with its reasons unless force=True;
+    REVIEW verdicts upload but stay flagged in the response's capture_gate audit object.
+    Validates clientId exists before executing."""
+    check = get_client_details.func(clientId)
+    if not isinstance(check, dict) or "error" in check:
+        return _prefetch_failure(check, f"Client ID {clientId} not found.")
+    return upload_client_document_domain.func(clientId, imagePath, name, description, force)
+
+@mcp.tool()
+@safe_tool("verify_client_details")
+def verify_client_details(clientId: int, fullName: str = None, nationalId: str = None, mobileNo: str = None) -> dict:
+    """Verify document details against the client's records. The vision model in the AI client
+    extracts fields the photo shows (fullName / nationalId / mobileNo); this tool fetches the
+    client record plus identity-document identifiers from Fineract and compares each field
+    deterministically: per-field MATCH / REVIEW / MISMATCH / NO_SOURCE_DATA, overall
+    VERIFIED / NEEDS_REVIEW / FAILED. No LLM participates in the comparison. Validates
+    clientId exists before executing."""
+    check = get_client_details.func(clientId)
+    if not isinstance(check, dict) or "error" in check:
+        return _prefetch_failure(check, f"Client ID {clientId} not found.")
+    return verify_client_details_domain.func(clientId, fullName, nationalId, mobileNo)
+
+@mcp.tool()
 @safe_tool("list_client_charges")
 def list_client_charges(clientId: int) -> dict:
     """List client-level fees or penalties"""
@@ -476,8 +521,16 @@ def list_client_charges(clientId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("apply_client_fee")
-def apply_client_fee(clientId: int, chargeId: int, amount: float) -> dict:
-    """Apply a one-time fee/charge to a client profile"""
+def apply_client_fee(clientId: int, amount: float, chargeId: int = None) -> dict:
+    """Apply a one-time fee/charge to a client profile, due today. Validates clientId exists before executing.
+    chargeId is the charge to apply (a client charge with a specified due date). If it is
+    missing, nothing is charged and the error lists the available charges
+    (id = name (default amount)) so you can ask the user which one applies."""
+    check = get_client_details.func(clientId)
+    if not isinstance(check, dict) or "error" in check:
+        return _prefetch_failure(check, f"Client ID {clientId} not found.")
+    if chargeId is None:
+        return _charge_required("Client")
     return apply_client_charge.func(clientId, chargeId, amount)
 
 @mcp.tool()
@@ -652,7 +705,7 @@ def apply_loan_fee(loanId: int, feeAmount: float, chargeId: int = None) -> dict:
 
 def _charge_required(applies_to: str) -> dict:
     """Error for a fee without a chargeId, listing the charges that can be applied this way.
-    applies_to is the account type the charge is for, "Loan" or "Savings"."""
+    applies_to is what the charge is for: "Loan", "Savings", or "Client"."""
     charges = list_charges_domain.func()
     if not isinstance(charges, list):
         reason = charges.get("error") if isinstance(charges, dict) else charges

@@ -3,9 +3,19 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+"""Fineract REST client used by the MCP domain tools.
+
+Thin requests-based adapter over the Apache Fineract backend: tenant + auth
+headers, connect/read timeouts, TLS switch and readable error parsing. Domain
+tools never talk to Fineract directly — they go through this adapter so the
+HTTP contract stays in one place.
+"""
+
+import io
 import logging
 import math
 import os
+from typing import Any, Optional, Union
 
 import requests
 from dotenv import load_dotenv
@@ -26,7 +36,14 @@ DEFAULT_READ_TIMEOUT = 60.0
 
 
 class FineractAdapter:
+    """HTTP client for the Fineract REST API used by the MCP domain tools.
+
+    Owns the tenant/auth headers, the request timeouts and the TLS switch;
+    every executor (JSON GET/POST, multipart) lives behind its own method.
+    """
+
     def __init__(self):
+        """Configure the Fineract endpoint, credentials and timeouts."""
         self.base_url = os.getenv("MIFOSX_BASE_URL")
         self.tenant_id = os.getenv("MIFOSX_TENANT_ID", "default")
         self.username = os.getenv("MIFOSX_USERNAME")
@@ -48,6 +65,7 @@ class FineractAdapter:
 
     @staticmethod
     def _timeout_seconds(name: str, default: float) -> float:
+        """Read a positive finite timeout (seconds) from the environment."""
         value = float(os.getenv(name, str(default)))
         if not math.isfinite(value) or value <= 0:
             raise ValueError(f"{name} must be a finite positive number")
@@ -148,6 +166,52 @@ class FineractAdapter:
                 # Named status_code, not status: Fineract payloads carry
                 # `status` as an object, and wrappers call
                 # .get("status", {}).get("value", "") on them.
+                return {
+                    "error": self._parse_fineract_error(e.response),
+                    "status_code": e.response.status_code,
+                }
+            return {"error": f"Connection failed: {str(e)}"}
+
+    def execute_multipart(
+        self, endpoint: str, form: dict, file: Union[str, bytes], filename: Optional[str] = None
+    ) -> dict:
+        """Executes a multipart POST (file upload, e.g. client documents).
+
+        `form` carries the string fields Fineract expects alongside the file
+        (name/description); the file goes out under the part name `file`,
+        which is what Fineract's document upload endpoints read.
+
+        `file` is the assessed capture — the exact bytes the capture gate
+        judged (a path is still accepted and opened here). The gate-then-upload
+        flow passes the assessed bytes, so assessment and upload run on the
+        same content and the upload never re-opens a mutable path: a capture
+        that changed between the gate read and the upload cannot reach Fineract
+        unassessed (no TOCTOU).
+
+        The Content-Type header is deliberately left out: the boundary a
+        multipart body is framed with only exists once requests encodes it.
+        Everything else (tenant header, auth, timeout, TLS behaviour, error
+        shape) matches the other executors.
+        """
+        url = f"{self.base_url}/{endpoint}"
+        headers = self._get_headers()
+        headers.pop("Content-Type", None)
+        try:
+            if isinstance(file, (bytes, bytearray)):
+                file_obj: Any = io.BytesIO(bytes(file))
+                upload_name = filename or "capture"
+            else:
+                file_obj = file
+                upload_name = filename or os.path.basename(file)
+            response = requests.post(
+                url, headers=headers, auth=(self.username, self.password),
+                data=form, files={"file": (upload_name, file_obj)},
+                verify=self.verify_ssl, timeout=self.timeout
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            if e.response is not None:
                 return {
                     "error": self._parse_fineract_error(e.response),
                     "status_code": e.response.status_code,

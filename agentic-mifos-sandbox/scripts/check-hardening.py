@@ -39,6 +39,7 @@ INTERNAL_NETWORKS = {
     "agents-llm": {"ollama", "agent-*"},
     "openfn-agents": {"lightning-worker", "agent-*"},
     "los": {"los-db", "los"},
+    "los-api": {"los", "lightning-worker"},
 }
 
 # The only networks with a route outside Docker, and the services allowed on

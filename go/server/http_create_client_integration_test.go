@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -45,7 +46,21 @@ func (l *auditTestLogs) String() string {
 
 // Runs against the real Java ApprovalStore and HTTP controller, with real Go SSE
 // transport and a recording Fineract. Build gateway first and set this jar path.
-func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
+func TestHTTPClientApprovalIntegration(t *testing.T) {
+	for _, tool := range []string{"create_client", "update_client"} {
+		t.Run(tool, func(t *testing.T) { testHTTPClientApprovalIntegration(t, tool) })
+	}
+}
+
+func testHTTPClientApprovalIntegration(t *testing.T, tool string) {
+	callbackPath := "/internal/approved-create-client/"
+	bankPath, bankMethod := "/clients", http.MethodPost
+	args := clientCreationArgs()
+	if tool == "update_client" {
+		callbackPath = "/internal/approved-update-client/"
+		bankPath, bankMethod = "/clients/123", http.MethodPut
+		args = clientUpdateArgs()
+	}
 	jar := os.Getenv("MCP_APPROVAL_TEST_GATEWAY_JAR")
 	if jar == "" {
 		t.Skip("set MCP_APPROVAL_TEST_GATEWAY_JAR to the packaged gateway for cross-service integration")
@@ -77,12 +92,12 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if r.URL.Path == "/userdetails" {
 			permissions := []string{"READ_CLIENT"}
 			if permitted.Load() {
-				permissions = append(permissions, "CREATE_CLIENT")
+				permissions = append(permissions, strings.ToUpper(tool))
 			}
 			json.NewEncoder(w).Encode(map[string]any{"authenticated": true, "permissions": permissions})
 			return
 		}
-		if r.URL.Path != "/clients" || r.Method != http.MethodPost {
+		if r.URL.Path != bankPath || r.Method != bankMethod {
 			t.Error("unexpected Fineract operation")
 		}
 		writes.Add(1)
@@ -143,7 +158,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 	}
 	handler := NewHTTPServer(caller, "").Handler()
 	goServer.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/internal/approved-create-client/") {
+		if strings.HasPrefix(r.URL.Path, callbackPath) {
 			mu.Lock()
 			lastCallback = r.Header.Clone()
 			mu.Unlock()
@@ -218,7 +233,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 			if entry.CorrelationID != id {
 				continue
 			}
-			if entry.Tool != "create_client" || entry.Tenant != "tenant-X" || entry.Caller == "" ||
+			if entry.Tool != tool || entry.Tenant != "tenant-X" || entry.Caller == "" ||
 				last.Caller != "" && last.Caller != entry.Caller {
 				t.Fatal("audit ownership or tool changed")
 			}
@@ -253,9 +268,11 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 	propose := func(t *testing.T) (*client.Client, string, string, map[string]any) {
 		t.Helper()
 		c := connect(t, goServer.URL, "Bearer original-officer-secret", "tenant-X")
-		assertToolList(t, c, []string{"create_client", "get_client", "get_client_accounts", "search_clients"})
+		want := []string{tool, "get_client", "get_client_accounts", "search_clients"}
+		sort.Strings(want)
+		assertToolList(t, c, want)
 		before := writes.Load()
-		result, err := c.CallTool(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: "create_client", Arguments: clientCreationArgs()}})
+		result, err := c.CallTool(context.Background(), mcp.CallToolRequest{Params: mcp.CallToolParams{Name: tool, Arguments: args}})
 		if err != nil || result.IsError {
 			t.Fatalf("proposal failed: %v %v", result, err)
 		}
@@ -287,7 +304,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		_, id, session, reviewed := propose(t)
 		before := writes.Load()
 		// A tool cannot claim or approve its own proposal, even with a guessed card id.
-		status, _ := post(goServer.URL+"/internal/approved-create-client/"+id, "Bearer original-officer-secret", "tenant-X", session, "", nil)
+		status, _ := post(goServer.URL+callbackPath+id, "Bearer original-officer-secret", "tenant-X", session, "", nil)
 		if status != 403 {
 			t.Fatalf("untrusted callback accepted: %d", status)
 		}
@@ -305,7 +322,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 			t.Fatal("foreign approval executed a write")
 		}
 		auditChain(t, id, "proposed")
-		status, body := decide(id, session, `{"decision":"approve","args":{"officeId":99},"payload":"changed"}`)
+		status, body := decide(id, session, `{"decision":"approve","args":{"clientId":456,"firstname":"Changed"},"payload":"changed","clientId":456}`)
 		if status != 200 || !strings.Contains(body, `"resourceId":42`) {
 			t.Fatalf("approval failed: %d %s", status, body)
 		}
@@ -314,6 +331,12 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		mu.Unlock()
 		var executed map[string]any
 		json.Unmarshal([]byte(payload), &executed)
+		if tool == "update_client" {
+			if reviewed["clientId"] != float64(123) {
+				t.Fatal("reviewed resource ID changed")
+			}
+			delete(reviewed, "clientId")
+		}
 		expected, _ := json.Marshal(reviewed)
 		actual, _ := json.Marshal(executed)
 		if string(expected) != string(actual) || writes.Load() != before+1 {
@@ -323,7 +346,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		if status != 403 {
 			t.Fatal("approval replay accepted")
 		}
-		status, _ = post(goServer.URL+"/internal/approved-create-client/"+id, "Bearer original-officer-secret", "tenant-X", session, "", callback)
+		status, _ = post(goServer.URL+callbackPath+id, "Bearer original-officer-secret", "tenant-X", session, "", callback)
 		if status == 200 || writes.Load() != before+1 {
 			t.Fatal("duplicate callback repeated client creation")
 		}
@@ -409,7 +432,7 @@ func TestHTTPCreateClientApprovalIntegration(t *testing.T) {
 		}
 		auditChain(t, id, "proposed", "approved", "executing", "succeeded")
 	})
-	for _, status := range []int32{400, 401, 403, 409, 422, 500} {
+	for _, status := range []int32{400, 401, 403, 404, 409, 422, 500} {
 		t.Run(fmt.Sprintf("downstream HTTP %d remains failure", status), func(t *testing.T) {
 			_, id, session, _ := propose(t)
 			before := writes.Load()

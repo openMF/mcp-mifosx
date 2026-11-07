@@ -78,6 +78,17 @@ func (r *Registry) RegisterCreateClientProposal(handler func(context.Context, mc
 	}
 }
 
+// RegisterUpdateClientProposal keeps caller writes behind the existing approval bridge.
+func (r *Registry) RegisterUpdateClientProposal(handler func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error)) {
+	for _, def := range GetClientToolDefs() {
+		if def.Name == "update_client" {
+			def.Description = "Propose client ID and name changes for human approval. Does not execute a write."
+			def.Handler = handler
+			r.registerTools([]BaseToolDef{def})
+		}
+	}
+}
+
 func GetClientToolDefs() []BaseToolDef {
 	return []BaseToolDef{
 		{

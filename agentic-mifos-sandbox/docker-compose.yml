@@ -42,16 +42,19 @@
 #   agent-<name> - internal: one agent and its MCP server
 #   openfn-agents - internal: the OpenFn worker and the agents' runners
 #   los          - internal: the LOS and its database (no route to Fineract)
+#   los-api      - internal: the LOS API for the OpenFn worker (intake job)
 #   web-app-edge, lightning-edge, gateway-edge, los-edge - one published port each
 #                  (lightning-edge also for the npm adaptor catalogue)
 #   worker-egress - the OpenFn worker, to install adaptors from npm
 #   llm-egress   - Ollama, to download models
 
 # Webhook trigger ids of the OpenFn project. The bootstrap provisions the
-# triggers with exactly these ids, so the gateway's webhook URLs are fixed.
+# triggers with exactly these ids, so the webhook URLs (the gateway's, and the
+# one channels post leads to) are fixed.
 x-openfn-triggers:
   loan-submit: &trigger-loan-submit 8c5f206e-6510-4bc1-87cd-cd71554e9335
   loan-review: &trigger-loan-review bde8f76a-5f61-4183-ac6f-0ec0ce8d9ff4
+  opportunity-intake: &trigger-opportunity-intake 5ae8d72f-4cc5-4e83-98a6-27f8f40f1af1
 
 # Settings every service gets (see Hardening above).
 x-hardened: &hardened
@@ -355,6 +358,46 @@ services:
       WORKER_CAPACITY: ${LIGHTNING_WORKER_CAPACITY:-2}
       WORKER_MAX_RUN_DURATION_SECONDS: *max-run-seconds
       NODE_OPTIONS: --dns-result-order=ipv4first
+      # The watchdog below listens for the claim attempts an idle worker logs
+      # at debug level, every few seconds.
+      WORKER_LOG_LEVEL: debug
+      # Longer than any run may take (WORKER_MAX_RUN_DURATION_SECONDS).
+      WORKER_WATCHDOG_SECONDS: ${LIGHTNING_WORKER_WATCHDOG_SECONDS:-900}
+    # Watchdog for a ws-worker bug (still in 1.30.0): a claim sent just before
+    # the socket drops is never answered and keeps a capacity slot, so after
+    # the reconnect the worker believes it is full and never claims again,
+    # while staying alive. A working worker logs every few seconds when idle
+    # and ends every run within WORKER_MAX_RUN_DURATION_SECONDS, so silence
+    # for WORKER_WATCHDOG_SECONDS means it is stuck: stop it and exit, and the
+    # restart policy starts a fresh one.
+    command:
+      - sh
+      - -c
+      - |
+        fifo=/tmp/worker.log
+        rm -f "$$fifo" && mkfifo "$$fifo"
+        node ./dist/start.js > "$$fifo" 2>&1 &
+        pid=$$!
+        # The read end stays open on fd 3: reopening a FIFO blocks once the
+        # worker, its only writer, has exited.
+        exec 3< "$$fifo"
+        # docker stop: stop the worker, keep its last lines, exit with its code
+        trap 'kill -TERM "$$pid" 2>/dev/null; cat <&3; wait "$$pid"; exit $$?' TERM INT
+        while IFS= read -r -t "$$WORKER_WATCHDOG_SECONDS" line <&3; do
+          printf '%s\n' "$$line"
+        done
+        # read fails at the end of the output (the worker exited, and the shell
+        # has reaped it) and on the timeout (the worker is still running).
+        if kill -0 "$$pid" 2>/dev/null; then
+          echo "watchdog: no output from the worker for $$WORKER_WATCHDOG_SECONDS s, restarting it"
+          kill -TERM "$$pid"
+          (sleep 10; kill -KILL "$$pid" 2>/dev/null) &
+          wait "$$pid"
+          exit 1
+        fi
+        wait "$$pid"
+    # Reaps the processes the shell above does not wait for.
+    init: true
     user: node
     tmpfs: ["/tmp:size=64m"]
     # The adaptors the worker installs at run time (~70 MB): on disk rather
@@ -365,7 +408,8 @@ services:
     # core: the Fineract write-back job calls Fineract directly.
     # llm: the document job calls Ollama.
     # openfn-agents: the decision job calls agent-decision.
-    networks: [openfn, worker-egress, core, llm, openfn-agents]
+    # los-api: the intake job calls the LOS.
+    networks: [openfn, worker-egress, core, llm, openfn-agents, los-api]
     # Lets OLLAMA_URL point at an Ollama server on the Docker host (Linux;
     # Docker Desktop provides this name already).
     extra_hosts:
@@ -395,6 +439,9 @@ services:
       OPENFN_PROJECT_SPEC: /spec/openfn/project.yaml
       OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
       OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
+      OPENFN_TRIGGER_OPPORTUNITY_INTAKE: *trigger-opportunity-intake
+      # Lightning credential "los" (the LOS API), used by the intake job.
+      LOS_URL: http://los:8000
       # Agent service users and their roles (fineract-rbac.json).
       FINERACT_AGENT_RBAC: /spec/fineract-rbac.json
       FINERACT_AGENT_IDENTITY_PASSWORD: ${FINERACT_AGENT_IDENTITY_PASSWORD:?run scripts/gen-secrets.sh}
@@ -417,12 +464,13 @@ services:
     pids_limit: 128
     restart: "no"
 
-  # Makes both webhook triggers require the gateway's API key (x-api-key).
-  # Lightning has no API for a trigger's auth, so this runs Lightning's own
-  # code, as lightning-setup does, once the bootstrap has provisioned the
-  # triggers. Safe to run on every `up`: a key changed in .env replaces the
-  # stored one, and it fails unless both triggers end up with exactly this
-  # key, so a Lightning upgrade that changes these functions shows here.
+  # Makes each webhook trigger require its own API key (x-api-key): the loan
+  # triggers the gateway's, the intake trigger the channels'. Lightning has no
+  # API for a trigger's auth, so this runs Lightning's own code, as
+  # lightning-setup does, once the bootstrap has provisioned the triggers.
+  # Safe to run on every `up`: a key changed in .env replaces the stored one,
+  # and it fails unless every trigger ends up with exactly its own key, so a
+  # Lightning upgrade that changes these functions shows here.
   lightning-webhook-auth:
     <<: *lightning
     depends_on:
@@ -432,8 +480,10 @@ services:
       <<: *lightning-env
       LIGHTNING_ADMIN_PASSWORD: ""
       OPENFN_WEBHOOK_API_KEY: ${OPENFN_WEBHOOK_API_KEY:?run scripts/gen-secrets.sh}
+      OPENFN_INTAKE_API_KEY: ${OPENFN_INTAKE_API_KEY:?run scripts/gen-secrets.sh}
       OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
       OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
+      OPENFN_TRIGGER_OPPORTUNITY_INTAKE: *trigger-opportunity-intake
     command:
       - /app/bin/lightning
       - eval
@@ -441,44 +491,55 @@ services:
         {:ok, _} = Application.ensure_all_started(:tzdata)
         alias Lightning.{Repo, WebhookAuthMethods}
         alias Lightning.Workflows.Trigger
-        key = System.fetch_env!("OPENFN_WEBHOOK_API_KEY")
-        trigger_ids = Enum.map(~w(OPENFN_TRIGGER_LOAN_SUBMIT OPENFN_TRIGGER_LOAN_REVIEW), &System.fetch_env!/1)
+        # Each auth method: its name, its key and the triggers that accept only it.
+        methods = [
+          {"gateway", "OPENFN_WEBHOOK_API_KEY", ~w(OPENFN_TRIGGER_LOAN_SUBMIT OPENFN_TRIGGER_LOAN_REVIEW)},
+          {"channels", "OPENFN_INTAKE_API_KEY", ~w(OPENFN_TRIGGER_OPPORTUNITY_INTAKE)}
+        ]
+        # The same key in two methods would open both groups of triggers.
+        keys = Enum.map(methods, fn {_, key_var, _} -> System.fetch_env!(key_var) end)
+        length(Enum.uniq(keys)) == length(keys) ||
+          raise "OPENFN_WEBHOOK_API_KEY and OPENFN_INTAKE_API_KEY must differ"
         {:ok, _, _} =
           Lightning.Setup.with_minimum_setup(fn ->
             actor = Lightning.Accounts.get_user_by_email(System.fetch_env!("LIGHTNING_ADMIN_EMAIL"))
-            triggers = Enum.map(trigger_ids, &(Repo.get!(Trigger, &1) |> Repo.preload(workflow: :project)))
-            project = hd(triggers).workflow.project
-            # One transaction: a failure keeps the key and links as they were.
+            # One transaction: a failure keeps the keys and links as they were.
             {:ok, _} =
               Repo.transaction(fn ->
-                existing = Enum.find(WebhookAuthMethods.list_for_project(project), &(&1.name == "gateway"))
-                method =
-                  if existing && existing.auth_type == :api && existing.api_key == key do
-                    IO.puts("Webhook API key unchanged")
-                    existing
-                  else
-                    # A method's key cannot be updated, and its name is unique
-                    # in the project: replace it.
-                    if existing, do: {:ok, _} = WebhookAuthMethods.delete_auth_method(existing)
-                    {:ok, method} =
-                      WebhookAuthMethods.create_auth_method(
-                        %{"name" => "gateway", "auth_type" => "api", "api_key" => key, "project_id" => project.id},
-                        actor: actor
-                      )
-                    IO.puts(if existing, do: "Replaced the webhook API key", else: "Created the webhook API key")
-                    method
+                for {name, key_var, trigger_vars} <- methods do
+                  key = System.fetch_env!(key_var)
+                  triggers =
+                    Enum.map(trigger_vars, &(Repo.get!(Trigger, System.fetch_env!(&1)) |> Repo.preload(workflow: :project)))
+                  project = hd(triggers).workflow.project
+                  existing = Enum.find(WebhookAuthMethods.list_for_project(project), &(&1.name == name))
+                  method =
+                    if existing && existing.auth_type == :api && existing.api_key == key do
+                      IO.puts("Webhook API key '#{name}' unchanged")
+                      existing
+                    else
+                      # A method's key cannot be updated, and its name is unique
+                      # in the project: replace it.
+                      if existing, do: {:ok, _} = WebhookAuthMethods.delete_auth_method(existing)
+                      {:ok, method} =
+                        WebhookAuthMethods.create_auth_method(
+                          %{"name" => name, "auth_type" => "api", "api_key" => key, "project_id" => project.id},
+                          actor: actor
+                        )
+                      IO.puts(if existing, do: "Replaced the webhook API key '#{name}'", else: "Created the webhook API key '#{name}'")
+                      method
+                    end
+                  for trigger <- triggers do
+                    linked = Enum.map(WebhookAuthMethods.list_for_trigger(trigger), & &1.id)
+                    if linked != [method.id] do
+                      {:ok, _} = WebhookAuthMethods.update_trigger_auth_methods(trigger, [method], actor: actor)
+                    end
+                    linked = Enum.map(WebhookAuthMethods.list_for_trigger(trigger), & &1.id)
+                    linked == [method.id] ||
+                      raise "trigger #{trigger.id}: auth methods #{inspect(linked)}, expected only '#{name}'"
                   end
-                for trigger <- triggers do
-                  linked = Enum.map(WebhookAuthMethods.list_for_trigger(trigger), & &1.id)
-                  if linked != [method.id] do
-                    {:ok, _} = WebhookAuthMethods.update_trigger_auth_methods(trigger, [method], actor: actor)
-                  end
-                  linked = Enum.map(WebhookAuthMethods.list_for_trigger(trigger), & &1.id)
-                  linked == [method.id] ||
-                    raise "trigger #{trigger.id}: auth methods #{inspect(linked)}, expected only the gateway's"
                 end
               end)
-            IO.puts("Both webhook triggers require the gateway's API key")
+            IO.puts("Every webhook trigger requires its own API key: 'gateway' (loans), 'channels' (intake)")
           end)
     volumes: []
     networks: [lightning-db]
@@ -653,7 +714,8 @@ services:
     ports:
       - "127.0.0.1:${LOS_PORT:-8090}:8000"
     # los-edge: only for the published port; no other service is on it.
-    networks: [los, los-edge]
+    # los-api: the OpenFn worker (the intake job), without the database.
+    networks: [los, los-edge, los-api]
     mem_limit: 256m
     pids_limit: 128
     restart: unless-stopped
@@ -755,6 +817,8 @@ networks:
   openfn-agents:
     internal: true
   los:
+    internal: true
+  los-api:
     internal: true
   web-app-edge: {}
   lightning-edge: {}
