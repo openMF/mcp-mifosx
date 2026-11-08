@@ -177,10 +177,14 @@ def test_validate_input_rejects_negative_or_zero_amount_for_deposit_and_withdraw
     ("apply_loan_fee", {"loanId": 1, "feeAmount": 0}, "feeAmount must be positive"),
     ("create_new_loan", {"clientId": 1, "principal": -1000, "months": 12}, "principal must be positive"),
     ("create_new_loan", {"clientId": 1, "principal": 1000, "months": 0}, "months must be a positive integer"),
+    ("create_new_loan", {"clientId": 1, "principal": 1000, "months": True}, "months must be a positive integer"),
     ("create_group_loan_app", {"groupId": 1, "principal": float("nan"), "months": 12}, "principal must be positive"),
+    ("create_group_loan_app", {"groupId": 1, "principal": 1000, "months": True}, "months must be a positive integer"),
     ("approve_disburse_loan", {"loanId": 1, "amount": 0}, "amount must be positive"),
 ])
-def test_validate_input_rejects_non_positive_money_amounts(tool_name, params, message) -> None:
+def test_validate_input_rejects_non_positive_money_amounts(
+    tool_name: str, params: Dict[str, Any], message: str
+) -> None:
     with pytest.raises(ValidationError, match=message):
         validate_input(tool_name, params)
 

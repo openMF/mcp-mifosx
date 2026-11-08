@@ -8,7 +8,8 @@ class ValidationError(Exception):
 
 def _require_positive_int(params: Dict[str, Any], name: str) -> None:
     value = params.get(name)
-    if not isinstance(value, int) or value <= 0:
+    # bool subclasses int, so True would otherwise pass as 1
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         raise ValidationError(f"{name} must be a positive integer")
 
 
