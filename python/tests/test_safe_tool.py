@@ -15,6 +15,7 @@ checks. None of them open a network connection.
 
 from inspect import signature
 from typing import Any, Dict
+from unittest.mock import patch
 
 import pytest
 from fastmcp.exceptions import ToolError
@@ -167,6 +168,41 @@ def test_validate_input_rejects_negative_or_zero_amount_for_deposit_and_withdraw
 
     with pytest.raises(ValidationError, match="amount must be positive"):
         validate_input("deposit", {"accountId": 1, "amount": 10**309})
+
+
+@pytest.mark.parametrize("tool_name, params, message", [
+    ("apply_client_fee", {"clientId": 1, "amount": 0}, "amount must be positive"),
+    ("apply_savings_fee", {"accountId": 1, "amount": -15}, "amount must be positive"),
+    ("waive_loan_interest", {"loanId": 1, "amount": -1}, "amount must be positive"),
+    ("apply_loan_fee", {"loanId": 1, "feeAmount": 0}, "feeAmount must be positive"),
+    ("create_new_loan", {"clientId": 1, "principal": -1000, "months": 12}, "principal must be positive"),
+    ("create_new_loan", {"clientId": 1, "principal": 1000, "months": 0}, "months must be a positive integer"),
+    ("create_new_loan", {"clientId": 1, "principal": 1000, "months": True}, "months must be a positive integer"),
+    ("create_group_loan_app", {"groupId": 1, "principal": float("nan"), "months": 12}, "principal must be positive"),
+    ("create_group_loan_app", {"groupId": 1, "principal": 1000, "months": True}, "months must be a positive integer"),
+    ("approve_disburse_loan", {"loanId": 1, "amount": 0}, "amount must be positive"),
+])
+def test_validate_input_rejects_non_positive_money_amounts(
+    tool_name: str, params: Dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        validate_input(tool_name, params)
+
+
+def test_validate_input_allows_omitted_disbursement_amount() -> None:
+    # Without an amount the approved principal is disbursed
+    validate_input("approve_disburse_loan", {"loanId": 1, "amount": None})
+
+
+def test_validation_blocks_zero_disbursement_before_any_request() -> None:
+    """amount=0 used to be dropped by `if amount:` and the full principal disbursed."""
+    from mcp_server import approve_disburse_loan
+
+    with patch("mcp_server.get_loan_details") as get_loan_details:
+        with pytest.raises(ToolError, match="amount must be positive"):
+            approve_disburse_loan(loanId=1, amount=0)
+
+    get_loan_details.func.assert_not_called()
 
 def test_validate_input_rejects_non_positive_resource_ids() -> None:
     """Resource IDs are checked for *every* tool, not only the two with
