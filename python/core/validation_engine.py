@@ -82,3 +82,17 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
 
     if tool_name == "withdraw":
         _require_positive_number(params, "amount")
+
+    if tool_name in ("apply_client_fee", "apply_savings_fee", "waive_loan_interest"):
+        _require_positive_number(params, "amount")
+
+    if tool_name == "apply_loan_fee":
+        _require_positive_number(params, "feeAmount")
+
+    if tool_name in ("create_new_loan", "create_group_loan_app"):
+        _require_positive_number(params, "principal")
+        _require_positive_int(params, "months")
+
+    # amount is optional here: without it the approved principal is disbursed
+    if tool_name == "approve_disburse_loan" and params.get("amount") is not None:
+        _require_positive_number(params, "amount")
