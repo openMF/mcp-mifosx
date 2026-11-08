@@ -13,7 +13,8 @@ description: >
 # user's email). "fineract" is the write-back job's Fineract login: a user
 # allowed only the job's calls (the sandbox's agent-writeback), not the admin.
 # "agent-decision" ({ "url", "token" } of the agent's runner) is used by the
-# decision job, and "los" ({ "baseUrl" } of the LOS API) by the intake job.
+# decision job, and "los" ({ "baseUrl", "access_token" }: the LOS API and its
+# intake token) by the intake job.
 credentials:
   super@openfn.org-fineract:
     name: fineract
@@ -999,7 +1000,9 @@ workflows:
           // rules and recorded in the LOS, the record of opportunities until
           // they reach Fineract. No model: completeness and duplicates have
           // exact answers. The eligibility step decides what happens next.
-          // Uses the "los" credential (raw JSON): { baseUrl }, e.g. http://los:8000
+          // Uses the "los" credential (raw JSON): { baseUrl, access_token }, e.g.
+          // http://los:8000 and the LOS's intake token. language-http sends the
+          // token as a bearer token, and the LOS records the job as `intake`.
           // The webhook replies with the result (webhook_reply: after_completion):
           // the final state, which Lightning sends as the reply's "data".
           fn(async state => {
@@ -1008,7 +1011,6 @@ workflows:
             // What a complete lead has. The list per product is the institution's
             // to set; this is the sandbox's.
             const REQUIRED = ['full_name', 'phone', 'national_id', 'requested_amount', 'term_months', 'productive_use'];
-            const opts = { headers: { 'X-Actor': 'intake' } };
 
             const input = state.data || {};
             const lead = {};
@@ -1028,10 +1030,10 @@ workflows:
             });
 
             const search = async query =>
-              (await get('/opportunities', { ...opts, query: { ...query, limit: 200 } })(state)).data.opportunities;
-            const create = async () => (await post('/opportunities', lead, opts)(state)).data;
+              (await get('/opportunities', { query: { ...query, limit: 200 } })(state)).data.opportunities;
+            const create = async () => (await post('/opportunities', lead)(state)).data;
             const move = async (opportunity, stage, reason_code, reason_note) =>
-              (await post(`/opportunities/${opportunity.id}/stage`, { stage, reason_code, reason_note }, opts)(state)).data;
+              (await post(`/opportunities/${opportunity.id}/stage`, { stage, reason_code, reason_note })(state)).data;
 
             if (!lead.channel) {
               return { outcome: 'invalid', errors: ['channel is required'] };

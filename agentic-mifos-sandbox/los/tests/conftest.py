@@ -8,17 +8,33 @@ from fastapi.testclient import TestClient
 import app
 import store
 
+INTAKE_TOKEN = "intake-test-token-0123456789abcdef"
+OFFICER_TOKEN = "officer-test-token-0123456789abcdef"
+
+
+def bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
 
 @pytest.fixture
-def client():
+def client(monkeypatch):
     """API client on an emptied test database, configured with the LOS_DB_* variables.
-    The database name must end in _test, so a real LOS database is never emptied."""
+    The database name must end in _test, so a real LOS database is never emptied.
+    It calls as an officer; pass `intake` as headers to call as the intake job."""
     if not os.environ.get("LOS_DB_NAME", "").endswith("_test"):
         pytest.skip("API tests need LOS_DB_HOST, LOS_DB_USER, LOS_DB_PASSWORD and LOS_DB_NAME ending in _test")
-    with TestClient(app.app) as test_client:
+    monkeypatch.setenv("LOS_INTAKE_TOKEN", INTAKE_TOKEN)
+    monkeypatch.setenv("LOS_OFFICER_TOKEN", OFFICER_TOKEN)
+    with TestClient(app.app, headers=bearer(OFFICER_TOKEN)) as test_client:
         con = store.connect()
         try:
             con.run("TRUNCATE opportunity_events, opportunities")
         finally:
             con.close()
         yield test_client
+
+
+@pytest.fixture
+def intake():
+    """Headers of a call by the intake job."""
+    return bearer(INTAKE_TOKEN)

@@ -53,7 +53,7 @@ The first start takes about 3 minutes, most of it Fineract's database migrations
 | Web app: http://localhost:4200 | `mifos` / `FINERACT_ADMIN_PASSWORD` from `.env` |
 | Lightning: http://localhost:4000 | `LIGHTNING_ADMIN_EMAIL` / `LIGHTNING_ADMIN_PASSWORD` from `.env` |
 | Gateway: http://localhost:8080/actuator/health | none (see 7.4) |
-| LOS API docs: http://localhost:8090/docs | none (see 7.4) |
+| LOS API docs: http://localhost:8090/docs | **Authorize** with `LOS_OFFICER_TOKEN` from `.env` |
 
 ## 3. Architecture
 
@@ -102,7 +102,7 @@ Leads arrive through the **intake** workflow (4.3). A channel (landing page, Mif
 - Any other lead starts in `new`; the reply says whether it is complete and which fields are missing
 - A lead the LOS cannot accept (an unreadable phone, an amount without a currency) is not recorded; the reply carries the LOS's error
 
-Leads created directly through the LOS API, for example by an officer, skip intake. The eligibility rules that move opportunities on, and looking the applicant up in Fineract, are planned.
+Every call to the LOS carries a caller's token: the intake job's lets it search, create and set aside new leads, never move one forward or record a consent; the officers' allows everything. The audit trail names the caller ([los/README.md](los/README.md), Access). Leads created directly through the LOS API, for example by an officer, skip intake. The eligibility rules that move opportunities on, and looking the applicant up in Fineract, are planned.
 
 ### 3.4 Agents
 
@@ -184,15 +184,16 @@ curl -s localhost:8080/api/loans/$WF/final      # after COMPLETED: the Fineract 
 ### 4.2 An opportunity in the LOS
 
 ```bash
-curl -s -X POST localhost:8090/opportunities -H 'Content-Type: application/json' -H 'X-Actor: officer-1' \
+AUTH="Authorization: Bearer $(grep '^LOS_OFFICER_TOKEN=' .env | cut -d= -f2-)"
+curl -s -X POST localhost:8090/opportunities -H "$AUTH" -H 'Content-Type: application/json' -H 'X-Actor: officer-1' \
   -d '{"channel": "whatsapp", "full_name": "Ana López", "phone": "+52 55 1234-5678", "requested_amount": 15000, "currency": "MXN", "term_months": 12}'
 ID=<id from the answer>
-curl -s -X POST localhost:8090/opportunities/$ID/stage -H 'Content-Type: application/json' -d '{"stage": "contacting"}'
-curl -s -X POST localhost:8090/opportunities/$ID/consents/bureau
-curl -s localhost:8090/opportunities/$ID/events          # the audit trail
+curl -s -X POST localhost:8090/opportunities/$ID/stage -H "$AUTH" -H 'Content-Type: application/json' -d '{"stage": "contacting"}'
+curl -s -X POST localhost:8090/opportunities/$ID/consents/bureau -H "$AUTH"
+curl -s localhost:8090/opportunities/$ID/events -H "$AUTH"          # the audit trail
 ```
 
-All endpoints, with request and answer shapes, are at http://localhost:8090/docs.
+The trail records the first change as `officer:officer-1` and the others as `officer`. Without the token the LOS answers 401. All endpoints, with request and answer shapes, are at http://localhost:8090/docs; use **Authorize** there with the same token.
 
 ### 4.3 A lead through intake
 
@@ -242,6 +243,7 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 
 - Agent passwords (`FINERACT_AGENT_*_PASSWORD`), agent tokens (`AGENT_*_TOKEN`) and `OPENFN_CALLBACK_SECRET`: change the value in `.env` and run `docker compose --profile ollama up -d`. The bootstrap updates the agents' Fineract users and replaces the agents' Lightning credentials, including the write-back job's `fineract`. An edit made to one of them in Lightning lasts until its settings in `.env` change.
 - `OPENFN_WEBHOOK_API_KEY` and `OPENFN_INTAKE_API_KEY`: the same. `lightning-webhook-auth` replaces the triggers' key, and the gateway restarts with the new one; give channels the new intake key.
+- `LOS_INTAKE_TOKEN` and `LOS_OFFICER_TOKEN`: the same. The LOS restarts with the new tokens, and the bootstrap replaces the intake job's `los` credential; a lead sent in between gets a 401 from the LOS and can be sent again.
 - **The database passwords and Lightning's admin password cannot be rotated through `.env`**: they are set when the volumes are first created. Changing them later breaks the connection (databases) or changes nothing (Lightning admin). Change them inside Postgres and Lightning first, or reset the volumes.
 - `./scripts/gen-secrets.sh` fills only empty values: blank one and run it again to generate a new value.
 - Fineract's admin password (`FINERACT_ADMIN_PASSWORD`): the bootstrap sets it only while the image's default (`password`) still works. To change it later, change it in the web app first (the user menu, then change password), then in `.env`.
@@ -265,6 +267,7 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_li
 - **A case stays in `OPENFN_TRIGGERED`, and its run in Lightning stays `available`**: the worker stopped claiming runs (7.4). The watchdog restarts it within 15 minutes, and its log then shows `watchdog: no output from the worker ...`. To act at once, run `docker compose restart lightning-worker`, then submit the case again.
 - **A case stays in `LLM_DECISION`, or Ollama's log shows a model load that never finishes**: there is not enough free memory for the model. Free memory (or stop services you do not need) and submit again; the case itself turns `FAILED` after 15 minutes and the rules decide when the agent does not answer in time.
 - **A submit returns 500, and the gateway log shows `OpenFn webhook trigger failed: 401` or `404 ... Webhook not found`**: the gateway's API key is not the triggers' key. Run `docker compose --profile ollama up -d`, which applies `OPENFN_WEBHOOK_API_KEY` from `.env` to both.
+- **Intake runs fail, and their log in Lightning shows a 401 from the LOS**: the `los` credential does not hold the LOS's current `LOS_INTAKE_TOKEN`, for example after it was edited in Lightning. Delete the `los` credential in Lightning and run `docker compose up -d`: the bootstrap creates it again from `.env`.
 - **An agent run never returns in a script**: stdin is open; add `-T` and `< /dev/null`.
 - **`docker compose up` fails on the first start**: read `docker compose logs lightning-setup bootstrap`; the bootstrap stops with the request that failed.
 - **The bootstrap stops with `the password of Fineract's admin 'mifos' is neither FINERACT_ADMIN_PASSWORD nor the default`**: the password was changed in the web app, or this `.env` is new while Fineract's volume is not. Set `FINERACT_ADMIN_PASSWORD` to the current password.
@@ -279,6 +282,7 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_li
 | `pi-agent/skills/<name>.md` | Its instructions and answer shape ([decision.md](pi-agent/skills/decision.md) is an example) |
 | [docker-compose.yml](docker-compose.yml) | `mcp-<name>` and `agent-<name>` (copy the decision pair), the internal network `agent-<name>`, and `AGENT_<NAME>_URL` / `AGENT_<NAME>_TOKEN` for the bootstrap |
 | [agentic-banking-openfn/openfn/project.yaml](../agentic-banking-openfn/openfn/project.yaml) | The Lightning credential `agent-<name>` and a job that calls `<url>/run`, with its own evidence gate and fallback (copy the decision job) |
+| [los/auth.py](los/auth.py), if it calls the LOS | Caller `<name>`: what it may do there, and `LOS_<NAME>_TOKEN=` in `.env.example` and the `los` service |
 
 CI then checks the new services: the hardening and network rules (the `agent-<name>` / `mcp-<name>` pattern needs no change to the check), that every adaptor in `project.yaml` is pinned to an exact version, the runner tests, the agent image build, and the Python CI for the profile.
 
@@ -290,7 +294,7 @@ This is a local evaluation sandbox. The model below says what protects what toda
 
 - Client personal data: names, CURP, phone, email, loan and savings data, in Fineract, the LOS, Lightning's run data and the decision notes
 - Fineract's integrity: clients, loans and approvals
-- Secrets: `.env` (database passwords, Lightning keys, agent passwords and tokens, the callback secret)
+- Secrets: `.env` (database passwords, Lightning keys, agent passwords and tokens, the LOS tokens, the callback secret)
 - The host machine
 
 ### 7.2 Trust boundaries
@@ -308,10 +312,11 @@ This is a local evaluation sandbox. The model below says what protects what toda
 | An agent invents findings or a recommendation | The evidence gate and check; the guardrail; the tools called, listed in the note; human approval | A stricter but wrong answer from an agent that did look the applicant up |
 | An agent takes credentials | Agents hold no Fineract password, only their runner token; no tool can read their environment | — |
 | A compromised job or adaptor uses the write-back login | The `agent-writeback` role: no disbursement, no user administration; paying a loan out takes a person in the web app | It can create clients and loans and approve them; an adaptor's own dependencies are resolved when it is installed (7.4) |
+| A compromised job uses the LOS | The intake token: search, create, and set aside a lead still in `new`; no consents, edits, registrations or moves forward (403) | It can read every opportunity: it searches them for duplicates |
 | A compromised container moves sideways | Segmented networks: each database only from its application, agents only to their MCP server and Ollama | The worker is on `core` (the write-back job) |
 | Data leaves the machine | Fineract, the MCP servers and the agents have no route out | The web app, gateway and LOS (published ports), and Lightning, the worker and Ollama (downloads), do |
 | Container escape or privilege escalation | Read-only file systems, no capabilities, no privilege escalation, non-root users, process limits; root only in two one-shot jobs without a network | — |
-| Spoofed callbacks or agent calls | `X-OpenFn-Secret` on the gateway callbacks; a bearer token per agent runner; an API key on the Lightning webhook triggers, one for the loan triggers and one for intake (`[REDACTED]` in run data) | — |
+| Spoofed callbacks or agent calls | `X-OpenFn-Secret` on the gateway callbacks; a bearer token per agent runner; an API key on the Lightning webhook triggers, one for the loan triggers and one for intake (`[REDACTED]` in run data); a token per LOS caller | — |
 | Exhausted memory or processes | Memory and process limits; one case at a time per agent with a timeout; the 15-minute stall check | — |
 | Supply chain | Images pinned by tag or digest, Pi from a lockfile, OpenFn adaptors pinned to exact versions (unpinned ones refused in CI), Renovate updates, images built in CI | The adaptors' own dependencies (7.4) |
 
@@ -320,7 +325,8 @@ This is a local evaluation sandbox. The model below says what protects what toda
 - **Secrets are environment variables**: anyone who can run `docker inspect` can read them
 - **The OpenFn worker is on `core`**, because the write-back job calls Fineract directly (as `agent-writeback`)
 - **Services with a published port have outbound internet**: Docker publishes ports only from networks with a route out
-- **The gateway and LOS APIs have no authentication**: the gateway is reachable from the host only (127.0.0.1); the LOS from the host and from the OpenFn worker (the intake job), so any Lightning job can call any LOS endpoint, consents included. The LOS trusts `X-Actor` as sent
+- **The gateway API has no authentication**: it is reachable from the host only (127.0.0.1)
+- **People share one LOS token** (`LOS_OFFICER_TOKEN`), so the LOS records the name in `X-Actor` as sent. The trail still shows the change came with the officer token (`officer:<name>`)
 - **The webhook API key is set through Lightning's internal functions** (`lightning-webhook-auth`), as Lightning has no API for it: a Lightning upgrade that changes them makes the job, and so `up`, fail. On a new sandbox the triggers are open for the few seconds before the job's first run
 - **OpenFn adaptors are installed from npm on first use**: pinned to exact versions that Renovate bumps, but without a lockfile, so an adaptor's own dependencies are resolved when it is installed, and the worker needs a route to npm
 - **No TLS between services**, and Fineract's self-signed certificate is not verified

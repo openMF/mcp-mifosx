@@ -6,18 +6,21 @@ Keeps commercial opportunities, from first contact until they are registered
 in Fineract or discarded. See README.md for the stages and rules.
 """
 
+import os
 import re
 from contextlib import asynccontextmanager
 from datetime import datetime
 from decimal import Decimal
+from functools import partial
 from typing import Annotated, Literal
 from uuid import UUID
 
 import pg8000.native
-from fastapi import Depends, FastAPI, Header, Query
+from fastapi import Depends, FastAPI, Query
 from fastapi.responses import JSONResponse
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
+import auth
 import rules
 import store
 
@@ -159,7 +162,8 @@ class EventList(BaseModel):
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(application: FastAPI):
+    application.state.tokens = auth.load_tokens(os.environ)
     con = store.connect()
     try:
         store.create_schema(con)
@@ -170,19 +174,22 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(
     title="Agentic Mifos sandbox LOS",
-    description="Commercial opportunities before they reach Fineract. Only a qualified opportunity is registered there.",
+    description="Commercial opportunities before they reach Fineract. Only a qualified opportunity is registered there. "
+                "Every call but /health needs a caller's token (Authorize).",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 
-def _error(status: int):
-    return lambda _request, exc: JSONResponse(status_code=status, content={"detail": str(exc)})
+def _error(status: int, headers: dict | None = None):
+    return lambda _request, exc: JSONResponse(status_code=status, content={"detail": str(exc)}, headers=headers)
 
 
 app.add_exception_handler(store.NotFound, _error(404))
 app.add_exception_handler(rules.Conflict, _error(409))
 app.add_exception_handler(rules.Invalid, _error(422))
+app.add_exception_handler(auth.Unauthorized, _error(401, {"WWW-Authenticate": "Bearer"}))
+app.add_exception_handler(auth.Forbidden, _error(403))
 
 
 def connection():
@@ -193,13 +200,7 @@ def connection():
         con.close()
 
 
-def actor(x_actor: Annotated[str | None, Header(pattern=r"^[A-Za-z0-9 ._@:-]{1,64}$")] = None) -> str:
-    """Who makes the change, for the audit trail (an agent or an officer)."""
-    return x_actor or "unknown"
-
-
 Con = Annotated[pg8000.native.Connection, Depends(connection)]
-Actor = Annotated[str, Depends(actor)]
 
 
 @app.get("/health")
@@ -216,11 +217,11 @@ def health():
 
 
 @app.post("/opportunities", status_code=201, response_model=Opportunity)
-def create_opportunity(body: OpportunityCreate, con: Con, actor: Actor):
-    return store.create(con, body.model_dump(exclude_none=True), actor)
+def create_opportunity(who: Annotated[auth.Who, auth.change("create")], body: OpportunityCreate, con: Con):
+    return store.create(con, body.model_dump(exclude_none=True), who.actor)
 
 
-@app.get("/opportunities", response_model=OpportunityList)
+@app.get("/opportunities", response_model=OpportunityList, dependencies=[auth.allow("search")])
 def search_opportunities(
     con: Con,
     stage: Stage | None = None,
@@ -245,42 +246,43 @@ def search_opportunities(
     return {"opportunities": store.search(con, filters, limit)}
 
 
-@app.get("/opportunities/{opportunity_id}", response_model=Opportunity)
+@app.get("/opportunities/{opportunity_id}", response_model=Opportunity, dependencies=[auth.allow("read")])
 def get_opportunity(opportunity_id: UUID, con: Con):
     return store.get(con, opportunity_id)
 
 
 @app.patch("/opportunities/{opportunity_id}", response_model=Opportunity)
-def edit_opportunity(opportunity_id: UUID, body: ApplicantFields, con: Con, actor: Actor):
+def edit_opportunity(who: Annotated[auth.Who, auth.change("edit")], opportunity_id: UUID, body: ApplicantFields, con: Con):
     """Changes applicant and loan fields; null clears a field."""
-    return store.update(con, opportunity_id, body.model_dump(exclude_unset=True), actor)
+    return store.update(con, opportunity_id, body.model_dump(exclude_unset=True), who.actor)
 
 
 @app.post("/opportunities/{opportunity_id}/stage", response_model=Opportunity)
-def change_stage(opportunity_id: UUID, body: StageChange, con: Con, actor: Actor):
-    return store.change_stage(con, opportunity_id, body.stage, body.reason_code, body.reason_note, actor)
+def change_stage(who: Annotated[auth.Who, auth.change("stage")], opportunity_id: UUID, body: StageChange, con: Con):
+    return store.change_stage(con, opportunity_id, body.stage, body.reason_code, body.reason_note, who.actor,
+                              may_move=partial(auth.check_move, who.caller))
 
 
 @app.post("/opportunities/{opportunity_id}/consents/{kind}", response_model=Opportunity)
-def record_consent(opportunity_id: UUID, kind: Literal[rules.CONSENT_KINDS], con: Con, actor: Actor):
+def record_consent(who: Annotated[auth.Who, auth.change("consent")], opportunity_id: UUID, kind: Literal[rules.CONSENT_KINDS], con: Con):
     """Records the client's consent with the time LOS receives it. Consent is the client's act:
-    agents are not given this action."""
-    return store.record_consent(con, opportunity_id, kind, actor)
+    only the officer token allows it."""
+    return store.record_consent(con, opportunity_id, kind, who.actor)
 
 
 @app.post("/opportunities/{opportunity_id}/opt-out", response_model=Opportunity)
-def opt_out(opportunity_id: UUID, con: Con, actor: Actor):
+def opt_out(who: Annotated[auth.Who, auth.change("opt_out")], opportunity_id: UUID, con: Con):
     """Stops contact. Allowed in every stage."""
-    return store.opt_out(con, opportunity_id, actor)
+    return store.opt_out(con, opportunity_id, who.actor)
 
 
 @app.post("/opportunities/{opportunity_id}/registration", response_model=Opportunity)
-def register(opportunity_id: UUID, body: Registration, con: Con, actor: Actor):
+def register(who: Annotated[auth.Who, auth.change("register")], opportunity_id: UUID, body: Registration, con: Con):
     """Records the Fineract client and loan application created for a qualified opportunity."""
-    return store.register(con, opportunity_id, body.fineract_client_id, body.fineract_loan_id, actor)
+    return store.register(con, opportunity_id, body.fineract_client_id, body.fineract_loan_id, who.actor)
 
 
-@app.get("/opportunities/{opportunity_id}/events", response_model=EventList)
+@app.get("/opportunities/{opportunity_id}/events", response_model=EventList, dependencies=[auth.allow("events")])
 def opportunity_events(opportunity_id: UUID, con: Con):
     """Audit trail, oldest first. Events name changed fields, never their values."""
     return {"events": store.events(con, opportunity_id)}

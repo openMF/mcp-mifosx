@@ -269,8 +269,9 @@ def credential_body(name, product_id):
             "tls": {"rejectUnauthorized": False},
         }
     if name == "los":
-        # The LOS API, for the intake job.
-        return {"baseUrl": env("LOS_URL")}
+        # The LOS API, for the intake job, with the intake token: language-http
+        # sends access_token as `Authorization: Bearer`.
+        return {"baseUrl": env("LOS_URL"), "access_token": env("LOS_INTAKE_TOKEN")}
     if name.startswith("agent-"):
         # An agent's HTTP runner: AGENT_<NAME>_URL and AGENT_<NAME>_TOKEN.
         prefix = "AGENT_" + name.removeprefix("agent-").upper().replace("-", "_")
