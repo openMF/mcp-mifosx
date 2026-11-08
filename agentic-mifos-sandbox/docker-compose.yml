@@ -440,8 +440,10 @@ services:
       OPENFN_TRIGGER_LOAN_SUBMIT: *trigger-loan-submit
       OPENFN_TRIGGER_LOAN_REVIEW: *trigger-loan-review
       OPENFN_TRIGGER_OPPORTUNITY_INTAKE: *trigger-opportunity-intake
-      # Lightning credential "los" (the LOS API), used by the intake job.
+      # Lightning credential "los" (the LOS API and the intake token), used by
+      # the intake job.
       LOS_URL: http://los:8000
+      LOS_INTAKE_TOKEN: ${LOS_INTAKE_TOKEN:?run scripts/gen-secrets.sh}
       # Agent service users and their roles (fineract-rbac.json).
       FINERACT_AGENT_RBAC: /spec/fineract-rbac.json
       FINERACT_AGENT_IDENTITY_PASSWORD: ${FINERACT_AGENT_IDENTITY_PASSWORD:?run scripts/gen-secrets.sh}
@@ -703,6 +705,9 @@ services:
       # Non-superuser role created by los/postgresql-init.sh.
       LOS_DB_USER: los
       LOS_DB_PASSWORD: ${LOS_DB_APP_PASSWORD}
+      # A token per caller (los/auth.py); the LOS refuses to start without them.
+      LOS_INTAKE_TOKEN: ${LOS_INTAKE_TOKEN:?run scripts/gen-secrets.sh}
+      LOS_OFFICER_TOKEN: ${LOS_OFFICER_TOKEN:?run scripts/gen-secrets.sh}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
       interval: 10s

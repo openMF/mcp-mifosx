@@ -177,9 +177,13 @@ def update(con: pg8000.native.Connection, opportunity_id: uuid.UUID, changes: di
     return row
 
 
-def change_stage(con, opportunity_id, target: str, reason_code: str | None, reason_note: str | None, actor: str) -> dict:
+def change_stage(con, opportunity_id, target: str, reason_code: str | None, reason_note: str | None, actor: str,
+                 may_move=None) -> dict:
+    """`may_move(current, target)` raises to refuse a move the caller may not make."""
     with _transaction(con):
         current = _locked(con, opportunity_id)
+        if may_move:
+            may_move(current["stage"], target)
         rules.check_stage_change(current["stage"], target, reason_code, reason_note, current["opted_out"])
         # Paused and discarded keep their reason; any other stage clears it.
         row = _set(con, opportunity_id, {"stage": target, "reason_code": reason_code, "reason_note": reason_note})
