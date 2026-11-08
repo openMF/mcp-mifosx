@@ -211,8 +211,9 @@ run what they point to, or the deploy fails:
 
 - **`agent-decision`**: `{"url": "http://<agent runner>:8080", "token": "<its token>"}`, the
   decision agent's runner. Without a reachable one, the decision job uses its rules.
-- **`los`**: `{"baseUrl": "http://<LOS host>:8000"}`, the LOS API for the Opportunity Intake
-  workflow. Without a reachable LOS, only that workflow fails.
+- **`los`**: `{"baseUrl": "http://<LOS host>:8000", "access_token": "<the LOS's LOS_INTAKE_TOKEN>"}`,
+  the LOS API for the Opportunity Intake workflow, with the token that lets it record leads.
+  Without a reachable LOS, only that workflow fails.
 
 ## 5. Deploy the OpenFn project
 

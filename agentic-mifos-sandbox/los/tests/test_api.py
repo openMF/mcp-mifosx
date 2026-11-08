@@ -6,6 +6,9 @@ import json
 import uuid
 
 import pytest
+from fastapi.routing import APIRoute
+
+import app
 
 ANA = {
     "channel": "whatsapp",
@@ -18,14 +21,14 @@ ANA = {
 }
 
 
-def create(client, body=None, actor="agent-intake"):
-    response = client.post("/opportunities", json=body or ANA, headers={"X-Actor": actor})
+def create(client, body=None, headers=None):
+    response = client.post("/opportunities", json=body or ANA, headers=headers)
     assert response.status_code == 201, response.text
     return response.json()
 
 
-def move(client, opportunity, stage, **reason):
-    return client.post(f"/opportunities/{opportunity['id']}/stage", json={"stage": stage, **reason})
+def move(client, opportunity, stage, headers=None, **reason):
+    return client.post(f"/opportunities/{opportunity['id']}/stage", json={"stage": stage, **reason}, headers=headers)
 
 
 def action(client, opportunity, path):
@@ -126,7 +129,7 @@ def test_edit_changes_fields_and_audits_only_their_names(client):
 
     trail = events(client, opportunity)
     assert trail[-1]["action"] == "updated"
-    assert trail[-1]["actor"] == "officer-1"
+    assert trail[-1]["actor"] == "officer:officer-1"
     assert trail[-1]["detail"] == {"fields": ["email", "full_name"]}
     assert "ana@example.com" not in json.dumps(trail)
     assert "López" not in json.dumps(trail)
@@ -269,21 +272,97 @@ def test_registration_records_the_fineract_ids_once(client):
 
 # --- Audit trail --------------------------------------------------------------
 
-def test_events_record_actors_and_stage_moves(client):
-    opportunity = create(client, actor="agent-intake")
-    client.post(f"/opportunities/{opportunity['id']}/stage", json={"stage": "contacting"}, headers={"X-Actor": "agent-contact"})
+def test_events_record_actors_and_stage_moves(client, intake):
+    opportunity = create(client, headers=intake)
+    move(client, opportunity, "contacting", headers={"X-Actor": "maria"})
     trail = events(client, opportunity)
     assert [(e["action"], e["actor"], e["from_stage"], e["to_stage"]) for e in trail] == [
-        ("created", "agent-intake", None, "new"),
-        ("stage", "agent-contact", "new", "contacting"),
+        ("created", "intake", None, "new"),
+        ("stage", "officer:maria", "new", "contacting"),
     ]
 
 
-def test_the_actor_defaults_to_unknown_and_is_validated(client):
-    response = client.post("/opportunities", json=ANA)
-    assert events(client, response.json())[0]["actor"] == "unknown"
+def test_an_officer_without_x_actor_is_recorded_as_officer(client):
+    assert events(client, create(client))[0]["actor"] == "officer"
     assert client.post("/opportunities", json=ANA, headers={"X-Actor": "bad/name"}).status_code == 422
 
 
 def test_events_of_an_unknown_opportunity_are_404(client):
     assert client.get(f"/opportunities/{uuid.uuid4()}/events").status_code == 404
+
+
+# --- Access -------------------------------------------------------------------
+
+def test_every_route_but_health_needs_a_token(client):
+    del client.headers["Authorization"]
+    calls = [(method, route.path.replace("{opportunity_id}", str(uuid.uuid4())).replace("{kind}", "bureau"))
+             for route in app.app.routes if isinstance(route, APIRoute) and route.path != "/health"
+             for method in route.methods]
+    assert len(calls) == 9
+    for method, path in calls:
+        response = client.request(method, path)
+        assert response.status_code == 401, (method, path, response.text)
+        assert response.headers["WWW-Authenticate"] == "Bearer"
+    for path in ("/health", "/docs", "/openapi.json"):
+        assert client.get(path).status_code == 200, path
+
+
+@pytest.mark.parametrize("authorization", ["Basic b2ZmaWNlcjpvZmZpY2Vy", "Bearer", "Bearer unknown-token-0123456789abcdef0123"])
+def test_a_malformed_or_unknown_token_is_401(client, authorization):
+    assert client.get("/opportunities", headers={"Authorization": authorization}).status_code == 401
+
+
+def test_intake_searches_creates_and_sets_new_leads_aside(client, intake):
+    duplicate = create(client, headers=intake)
+    no_contact = create(client, {"channel": "web", "full_name": "No Contact"}, headers=intake)
+    found = client.get("/opportunities", params={"phone": ANA["phone"]}, headers=intake)
+    assert [o["id"] for o in found.json()["opportunities"]] == [duplicate["id"]]
+
+    assert move(client, duplicate, "paused", headers=intake, reason_code="possible_duplicate").status_code == 200
+    assert move(client, no_contact, "discarded", headers=intake, reason_code="no_contact").status_code == 200
+    assert [e["actor"] for e in events(client, duplicate)] == ["intake", "intake"]
+
+
+@pytest.mark.parametrize("stage", ["contacting", "qualified"])
+def test_intake_may_not_move_a_lead_forward(client, intake, stage):
+    lead = create(client, headers=intake)
+    response = move(client, lead, stage, headers=intake)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "intake may only move an opportunity from new to discarded or paused"
+
+
+def test_intake_may_set_aside_only_a_new_lead(client, intake):
+    lead = create(client)
+    move(client, lead, "pre_approved")
+    assert move(client, lead, "discarded", headers=intake, reason_code="no_contact").status_code == 403
+    assert client.get(f"/opportunities/{lead['id']}").json()["stage"] == "pre_approved"
+
+
+def test_intake_may_not_read_edit_consent_opt_out_register_or_read_events(client, intake):
+    lead = create(client, headers=intake)
+    path = f"/opportunities/{lead['id']}"
+    for method, url, body in [
+        ("GET", path, None),
+        ("PATCH", path, {"email": "ana@example.com"}),
+        ("POST", f"{path}/consents/bureau", None),
+        ("POST", f"{path}/opt-out", None),
+        ("POST", f"{path}/registration", {"fineract_client_id": 7, "fineract_loan_id": 14}),
+        ("GET", f"{path}/events", None),
+    ]:
+        response = client.request(method, url, json=body, headers=intake)
+        assert response.status_code == 403, (method, url, response.text)
+        assert response.json()["detail"].startswith("intake may not ")
+    assert client.get(path).json() == lead
+    assert [e["action"] for e in events(client, lead)] == ["created"]
+
+
+def test_intake_is_named_by_its_token(client, intake):
+    assert events(client, create(client, headers={**intake, "X-Actor": "intake"}))[0]["actor"] == "intake"
+    response = client.post("/opportunities", json=ANA, headers={**intake, "X-Actor": "maria"})
+    assert response.status_code == 403
+    assert "X-Actor must be intake or absent" in response.json()["detail"]
+    assert len(client.get("/opportunities").json()["opportunities"]) == 1
+
+
+def test_an_officer_cannot_pass_for_intake(client):
+    assert events(client, create(client, headers={"X-Actor": "intake"}))[0]["actor"] == "officer:intake"
