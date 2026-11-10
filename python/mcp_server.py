@@ -971,8 +971,14 @@ def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
     if "active" not in status.lower():
         return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can be withdrawn from."}
     balance = (check.get("summary") or {}).get("availableBalance", 0) or 0
-    if amount > balance:
-        return {"error": f"Insufficient funds: requested ${amount:.2f} but available balance is ${balance:.2f} in account {accountId}."}
+    # availableBalance leaves out the overdraft: an account that allows it can be
+    # drawn below zero, down to its overdraft limit.
+    overdraft = (check.get("overdraftLimit") or 0) if check.get("allowOverdraft") else 0
+    if amount > balance + overdraft:
+        funds = f"available balance is ${balance:.2f}"
+        if overdraft:
+            funds += f" and the overdraft limit is ${overdraft:.2f}"
+        return {"error": f"Insufficient funds: requested ${amount:.2f} but {funds} in account {accountId}."}
     return withdraw_savings.func(accountId, amount, paymentTypeId)
 
 @mcp.tool()
