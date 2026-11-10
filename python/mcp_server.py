@@ -364,9 +364,11 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
 
 @mcp.tool()
 @safe_tool("create_new_client")
-def create_new_client(firstname: str, lastname: str, mobileNo: str = None, officeId: int = 1, isActive: bool = True) -> dict:
+def create_new_client(firstname: str, lastname: str, officeId: int, mobileNo: str = None, isActive: bool = True) -> dict:
     """Create a new banking client"""
-    return create_client.func(firstname, lastname, mobileNo, officeId, isActive)
+    return create_client.func(
+        firstname=firstname, lastname=lastname, office_id=officeId, mobile_no=mobileNo, is_active=isActive
+    )
 
 @mcp.tool()
 @safe_tool("activate_pending_client")
