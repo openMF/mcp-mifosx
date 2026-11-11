@@ -59,6 +59,12 @@ def test_withdrawal_beyond_the_overdraft_limit_is_refused() -> None:
     )
 
 
+def test_withdrawal_of_exactly_balance_plus_limit_is_sent() -> None:
+    # As floats, 0.01 + 0.06 < 0.07.
+    assert _withdraw(_account(0.01, allow_overdraft=True, limit=0.06), 0.07) == {"resourceId": 6}
+    assert "Insufficient funds" in _withdraw(_account(0.01, allow_overdraft=True, limit=0.06), 0.08)["error"]
+
+
 def test_overdraft_limit_is_ignored_when_overdraft_is_not_allowed() -> None:
     result = _withdraw(_account(100, allow_overdraft=False, limit=500), 400)
     assert result["error"] == "Insufficient funds: requested $400.00 but available balance is $100.00 in account 7."

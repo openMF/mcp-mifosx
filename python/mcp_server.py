@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+from decimal import Decimal
 from typing import Optional
 
 import fastmcp
@@ -970,7 +971,8 @@ def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
     # availableBalance leaves out the overdraft: an account that allows it can be
     # drawn below zero, down to its overdraft limit.
     overdraft = (check.get("overdraftLimit") or 0) if check.get("allowOverdraft") else 0
-    if amount > balance + overdraft:
+    # Compared as decimals: as floats, 0.01 + 0.06 is just under 0.07.
+    if Decimal(str(amount)) > Decimal(str(balance)) + Decimal(str(overdraft)):
         funds = f"available balance is ${balance:.2f}"
         if overdraft:
             funds += f" and the overdraft limit is ${overdraft:.2f}"
