@@ -14,7 +14,10 @@ description: >
 # allowed only the job's calls (the sandbox's agent-writeback), not the admin.
 # "agent-decision" ({ "url", "token" } of the agent's runner) is used by the
 # decision job, and "los" ({ "baseUrl", "access_token" }: the LOS API and its
-# intake token) by the intake job.
+# intake token) by the intake job. The eligibility workflow has its own pair:
+# "los-eligibility" (the LOS's eligibility token) and "fineract-eligibility"
+# (like "fineract", as agent-eligibility, which may only read clients and
+# loan products).
 credentials:
   super@openfn.org-fineract:
     name: fineract
@@ -24,6 +27,12 @@ credentials:
     owner: super@openfn.org
   super@openfn.org-los:
     name: los
+    owner: super@openfn.org
+  super@openfn.org-los-eligibility:
+    name: los-eligibility
+    owner: super@openfn.org
+  super@openfn.org-fineract-eligibility:
+    name: fineract-eligibility
     owner: super@openfn.org
 
 # Adaptors are pinned to exact versions, so every run uses the code that was
@@ -1090,4 +1099,205 @@ workflows:
         source_trigger: webhook-opportunity-intake
         target_job: intake-opportunity
         condition_type: always
+        enabled: true
+
+  # -------------------------------------------------------------------------
+  # Workflow 4: Commercial flow eligibility (an officer asks) → LOS
+  # -------------------------------------------------------------------------
+  opportunity-eligibility:
+    name: Opportunity Eligibility
+    jobs:
+      read-opportunity:
+        name: Read the Opportunity from the LOS
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los-eligibility
+        enabled: true
+        body: |
+          // An officer (later, the contact step) asks for one opportunity in
+          // `qualifying` to be checked: { "opportunity_id": "<id in the LOS>" }.
+          // Three jobs, because a job has one credential: this one reads the
+          // opportunity, the next looks the applicant up in Fineract, the last
+          // applies the rules and records the decision in the LOS.
+          // Uses the "los-eligibility" credential (raw JSON): { baseUrl, access_token },
+          // the LOS's eligibility token: it may read an opportunity and move it
+          // from qualifying to documents or paused, nothing else.
+          fn(async state => {
+            const id = (state.data || {}).opportunity_id;
+            const invalid = errors => ({ result: { decision: 'invalid', errors } });
+            if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+              return invalid(['opportunity_id must be the id of an opportunity in the LOS']);
+            }
+            try {
+              return { opportunity: (await get(`/opportunities/${id}`)(state)).data };
+            } catch (e) {
+              if (e.statusCode === 404) return invalid([`no opportunity ${id}`]);
+              throw e;
+            }
+          });
+
+      look-up-applicant:
+        name: Look the Applicant up in Fineract
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-fineract-eligibility
+        enabled: true
+        body: |
+          // The facts the rules need, read as agent-eligibility (READ_LOANPRODUCT,
+          // READ_CLIENT): the loan product's limits and, when the opportunity has
+          // a CURP, the client with that external ID (set by the write-back) and
+          // their loans. Decides nothing: the rules are all in the next job.
+          // Uses the "fineract-eligibility" credential (raw JSON):
+          //   { baseUrl, username, password, tenantId, productId, officeId, tls }
+          fn(async state => {
+            if (state.result) return state;
+            const cfg = state.configuration || {};
+            const opts = { headers: { 'Fineract-Platform-TenantId': cfg.tenantId || 'default' } };
+            const idOf = v => (v && typeof v === 'object' ? v.id : v);
+
+            const p = (await get(`/loanproducts/${Number(cfg.productId || 1)}`, opts)(state)).data;
+            const product = {
+              currency: p.currency && p.currency.code,
+              minPrincipal: p.minPrincipal,
+              maxPrincipal: p.maxPrincipal,
+              minRepayments: p.minNumberOfRepayments,
+              maxRepayments: p.maxNumberOfRepayments,
+              // Term months are repayments only when it repays once a month
+              monthly: idOf(p.repaymentFrequencyType) === 2 && (p.repaymentEvery || 1) === 1
+            };
+
+            let client = null;
+            const curp = state.opportunity.national_id;
+            if (curp) {
+              const path = `/clients/external-id/${encodeURIComponent(curp)}`;
+              try {
+                const found = (await get(path, opts)(state)).data;
+                const accounts = (await get(`${path}/accounts`, opts)(state)).data;
+                client = {
+                  status: (found.status || {}).code,
+                  statusName: (found.status || {}).value,
+                  loans: (accounts.loanAccounts || []).map(loan => ({
+                    accountNo: loan.accountNo,
+                    status: (loan.status || {}).value,
+                    inArrears: loan.inArrears === true,
+                    open: !!loan.status && (loan.status.pendingApproval === true || loan.status.waitingForDisbursal === true)
+                  }))
+                };
+              } catch (e) {
+                // No client with this CURP: a new applicant
+                if (e.statusCode !== 404) throw e;
+              }
+            }
+            return { opportunity: state.opportunity, product, client };
+          });
+
+      decide-eligibility:
+        name: Apply the Eligibility Rules and Record the Decision
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los-eligibility
+        enabled: true
+        body: |
+          // The eligibility rules, in order. The thresholds are the Fineract
+          // product's; which rules apply per product is the institution's to set.
+          //   0. Not in qualifying: nothing to do (not_qualifying)
+          //   1. Data missing: stays in qualifying, the reply lists it (request_data)
+          //   2-6. Currency, amount, term, a loan in arrears, an application in
+          //        progress: paused with the first failure's reason code (not_eligible)
+          //   7. A case the rules cannot judge: paused, needs_review, for a person
+          //   Otherwise: on to documents (advance)
+          // The reason note names every failure. The webhook replies with the
+          // result (webhook_reply: after_completion).
+          // Uses the "los-eligibility" credential, like the first job.
+          fn(async state => {
+            if (state.result) return state.result;
+            const { opportunity, product, client } = state;
+            // The same list as the intake job's: what a complete lead has.
+            const REQUIRED = ['full_name', 'phone', 'national_id', 'requested_amount', 'term_months', 'productive_use'];
+            const CLIENT_IN_GOOD_STANDING = ['clientStatusType.pending', 'clientStatusType.active'];
+            const reply = (record, decision, extra = {}) => ({
+              opportunityId: record.id,
+              externalId: record.external_id,
+              decision,
+              stage: record.stage,
+              reasons: [],
+              missing: [],
+              ...extra
+            });
+            const move = async (stage, reason_code, reason_note) =>
+              (await post(`/opportunities/${opportunity.id}/stage`, { stage, reason_code, reason_note })(state)).data;
+
+            // 0. Eligibility follows the first contact
+            if (opportunity.stage !== 'qualifying') return reply(opportunity, 'not_qualifying');
+
+            // 1. Someone asks the applicant for what is missing; nothing moves
+            const missing = REQUIRED.filter(key => opportunity[key] === null || opportunity[key] === undefined);
+            if (missing.length) return reply(opportunity, 'request_data', { missing });
+
+            const failed = [];
+            const review = [];
+            const amount = Number(opportunity.requested_amount);
+            const term = opportunity.term_months;
+            // 2. Currency
+            if (opportunity.currency !== product.currency) {
+              failed.push({ code: 'currency_not_offered', detail: `currency ${opportunity.currency} not offered (${product.currency})` });
+            }
+            // 3. Amount
+            if (product.minPrincipal != null && amount < product.minPrincipal) {
+              failed.push({ code: 'amount_out_of_range', detail: `amount ${opportunity.requested_amount} below the product's ${product.minPrincipal}` });
+            } else if (product.maxPrincipal != null && amount > product.maxPrincipal) {
+              failed.push({ code: 'amount_out_of_range', detail: `amount ${opportunity.requested_amount} above the product's ${product.maxPrincipal}` });
+            }
+            // 4. Term
+            if (!product.monthly) {
+              review.push({ code: 'needs_review', detail: 'the product does not repay monthly, so the term cannot be checked' });
+            } else if ((product.minRepayments != null && term < product.minRepayments) ||
+                (product.maxRepayments != null && term > product.maxRepayments)) {
+              failed.push({ code: 'term_out_of_range', detail: `term ${term} months outside the product's ${product.minRepayments} to ${product.maxRepayments}` });
+            }
+            // 5-6. A returning applicant's loans
+            if (client) {
+              for (const loan of client.loans.filter(l => l.inArrears)) {
+                failed.push({ code: 'in_arrears', detail: `loan ${loan.accountNo} in arrears` });
+              }
+              for (const loan of client.loans.filter(l => l.open)) {
+                failed.push({ code: 'open_application', detail: `loan ${loan.accountNo} ${String(loan.status).toLowerCase()}` });
+              }
+              // 7. A client who is closed, rejected, withdrawn, ...
+              if (!CLIENT_IN_GOOD_STANDING.includes(client.status)) {
+                review.push({ code: 'needs_review', detail: `the client in Fineract is ${String(client.statusName).toLowerCase()}` });
+              }
+            }
+
+            const reasons = [...failed, ...review];
+            if (!reasons.length) {
+              const moved = await move('documents');
+              console.log('eligibility', moved.external_id, 'advance');
+              return reply(moved, 'advance');
+            }
+            const decision = failed.length ? 'not_eligible' : 'needs_review';
+            const note = reasons.map(r => r.detail).join('; ');
+            const paused = await move('paused', reasons[0].code, note.length > 1000 ? `${note.slice(0, 997)}...` : note);
+            console.log('eligibility', paused.external_id, decision, reasons.map(r => r.code).join(','));
+            return reply(paused, decision, { reasons });
+          });
+
+    triggers:
+      webhook-opportunity-eligibility:
+        type: webhook
+        enabled: true
+        webhook_reply: after_completion
+
+    edges:
+      webhook-opportunity-eligibility->read-opportunity:
+        source_trigger: webhook-opportunity-eligibility
+        target_job: read-opportunity
+        condition_type: always
+        enabled: true
+      read-opportunity->look-up-applicant:
+        condition_type: on_job_success
+        source_job: read-opportunity
+        target_job: look-up-applicant
+        enabled: true
+      look-up-applicant->decide-eligibility:
+        condition_type: on_job_success
+        source_job: look-up-applicant
+        target_job: decide-eligibility
         enabled: true

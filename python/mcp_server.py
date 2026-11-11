@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+from decimal import Decimal
 from typing import Optional
 
 import fastmcp
@@ -335,10 +336,6 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
 
     loans = result.get("loanAccounts", [])
     savings = result.get("savingsAccounts", [])
-
-    # Catch hallucinated IDs where Fineract returns 200 OK but empty data
-    if not loans and not savings and int(actual_id) > 1000:
-        return {"error": f"Client ID {actual_id} returned no accounts — likely hallucinated. Call search_clients(name) first."}
 
     return {
         "resolvedClientId": actual_id,
@@ -973,8 +970,15 @@ def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
     if "active" not in status.lower():
         return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can be withdrawn from."}
     balance = (check.get("summary") or {}).get("availableBalance", 0) or 0
-    if amount > balance:
-        return {"error": f"Insufficient funds: requested ${amount:.2f} but available balance is ${balance:.2f} in account {accountId}."}
+    # availableBalance leaves out the overdraft: an account that allows it can be
+    # drawn below zero, down to its overdraft limit.
+    overdraft = (check.get("overdraftLimit") or 0) if check.get("allowOverdraft") else 0
+    # Compared as decimals: as floats, 0.01 + 0.06 is just under 0.07.
+    if Decimal(str(amount)) > Decimal(str(balance)) + Decimal(str(overdraft)):
+        funds = f"available balance is ${balance:.2f}"
+        if overdraft:
+            funds += f" and the overdraft limit is ${overdraft:.2f}"
+        return {"error": f"Insufficient funds: requested ${amount:.2f} but {funds} in account {accountId}."}
     return withdraw_savings.func(accountId, amount, paymentTypeId)
 
 @mcp.tool()
