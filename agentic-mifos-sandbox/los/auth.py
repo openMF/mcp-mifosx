@@ -47,6 +47,12 @@ CALLERS = {
         frozenset({"search", "create", "stage"}),
         moves=(frozenset({"new"}), frozenset({rules.PAUSED, rules.DISCARDED})),
     ),
+    # The OpenFn eligibility workflow: checks one qualifying opportunity, then
+    # moves it on to documents or pauses it with the reason. Never further.
+    "eligibility": Permissions(
+        frozenset({"read", "stage"}),
+        moves=(frozenset({"qualifying"}), frozenset({"documents", rules.PAUSED})),
+    ),
     # People on the host (curl, /docs).
     "officer": Permissions(frozenset(ACTIONS), shared=True),
 }

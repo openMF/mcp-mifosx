@@ -8,17 +8,19 @@ import pytest
 from auth import ACTIONS, CALLERS, Forbidden, check_move, load_tokens
 
 INTAKE = "i" * 32
+ELIGIBILITY = "e" * 32
 OFFICER = "o" * 32
+TOKENS = {"LOS_INTAKE_TOKEN": INTAKE, "LOS_ELIGIBILITY_TOKEN": ELIGIBILITY, "LOS_OFFICER_TOKEN": OFFICER}
 
 
 def test_each_caller_gets_its_token():
-    assert load_tokens({"LOS_INTAKE_TOKEN": INTAKE, "LOS_OFFICER_TOKEN": OFFICER}) == {"intake": INTAKE, "officer": OFFICER}
+    assert load_tokens(TOKENS) == {"intake": INTAKE, "eligibility": ELIGIBILITY, "officer": OFFICER}
 
 
 @pytest.mark.parametrize("environ", [
-    {"LOS_OFFICER_TOKEN": OFFICER},
-    {"LOS_INTAKE_TOKEN": "", "LOS_OFFICER_TOKEN": OFFICER},
-    {"LOS_INTAKE_TOKEN": "i" * 31, "LOS_OFFICER_TOKEN": OFFICER},
+    {"LOS_ELIGIBILITY_TOKEN": ELIGIBILITY, "LOS_OFFICER_TOKEN": OFFICER},
+    {**TOKENS, "LOS_INTAKE_TOKEN": ""},
+    {**TOKENS, "LOS_INTAKE_TOKEN": "i" * 31},
 ])
 def test_a_missing_or_short_token_is_refused(environ):
     with pytest.raises(ValueError, match="LOS_INTAKE_TOKEN is missing or shorter than 32 characters") as refused:
@@ -27,8 +29,8 @@ def test_a_missing_or_short_token_is_refused(environ):
 
 
 def test_two_callers_may_not_share_a_token():
-    with pytest.raises(ValueError, match="LOS_INTAKE_TOKEN, LOS_OFFICER_TOKEN must differ") as refused:
-        load_tokens({"LOS_INTAKE_TOKEN": OFFICER, "LOS_OFFICER_TOKEN": OFFICER})
+    with pytest.raises(ValueError, match="LOS_INTAKE_TOKEN, LOS_ELIGIBILITY_TOKEN, LOS_OFFICER_TOKEN must differ") as refused:
+        load_tokens({**TOKENS, "LOS_ELIGIBILITY_TOKEN": OFFICER})
     assert OFFICER not in str(refused.value)
 
 
@@ -52,6 +54,23 @@ def test_intake_may_set_a_new_lead_aside(target):
 def test_intake_may_make_no_other_move(current, target):
     with pytest.raises(Forbidden, match="intake may only move an opportunity from new to discarded or paused"):
         check_move("intake", current, target)
+
+
+@pytest.mark.parametrize("target", ["documents", "paused"])
+def test_eligibility_may_move_a_qualifying_opportunity_on_or_pause_it(target):
+    check_move("eligibility", "qualifying", target)
+
+
+@pytest.mark.parametrize("current, target", [
+    ("new", "documents"),
+    ("documents", "paused"),
+    ("qualifying", "pre_approved"),
+    ("qualifying", "qualified"),
+    ("qualifying", "discarded"),
+])
+def test_eligibility_may_make_no_other_move(current, target):
+    with pytest.raises(Forbidden, match="eligibility may only move an opportunity from qualifying to documents or paused"):
+        check_move("eligibility", current, target)
 
 
 def test_officers_may_make_any_move():
