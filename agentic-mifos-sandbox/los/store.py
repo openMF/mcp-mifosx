@@ -1,12 +1,13 @@
 # Copyright since 2026 Mifos Initiative
 # This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
-"""Postgres storage of opportunities and their audit trail.
+"""Postgres storage of opportunities, their documents and their audit trail.
 
 Every change locks the opportunity's row, applies the rules in rules.py and
 records an event in the same transaction. Events name the fields that
 changed, never their values, so personal data lives in one place only.
 """
 
+import hashlib
 import json
 import os
 import uuid
@@ -21,6 +22,8 @@ import rules
 EDITABLE = ("full_name", "phone", "email", "national_id", "requested_amount", "currency", "term_months", "productive_use")
 
 _stages = ", ".join(f"'{stage}'" for stage in rules.STAGES)
+_kinds = ", ".join(f"'{kind}'" for kind in rules.DOCUMENT_KINDS)
+_results = ", ".join(f"'{result}'" for result in rules.CHECK_RESULTS)
 SCHEMA = (
     f"""
     CREATE TABLE IF NOT EXISTS opportunities (
@@ -67,11 +70,34 @@ SCHEMA = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS opportunity_events_opportunity ON opportunity_events (opportunity_id, id)",
+    # Each upload is kept; the latest check of a document replaces the earlier one.
+    f"""
+    CREATE TABLE IF NOT EXISTS opportunity_documents (
+        id uuid PRIMARY KEY,
+        opportunity_id uuid NOT NULL REFERENCES opportunities (id),
+        kind text NOT NULL CHECK (kind IN ({_kinds})),
+        content_type text NOT NULL,
+        size integer NOT NULL CHECK (size > 0),
+        sha256 text NOT NULL,
+        content bytea NOT NULL,
+        uploaded_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+        uploaded_by text NOT NULL,
+        checked_at timestamptz,
+        check_result text CHECK (check_result IN ({_results})),
+        check_reasons jsonb,
+        extracted jsonb,
+        CHECK ((checked_at IS NULL) = (check_result IS NULL))
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS opportunity_documents_opportunity ON opportunity_documents (opportunity_id, uploaded_at)",
 )
+# A document without its image, for listings and replies.
+DOCUMENT_COLUMNS = ("id, opportunity_id, kind, content_type, size, sha256, uploaded_at, uploaded_by,"
+                    " checked_at, check_result, check_reasons, extracted")
 
 
 class NotFound(Exception):
-    """No opportunity with that id (HTTP 404)."""
+    """No opportunity, or no document of it, with that id (HTTP 404)."""
 
 
 def connect() -> pg8000.native.Connection:
@@ -234,6 +260,86 @@ def register(con, opportunity_id, client_id: int, loan_id: int, actor: str) -> d
         _event(con, opportunity_id, actor, "registered", {"fineract_client_id": client_id, "fineract_loan_id": loan_id},
                from_stage="qualified", to_stage=rules.REGISTERED)
     return row
+
+
+def add_document(con, opportunity_id, kind: str, content_type: str, content: bytes, actor: str) -> dict:
+    """Keeps a document of an open opportunity; the event names its kind and size only."""
+    document_id = uuid.uuid4()
+    with _transaction(con):
+        row = _locked(con, opportunity_id)
+        rules.check_open(row["stage"])
+        document = _rows(
+            con,
+            "INSERT INTO opportunity_documents (id, opportunity_id, kind, content_type, size, sha256, content, uploaded_by)"
+            f" VALUES (:id, :opportunity_id, :kind, :content_type, :size, :sha256, :content, :actor) RETURNING {DOCUMENT_COLUMNS}",
+            id=document_id, opportunity_id=opportunity_id, kind=kind, content_type=content_type, size=len(content),
+            sha256=hashlib.sha256(content).hexdigest(), content=content, actor=actor,
+        )[0]
+        _event(con, opportunity_id, actor, "document_added", {"document_id": str(document_id), "kind": kind, "size": len(content)})
+    return document
+
+
+def documents(con: pg8000.native.Connection, opportunity_id: uuid.UUID) -> list[dict]:
+    """The opportunity's documents without their images, newest first."""
+    get(con, opportunity_id)
+    return _rows(con, f"SELECT {DOCUMENT_COLUMNS} FROM opportunity_documents WHERE opportunity_id = :id"
+                      " ORDER BY uploaded_at DESC, id", id=opportunity_id)
+
+
+def document_content(con, opportunity_id: uuid.UUID, document_id: uuid.UUID) -> dict:
+    """A document's content type and image."""
+    found = _rows(con, "SELECT content_type, content FROM opportunity_documents WHERE id = :id AND opportunity_id = :opportunity_id",
+                  id=document_id, opportunity_id=opportunity_id)
+    if not found:
+        raise NotFound(f"no document {document_id} of opportunity {opportunity_id}")
+    return found[0]
+
+
+def record_check(con, opportunity_id, document_id, result: str, reasons: list, extracted: dict, compared: dict, actor: str,
+                 may_move=None) -> tuple[dict, dict]:
+    """Records a document's check and the move its result calls for (rules.CHECK_MOVES) in one
+    transaction, only while the check still applies: the opportunity in documents, the document
+    the newest of its kind, and the applicant's fields in `compared` (CURP, name) the ones the
+    check compared with it. The same check again, once applied, changes nothing, so an
+    interrupted run can be retried. Returns the document and the opportunity."""
+    target = rules.CHECK_MOVES.get(result)
+    with _transaction(con):
+        row = _locked(con, opportunity_id)
+        found = _rows(con, f"SELECT {DOCUMENT_COLUMNS} FROM opportunity_documents WHERE id = :id AND opportunity_id = :opportunity_id",
+                      id=document_id, opportunity_id=opportunity_id)
+        if not found:
+            raise NotFound(f"no document {document_id} of opportunity {opportunity_id}")
+        document = found[0]
+        if (document["check_result"], document["check_reasons"]) == (result, reasons) and row["stage"] == (target or "documents"):
+            return document, row
+        rules.check_open(row["stage"])
+        if row["stage"] != "documents":
+            raise rules.Conflict(f"the opportunity is {row['stage']}, not documents: the check no longer applies")
+        newest = _rows(con, "SELECT id FROM opportunity_documents WHERE opportunity_id = :opportunity_id AND kind = :kind"
+                            " ORDER BY uploaded_at DESC, id LIMIT 1", opportunity_id=opportunity_id, kind=document["kind"])[0]
+        if newest["id"] != document["id"]:
+            raise rules.Conflict("a newer document of this kind was uploaded after this one: check that one")
+        changed = sorted(field for field, value in compared.items() if row[field] != value)
+        if changed:
+            raise rules.Conflict(f"the opportunity's {' and '.join(changed)} changed since the check compared them")
+        if target and may_move:
+            may_move(row["stage"], target)
+        document = _rows(
+            con,
+            "UPDATE opportunity_documents SET checked_at = now(), check_result = :result,"
+            " check_reasons = CAST(:reasons AS jsonb), extracted = CAST(:extracted AS jsonb)"
+            f" WHERE id = :id RETURNING {DOCUMENT_COLUMNS}",
+            id=document_id, result=result, reasons=json.dumps(reasons), extracted=json.dumps(extracted),
+        )[0]
+        _event(con, opportunity_id, actor, "document_checked", {"document_id": str(document_id), "result": result})
+        if target:
+            # A paused opportunity keeps why: the reasons the check gave.
+            reason_code, reason_note = (result, "; ".join(r["detail"] for r in reasons)[:1000] or None) if target == rules.PAUSED else (None, None)
+            rules.check_stage_change(row["stage"], target, reason_code, reason_note, row["opted_out"])
+            row = _set(con, opportunity_id, {"stage": target, "reason_code": reason_code, "reason_note": reason_note})
+            _event(con, opportunity_id, actor, "stage", {"reason_code": reason_code} if reason_code else {},
+                   from_stage="documents", to_stage=target)
+    return document, row
 
 
 def events(con: pg8000.native.Connection, opportunity_id: uuid.UUID) -> list[dict]:
