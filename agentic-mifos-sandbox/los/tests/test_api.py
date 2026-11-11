@@ -366,3 +366,62 @@ def test_intake_is_named_by_its_token(client, intake):
 
 def test_an_officer_cannot_pass_for_intake(client):
     assert events(client, create(client, headers={"X-Actor": "intake"}))[0]["actor"] == "officer:intake"
+
+
+def qualifying(client):
+    """An opportunity an officer has moved to qualifying."""
+    opportunity = create(client)
+    assert move(client, opportunity, "qualifying").status_code == 200
+    return opportunity
+
+
+def test_eligibility_reads_and_moves_a_qualifying_opportunity_on(client, eligibility):
+    opportunity = qualifying(client)
+    response = client.get(f"/opportunities/{opportunity['id']}", headers=eligibility)
+    assert response.status_code == 200
+    assert response.json()["stage"] == "qualifying"
+    assert move(client, opportunity, "documents", headers=eligibility).status_code == 200
+    assert events(client, opportunity)[-1]["actor"] == "eligibility"
+
+
+def test_eligibility_pauses_with_a_reason(client, eligibility):
+    opportunity = qualifying(client)
+    response = move(client, opportunity, "paused", headers=eligibility, reason_code="amount_out_of_range",
+                    reason_note="amount 150000.00 above the product's 100000")
+    assert response.status_code == 200
+    assert (response.json()["stage"], response.json()["reason_code"]) == ("paused", "amount_out_of_range")
+
+
+@pytest.mark.parametrize("stage, target, reason", [
+    ("new", "documents", {}),
+    ("documents", "paused", {"reason_code": "needs_review"}),
+    ("qualifying", "qualified", {}),
+    ("qualifying", "discarded", {"reason_code": "not_interested"}),
+])
+def test_eligibility_may_make_no_other_move(client, eligibility, stage, target, reason):
+    opportunity = create(client)
+    if stage != "new":
+        move(client, opportunity, stage)
+    response = move(client, opportunity, target, headers=eligibility, **reason)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "eligibility may only move an opportunity from qualifying to documents or paused"
+    assert client.get(f"/opportunities/{opportunity['id']}").json()["stage"] == stage
+
+
+def test_eligibility_may_not_search_create_edit_consent_opt_out_register_or_read_events(client, eligibility):
+    opportunity = qualifying(client)
+    path = f"/opportunities/{opportunity['id']}"
+    for method, url, body in [
+        ("GET", "/opportunities", None),
+        ("POST", "/opportunities", ANA),
+        ("PATCH", path, {"email": "ana@example.com"}),
+        ("POST", f"{path}/consents/bureau", None),
+        ("POST", f"{path}/opt-out", None),
+        ("POST", f"{path}/registration", {"fineract_client_id": 7, "fineract_loan_id": 14}),
+        ("GET", f"{path}/events", None),
+    ]:
+        response = client.request(method, url, json=body, headers=eligibility)
+        assert response.status_code == 403, (method, url, response.text)
+        assert response.json()["detail"].startswith("eligibility may not ")
+    assert [e["action"] for e in events(client, opportunity)] == ["created", "stage"]
+    assert len(client.get("/opportunities").json()["opportunities"]) == 1

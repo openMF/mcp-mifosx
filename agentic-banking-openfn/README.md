@@ -18,12 +18,14 @@ Client ──► Agentic Gateway (Spring Boot, :8080)
            OpenFn Lightning (:4000) ── worker runs the jobs ──┘
 ```
 
-Two workflows are defined in [`openfn/project.yaml`](openfn/project.yaml):
+Four workflows are defined in [`openfn/project.yaml`](openfn/project.yaml):
 
 | Workflow | Triggered by | Jobs |
 |---|---|---|
 | **Loan Submit – Auto Underwriting** | `POST /api/loans/submit` | normalize → notify `GATHERING_DATA` → bank + credit → documents → specialist assessments → decision → callback `PENDING_HUMAN_REVIEW` |
 | **Loan Review – Fineract Write-back** | `POST /api/loans/{id}/review` with `APPROVE` | prepare → create loan in Fineract → callback `COMPLETED` |
+| **Opportunity Intake** | A channel posting a lead to its webhook | check the lead and record it in the LOS |
+| **Opportunity Eligibility** | An officer posting an opportunity's id to its webhook | read it from the LOS → look the applicant up in Fineract → apply the rules and record the decision in the LOS |
 
 Each job reports back to the gateway over HTTP. The gateway tells the jobs where to
 call back by sending `gatewayBaseUrl` in the webhook payload.
@@ -206,7 +208,7 @@ In Lightning: **Credentials → New credential → Raw JSON**, name it **`finera
   expects `credential_bodies: [{"name": "main", "body": {...}}]`), which leaves the
   credential empty.
 
-`project.yaml` names two more credentials. Create them the same way, even if you do not
+`project.yaml` names four more credentials. Create them the same way, even if you do not
 run what they point to, or the deploy fails:
 
 - **`agent-decision`**: `{"url": "http://<agent runner>:8080", "token": "<its token>"}`, the
@@ -214,6 +216,12 @@ run what they point to, or the deploy fails:
 - **`los`**: `{"baseUrl": "http://<LOS host>:8000", "access_token": "<the LOS's LOS_INTAKE_TOKEN>"}`,
   the LOS API for the Opportunity Intake workflow, with the token that lets it record leads.
   Without a reachable LOS, only that workflow fails.
+- **`los-eligibility`**: the same with the LOS's `LOS_ELIGIBILITY_TOKEN`, for the Opportunity
+  Eligibility workflow.
+- **`fineract-eligibility`**: like `fineract`, signed in as a user of its own whose role has
+  only `READ_LOANPRODUCT` and `READ_CLIENT` (create the role and user as above; the sandbox's
+  is `agent-eligibility`). The eligibility workflow reads the product's limits and a
+  returning applicant's accounts with it.
 
 ## 5. Deploy the OpenFn project
 
@@ -382,7 +390,7 @@ The same loan, client and notes are visible in the Mifos X web app (loan → *No
 | Submit returns `500`, gateway log shows `OpenFn webhook trigger failed` | Wrong or stale webhook URL – re-read it from `.state.json` after each deploy to a new instance. With `401 Unauthorized` or `404 ... Webhook not found`, the triggers require an API key and `OPENFN_WEBHOOK_API_KEY` is missing or wrong. |
 | `openfn deploy` fails with `source_job_id or source_trigger_id must be present` | Outdated `project.yaml` – pull the latest version of this folder. |
 | Runs never start | No worker connected – check `docker compose logs web` for the built-in worker. |
-| Deploy fails with an error about a credential (`fineract`, `agent-decision`, `los`) | Create the credentials (step 4) before deploying, owned by the user named in `project.yaml`. |
+| Deploy fails with an error about a credential (`fineract`, `agent-decision`, `los`, `los-eligibility`, `fineract-eligibility`) | Create the credentials (step 4) before deploying, owned by the user named in `project.yaml`. |
 | Write-back run fails with `Credential environment mismatch ... 'unknown'` | The credential has no body for the `main` environment – recreate it in the UI (step 4). |
 | `final` shows `FINERACT_ERROR` / status `FAILED` | Fineract rejected a request; the error body is in `fineractLoan.details`. Fix the cause (e.g. missing loan product) and `POST /review` again – the job reuses the client/loan already created. |
 | Deploy created a second project with the same name | `.state.json` was missing or stale. Delete the extra project in Lightning (*Settings*) and redeploy with the original `.state.json`, or use the new project's webhook URLs. |
