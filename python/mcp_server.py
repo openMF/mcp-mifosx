@@ -892,10 +892,10 @@ def get_savings(accountId: int) -> dict:
 @safe_tool("get_savings_txns")
 def get_savings_txns(accountId: int) -> dict:
     """Get transactions for a savings account."""
-    data = get_savings_transactions.func(accountId)
-    if not isinstance(data, dict) or "error" in data:
-        return data
-    txns = data.get("transactions", [])
+    txns = get_savings_transactions.func(accountId)
+    # The list of transactions, or the adapter's {"error": ...}.
+    if not isinstance(txns, list):
+        return txns
     return {
         "savingsId": accountId,
         "transactions": [
