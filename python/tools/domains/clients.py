@@ -37,7 +37,7 @@ def get_client_accounts(client_id: int):
 # --- CLIENT LIFECYCLE OPERATIONS (WRITE) ---
 
 @tool
-def create_client(firstname: str, lastname: str, mobile_no: str = None, office_id: int = 1, is_active: bool = True):
+def create_client(firstname: str, lastname: str, office_id: int, mobile_no: str = None, is_active: bool = True):
     """Answers: 'Create a new client named John Doe'"""
     print(f"[Tool] Creating client: {firstname} {lastname}...")
     today = get_fineract_today()

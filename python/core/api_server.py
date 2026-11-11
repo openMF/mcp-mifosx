@@ -40,7 +40,8 @@ class ClientCreate(BaseModel):
     firstname: str
     lastname: str
     mobile_no: Optional[str] = None
-    office_id: int = 1
+    # strict, so true is not taken as office 1
+    office_id: Annotated[int, Field(strict=True, gt=0)]
     is_active: bool = True
 
 class ClientMobileUpdate(BaseModel):
