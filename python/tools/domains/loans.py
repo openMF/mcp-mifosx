@@ -462,6 +462,13 @@ def update_loan(
     if len(payload) == 1:
         return {"error": "Provide at least one field to update: principal, months, or product_id."}
 
+    # The one field a partial update cannot leave out: Fineract requires loanType
+    # on every modify. It also applies a changed value, so send the loan's own
+    # type ("accountType.jlg" -> "jlg") rather than a default.
+    loan_type = ((current.get("loanType") or {}).get("code") or "").rsplit(".", 1)[-1]
+    if loan_type and loan_type != "invalid":
+        payload["loanType"] = loan_type
+
     return fineract_client.execute_put(f"loans/{loan_id}", payload)
 
 @tool

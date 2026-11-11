@@ -336,10 +336,6 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
     loans = result.get("loanAccounts", [])
     savings = result.get("savingsAccounts", [])
 
-    # Catch hallucinated IDs where Fineract returns 200 OK but empty data
-    if not loans and not savings and int(actual_id) > 1000:
-        return {"error": f"Client ID {actual_id} returned no accounts — likely hallucinated. Call search_clients(name) first."}
-
     return {
         "resolvedClientId": actual_id,
         "loanAccounts": [
