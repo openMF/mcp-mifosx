@@ -57,7 +57,6 @@ def create_report(
     report_type: str,
     report_sql: str,
     description: str = "",
-    core_report: bool = False,
     use_report: bool = True,
 ):
     """Answers: 'Register this report template in Fineract' or 'Create a new SQL report definition'.
@@ -68,7 +67,6 @@ def create_report(
         "reportType": report_type,
         "reportSql": report_sql,
         "description": description,
-        "coreReport": core_report,
         "useReport": use_report,
     }
     return fineract_client.execute_post("reports", payload)
