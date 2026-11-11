@@ -11,13 +11,15 @@
    inside its role and refused (HTTP 403) outside it.
 4. Lightning: the raw credentials the jobs use, built from the environment and
    replaced when their settings change (a rotated password or token):
-   "fineract" (the write-back job's login, the agent-writeback user) and
-   "agent-<name>" (the URL and token of an agent's runner, for the job that
-   calls it).
+   "fineract" (the write-back job's login, the agent-writeback user),
+   "fineract-<agent>" (another job's login, the agent-<agent> user), "los" and
+   "los-<caller>" (the LOS API with the intake job's or another caller's
+   token) and "agent-<name>" (the URL and token of an agent's runner, for the
+   job that calls it).
 5. Lightning: provision the OpenFn project from project.yaml.
 
 Every id in the provisioned project is derived from its key in project.yaml
-(UUID v5), and the three webhook trigger ids come from the compose file, so
+(UUID v5), and the webhook trigger ids come from the compose file, so
 webhook URLs never change and a re-run updates the same project instead of
 creating a second one.
 """
@@ -255,23 +257,27 @@ def lightning_headers():
 
 def credential_body(name, product_id):
     """The body of a Lightning credential that project.yaml names."""
-    if name == "fineract":
-        # The write-back job signs in as its agent user, whose role allows only
-        # the job's calls (fineract-rbac.json); never as the admin.
+    if name == "fineract" or name.startswith("fineract-"):
+        # A job signs in to Fineract as its agent user, whose role allows only
+        # the job's calls (fineract-rbac.json); never as the admin. "fineract"
+        # is the write-back job's, "fineract-<agent>" another job's.
+        agent = "writeback" if name == "fineract" else name.removeprefix("fineract-")
         return {
             "baseUrl": env("FINERACT_URL"),
-            "username": "agent-writeback",
-            "password": env("FINERACT_AGENT_WRITEBACK_PASSWORD"),
+            "username": f"agent-{agent}",
+            "password": env(f"FINERACT_AGENT_{agent.upper()}_PASSWORD"),
             "tenantId": env("FINERACT_TENANT"),
             "productId": product_id,
             "officeId": int(os.environ.get("FINERACT_OFFICE_ID", "1")),
             # Fineract inside the sandbox uses a self-signed certificate.
             "tls": {"rejectUnauthorized": False},
         }
-    if name == "los":
-        # The LOS API, for the intake job, with the intake token: language-http
-        # sends access_token as `Authorization: Bearer`.
-        return {"baseUrl": env("LOS_URL"), "access_token": env("LOS_INTAKE_TOKEN")}
+    if name == "los" or name.startswith("los-"):
+        # The LOS API with a caller's token (los/auth.py): "los" is the intake
+        # job's, "los-<caller>" another job's. language-http sends access_token
+        # as `Authorization: Bearer`.
+        caller = "intake" if name == "los" else name.removeprefix("los-")
+        return {"baseUrl": env("LOS_URL"), "access_token": env(f"LOS_{caller.upper()}_TOKEN")}
     if name.startswith("agent-"):
         # An agent's HTTP runner: AGENT_<NAME>_URL and AGENT_<NAME>_TOKEN.
         prefix = "AGENT_" + name.removeprefix("agent-").upper().replace("-", "_")
@@ -373,6 +379,7 @@ def provision_project(product_id):
         "webhook-loan-submit": env("OPENFN_TRIGGER_LOAN_SUBMIT"),
         "webhook-loan-review": env("OPENFN_TRIGGER_LOAN_REVIEW"),
         "webhook-opportunity-intake": env("OPENFN_TRIGGER_OPPORTUNITY_INTAKE"),
+        "webhook-opportunity-eligibility": env("OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY"),
     }
     for cred in (spec.get("credentials") or {}).values():
         name = cred["name"]

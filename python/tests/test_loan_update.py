@@ -18,6 +18,7 @@ def pending_loan():
     return {
         "loanProductId": 17,
         "status": {"value": "Submitted and pending approval"},
+        "loanType": {"id": 1, "code": "accountType.individual", "value": "Individual"},
         "principal": 1000,
         "termFrequency": 12,
         "termPeriodFrequencyType": {"id": 1, "value": "Weeks"},
@@ -44,7 +45,44 @@ def test_updates_only_requested_terms(pending_loan, changes, expected):
         fineract_client, "execute_put", return_value={"resourceId": 5}
     ) as put:
         assert update_loan.func(5, **changes) == {"resourceId": 5}
-    put.assert_called_once_with("loans/5", expected)
+    # loanType is the one field Fineract requires on every modify.
+    put.assert_called_once_with("loans/5", {**expected, "loanType": "individual"})
+
+
+@pytest.mark.parametrize("code, expected", [
+    ("accountType.individual", "individual"),
+    ("accountType.group", "group"),
+    ("accountType.jlg", "jlg"),
+])
+def test_sends_the_loan_type_the_loan_already_has(pending_loan, code, expected):
+    pending_loan["loanType"] = {"id": 0, "code": code, "value": "ignored"}
+    with patch.object(fineract_client, "execute_get", return_value=pending_loan), patch.object(
+        fineract_client, "execute_put", return_value={"resourceId": 5}
+    ) as put:
+        update_loan.func(5, principal=2500)
+    assert put.call_args.args[1]["loanType"] == expected
+
+
+def test_update_passes_fineract_modify_validation(pending_loan):
+    # LoanApplicationValidator.validateForModify rejects a body without loanType.
+    def put(endpoint, payload):
+        if not payload.get("loanType"):
+            return {"error": "Validation Error: The parameter `loanType` is mandatory.", "status_code": 400}
+        return {"resourceId": 5, "loanId": 5}
+
+    with patch.object(fineract_client, "execute_get", return_value=pending_loan), patch.object(
+        fineract_client, "execute_put", side_effect=put
+    ):
+        assert update_loan.func(5, principal=2500) == {"resourceId": 5, "loanId": 5}
+
+
+def test_does_not_guess_a_loan_type_the_loan_does_not_report(pending_loan):
+    del pending_loan["loanType"]
+    with patch.object(fineract_client, "execute_get", return_value=pending_loan), patch.object(
+        fineract_client, "execute_put", return_value={"resourceId": 5}
+    ) as put:
+        update_loan.func(5, principal=2500)
+    put.assert_called_once_with("loans/5", {"locale": "en", "principal": "2500"})
 
 
 def test_no_changes_does_not_write(pending_loan):
