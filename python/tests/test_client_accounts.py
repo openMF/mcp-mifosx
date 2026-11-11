@@ -44,7 +44,9 @@ def test_accounts_of_a_client_above_1000_are_listed() -> None:
         2400,
     )
     assert result["loanAccounts"] == []
-    assert result["savingsAccounts"] == [{"savingsId": 31, "accountNo": "000000031", "status": "Active", "outstandingBalance_USD": 250.0}]
+    assert result["savingsAccounts"] == [
+        {"savingsId": 31, "accountNo": "000000031", "status": "Active", "outstandingBalance": 250.0, "currency": None}
+    ]
 
 
 def test_unknown_client_is_still_an_error() -> None:

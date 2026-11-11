@@ -58,20 +58,21 @@ def _call(response: Dict[str, Any]) -> Dict[str, Any]:
 def test_transactions_are_summarised() -> None:
     assert _call(ACCOUNT) == {
         "savingsId": 7,
+        "currency": "USD",
         "transactions": [
             {
                 "transactionId": 12,
                 "type": "Withdrawal",
                 "date": "5 November 2026",
-                "amount_USD": 40.0,
-                "runningBalance_USD": 60.0,
+                "amount": 40.0,
+                "runningBalance": 60.0,
             },
             {
                 "transactionId": 11,
                 "type": "Deposit",
                 "date": "3 November 2026",
-                "amount_USD": 100.0,
-                "runningBalance_USD": 100.0,
+                "amount": 100.0,
+                "runningBalance": 100.0,
             },
         ],
     }
@@ -79,7 +80,7 @@ def test_transactions_are_summarised() -> None:
 
 def test_account_without_transactions() -> None:
     # Fineract leaves the association out when the account has no transactions.
-    assert _call({"id": 7, "accountNo": "000000007"}) == {"savingsId": 7, "transactions": []}
+    assert _call({"id": 7, "accountNo": "000000007"}) == {"savingsId": 7, "currency": None, "transactions": []}
 
 
 def test_unknown_account_is_an_error() -> None:
