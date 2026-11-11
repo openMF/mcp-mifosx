@@ -20,6 +20,11 @@
       "role": "Agent: intake",
       "description": "Reads the client and the loan products on offer.",
       "permissions": ["READ_CLIENT", "READ_LOAN", "READ_LOANPRODUCT"]
+    },
+    "eligibility": {
+      "role": "Agent: eligibility",
+      "description": "Reads the loan product's limits and a returning applicant's client record and accounts (the eligibility workflow). Never writes.",
+      "permissions": ["READ_LOANPRODUCT", "READ_CLIENT"]
     }
   }
 }
