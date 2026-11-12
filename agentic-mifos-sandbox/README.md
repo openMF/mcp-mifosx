@@ -72,9 +72,10 @@ flowchart LR
   mcp -->|REST as agent-decision| fineract[(Apache Fineract)]
   worker -->|write-back as agent-writeback| fineract
   worker -->|eligibility reads as agent-eligibility| fineract
+  worker -->|registration as agent-registration| fineract
   webapp[Mifos X web app] -->|REST proxy| fineract
   channel([Channels]) -->|leads| lightning
-  officer -->|eligibility and identity checks| lightning
+  officer -->|eligibility, identity, registration| lightning
   officer -->|identity documents| los[LOS]
   worker -->|intake, eligibility, identity| los
   los --> losdb[(LOS database)]
@@ -95,7 +96,7 @@ Each step with the status the gateway reports for the case:
 
 ### 3.3 Commercial opportunities (LOS)
 
-The LOS keeps commercial opportunities (leads and applicants) from first contact until they are registered in Fineract or discarded, in its own database. Stages run from `new` to `qualified`; `paused` and `discarded` need a reason code; only a `qualified` opportunity is registered, and its `external_id` becomes the loan's external ID in Fineract. Consent (bureau, SAT, contact) is recorded only through its own endpoint, with the LOS's timestamp. The LOS never calls Fineract: the write-back records the Fineract ids in it. Details: [los/README.md](los/README.md).
+The LOS keeps commercial opportunities (leads and applicants) from first contact until they are registered in Fineract or discarded, in its own database. Stages run from `new` to `qualified`; `paused` and `discarded` need a reason code; only a `qualified` opportunity is registered, and its `external_id` becomes the loan's external ID in Fineract. Consent (bureau, SAT, contact) is recorded only through its own endpoint, with the LOS's timestamp. The LOS never calls Fineract: the registration workflow records the Fineract ids in it. Details: [los/README.md](los/README.md).
 
 Leads arrive through the **intake** workflow (4.3). A channel (landing page, Mifos Mobile) posts the lead to its webhook with the channels' API key, and a job checks it with rules, no model, and records it in the LOS:
 
@@ -126,7 +127,15 @@ In `documents`, an officer uploads the applicant's CURP constancia to the LOS (P
 
 Names match in any word order, without accents, and with a second surname missing. The model is a reading aid, not proof of identity: an image can mislead it, so an opportunity advances only when the CURP read from the image is the opportunity's own, and verifying it with RENAPO stays with risk and the officer. Unreadable or expired documents are asked for again rather than sent to a person; only a mismatch is. The LOS records the result and its move together, and refuses a check that no longer applies: a newer upload, or a CURP or name edited while the model read the image. The officer then asks again.
 
-Every call to the LOS carries a caller's token: the intake job's lets it search, create and set aside new leads; the eligibility workflow's lets it read one opportunity and move it from `qualifying` to `documents` or `paused`; the identity workflow's lets it read an opportunity in `documents` and its documents, record a check, and move it to `assessing` or `paused`. None of them can record a consent or upload a document. The officers' token allows everything. The audit trail names the caller ([los/README.md](los/README.md), Access).
+From `assessing`, a person moves the opportunity on: risk and pre-approval are not automated yet. Once it is `qualified`, an officer asks the **registration** workflow (4.6) to register it in Fineract, with the officers' API key; the webhook answers when the run has finished. It checks first, and creates nothing otherwise: the opportunity is `qualified` (`not_qualified`), its newest CURP document was found `valid` and the CURP has not changed since (`identity_not_checked`), and its currency, amount and term still fit the loan product (`invalid`: the amount is never changed to fit). Then, as `agent-registration`:
+
+- The client: external ID the CURP, active, its name split the Mexican way (the last two words are the surnames: "María José López García" is María José / López García). A returning applicant's client is reused, and activated if pending
+- The loan application: the requested amount and term, external ID the opportunity's, submitted and **never approved**: approval is Credit's, in Fineract (maker-checker)
+- A note on the loan for Credit, from the LOS: the request, the eligibility and identity results, who qualified it, and the consents
+
+The LOS then records the Fineract ids, and the opportunity is `registered`. Asked again after a run that stopped half way, it reuses the client, the loan and the note; a client that is closed, or a loan with that external ID that no longer matches, goes to a person instead (`needs_review`). The LOS refuses the registration (409) if the CURP, name, amount, currency or term changed while the run made the application.
+
+Every call to the LOS carries a caller's token: the intake job's lets it search, create and set aside new leads; the eligibility workflow's lets it read one opportunity and move it from `qualifying` to `documents` or `paused`; the identity workflow's lets it read an opportunity in `documents` and its documents, record a check, and move it to `assessing` or `paused`; the registration workflow's lets it read an opportunity, its documents and its audit trail, and register it. None of them can record a consent or upload a document. The officers' token allows everything. The audit trail names the caller ([los/README.md](los/README.md), Access).
 
 ### 3.4 Agents
 
@@ -178,7 +187,7 @@ flowchart LR
 | `openfn-agents` | yes | The worker, the agents' runners |
 | `agent-<name>` | yes | One agent and its MCP server |
 | `los` | yes | The LOS and its database |
-| `los-api` | yes | The LOS and the worker (the intake, eligibility and identity jobs), without the database |
+| `los-api` | yes | The LOS and the worker (the opportunity workflows), without the database |
 | `web-app-edge`, `gateway-edge`, `los-edge` | no | One service each, for its published port |
 | `lightning-edge` | no | Lightning and its setup job: published port, npm adaptor catalogue |
 | `worker-egress` | no | The worker, to install adaptors from npm |
@@ -282,7 +291,29 @@ The webhook answers at once with the work order's id. Reading the image takes ab
 
 With `valid` the opportunity is in `assessing`. With `request_document`, `check_reasons` says why; upload another image and ask again. With `document_mismatch` the opportunity is `paused` for a person. The run's log in Lightning (History) has the decision and how long the model took.
 
-### 4.6 Asking an agent directly
+### 4.6 Registering a qualified opportunity
+
+With the opportunity from 4.5 in `assessing`: an officer records the bureau consent, moves it on to `qualified`, and asks for the registration:
+
+```bash
+AUTH="Authorization: Bearer $(grep '^LOS_OFFICER_TOKEN=' .env | cut -d= -f2-)"
+KEY=$(grep '^OPENFN_OFFICER_API_KEY=' .env | cut -d= -f2-)
+ID=<id of the opportunity>
+curl -s -X POST localhost:8090/opportunities/$ID/consents/bureau -H "$AUTH"
+for stage in pre_approved qualified; do
+  curl -s -X POST localhost:8090/opportunities/$ID/stage -H "$AUTH" -H 'Content-Type: application/json' -d "{\"stage\": \"$stage\"}"
+done
+curl -s -X POST localhost:4000/i/3170dc43-1d7e-48e7-ba83-1a4cd4af2844 -H "x-api-key: $KEY" \
+  -H 'Content-Type: application/json' -d "{\"opportunity_id\": \"$ID\"}"
+```
+
+```json
+{"data": {"decision": "registered", "stage": "registered", "clientId": 40, "loanId": 39, "reasons": [], "externalId": "opp-...", "opportunityId": "..."}, "meta": {"run_id": "..."}}
+```
+
+`decision` is `registered`, `not_qualified`, `identity_not_checked`, `invalid` or `needs_review` (see `reasons`). In the web app, the client (search by the CURP) has a loan application "Submitted and pending approval" with the note for Credit, where a person approves or rejects it.
+
+### 4.7 Asking an agent directly
 
 ```bash
 docker compose --profile ollama run --rm agent-decision -p "List the loan products with their interest rates"
@@ -310,9 +341,9 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 
 **Rotating secrets**
 
-- Agent passwords (`FINERACT_AGENT_*_PASSWORD`), agent tokens (`AGENT_*_TOKEN`) and `OPENFN_CALLBACK_SECRET`: change the value in `.env` and run `docker compose --profile ollama up -d`. The bootstrap updates the agents' Fineract users and replaces the agents' Lightning credentials, including the write-back job's `fineract` and the eligibility workflow's `fineract-eligibility`. An edit made to one of them in Lightning lasts until its settings in `.env` change.
+- Agent passwords (`FINERACT_AGENT_*_PASSWORD`), agent tokens (`AGENT_*_TOKEN`) and `OPENFN_CALLBACK_SECRET`: change the value in `.env` and run `docker compose --profile ollama up -d`. The bootstrap updates the agents' Fineract users and replaces the agents' Lightning credentials, including the write-back job's `fineract` and the eligibility and registration workflows' `fineract-eligibility` and `fineract-registration`. An edit made to one of them in Lightning lasts until its settings in `.env` change.
 - `OPENFN_WEBHOOK_API_KEY`, `OPENFN_INTAKE_API_KEY` and `OPENFN_OFFICER_API_KEY`: the same. `lightning-webhook-auth` replaces the triggers' key, and the gateway restarts with the new one; give channels the new intake key and officers the new officers' key.
-- `LOS_INTAKE_TOKEN`, `LOS_ELIGIBILITY_TOKEN`, `LOS_IDENTITY_TOKEN` and `LOS_OFFICER_TOKEN`: the same. The LOS restarts with the new tokens, and the bootstrap replaces the `los`, `los-eligibility` and `los-identity` credentials; a lead or a check sent in between gets a 401 from the LOS and can be sent again. A changed `OLLAMA_URL` or `OLLAMA_VISION_MODEL` reaches the identity workflow's `ollama` credential the same way.
+- `LOS_INTAKE_TOKEN`, `LOS_ELIGIBILITY_TOKEN`, `LOS_IDENTITY_TOKEN`, `LOS_REGISTRATION_TOKEN` and `LOS_OFFICER_TOKEN`: the same. The LOS restarts with the new tokens, and the bootstrap replaces the `los` and `los-<workflow>` credentials; a lead or a check sent in between gets a 401 from the LOS and can be sent again. A changed `OLLAMA_URL` or `OLLAMA_VISION_MODEL` reaches the identity workflow's `ollama` credential the same way.
 - **The database passwords and Lightning's admin password cannot be rotated through `.env`**: they are set when the volumes are first created. Changing them later breaks the connection (databases) or changes nothing (Lightning admin). Change them inside Postgres and Lightning first, or reset the volumes.
 - `./scripts/gen-secrets.sh` fills only empty values: blank one and run it again to generate a new value.
 - Fineract's admin password (`FINERACT_ADMIN_PASSWORD`): the bootstrap sets it only while the image's default (`password`) still works. To change it later, change it in the web app first (the user menu, then change password), then in `.env`.
@@ -337,7 +368,8 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_li
 - **A case stays in `LLM_DECISION`, or Ollama's log shows a model load that never finishes**: there is not enough free memory for the model. Free memory (or stop services you do not need) and submit again; the case itself turns `FAILED` after 15 minutes and the rules decide when the agent does not answer in time.
 - **A submit returns 500, and the gateway log shows `OpenFn webhook trigger failed: 401` or `404 ... Webhook not found`**: the gateway's API key is not the triggers' key. Run `docker compose --profile ollama up -d`, which applies `OPENFN_WEBHOOK_API_KEY` from `.env` to both.
 - **An identity check records no result**: its run in Lightning failed, most often because the vision model did not answer within 9 minutes (not enough free memory, see the entry above, or a slower CPU), or because the LOS refused the check (409) after a newer upload or an edit of the CURP or name during the run. The document stays unchecked and the opportunity in `documents`; ask again once Ollama answers.
-- **Intake, eligibility or identity runs fail, and their log in Lightning shows a 401 from the LOS**: the `los`, `los-eligibility` or `los-identity` credential does not hold the LOS's current `LOS_INTAKE_TOKEN`, `LOS_ELIGIBILITY_TOKEN` or `LOS_IDENTITY_TOKEN`, for example after it was edited in Lightning. Delete that credential in Lightning and run `docker compose up -d`: the bootstrap creates it again from `.env`.
+- **An opportunity workflow's runs fail, and their log in Lightning shows a 401 from the LOS**: the `los` or `los-<workflow>` credential does not hold the LOS's current `LOS_INTAKE_TOKEN` or `LOS_<WORKFLOW>_TOKEN`, for example after it was edited in Lightning. Delete that credential in Lightning and run `docker compose up -d`: the bootstrap creates it again from `.env`.
+- **A registration answers `needs_review`**: Fineract already has something under the opportunity's ids that does not fit, as `reasons` says: a closed or rejected client with this CURP (`client_not_active`), or a loan application with the opportunity's external ID for another amount, term or client, or rejected (`loan_conflict`). Resolve it in the web app (reopen the client; reject the stale application, or correct the opportunity), then ask again.
 - **An agent run never returns in a script**: stdin is open; add `-T` and `< /dev/null`.
 - **`docker compose up` fails on the first start**: read `docker compose logs lightning-setup bootstrap`; the bootstrap stops with the request that failed.
 - **The bootstrap stops with `the password of Fineract's admin 'mifos' is neither FINERACT_ADMIN_PASSWORD nor the default`**: the password was changed in the web app, or this `.env` is new while Fineract's volume is not. Set `FINERACT_ADMIN_PASSWORD` to the current password.
@@ -382,13 +414,14 @@ This is a local evaluation sandbox. The model below says what protects what toda
 | An agent invents findings or a recommendation | The evidence gate and check; the guardrail; the tools called, listed in the note; human approval | A stricter but wrong answer from an agent that did look the applicant up |
 | An agent takes credentials | Agents hold no Fineract password, only their runner token; no tool can read their environment | — |
 | A compromised job or adaptor uses the write-back login | The `agent-writeback` role: no disbursement, no user administration; paying a loan out takes a person in the web app | It can create clients and loans and approve them; an adaptor's own dependencies are resolved when it is installed (7.4) |
-| A compromised job uses the LOS | The intake token: search, create, and set aside a lead still in `new`. The eligibility token: read one opportunity, and move it from `qualifying` to `documents` or `paused`. The identity token: read an opportunity and its documents, record a check, and move it from `documents` to `assessing` or `paused`. None records consents, edits, uploads or registrations, or moves an opportunity past `assessing` (403) | Intake can read every opportunity: it searches them for duplicates. Eligibility can move any `qualifying` opportunity on to `documents`, identity any opportunity in `documents` on to `assessing`, and identity can read any opportunity's documents |
+| A compromised job uses the LOS | The intake token: search, create, and set aside a lead still in `new`. The eligibility token: read one opportunity, and move it from `qualifying` to `documents` or `paused`. The identity token: read an opportunity and its documents, record a check, and move it from `documents` to `assessing` or `paused`. The registration token: read an opportunity, its documents and its audit trail, and register a `qualified` one. None records consents, edits or uploads, or moves an opportunity between stages other than its own (403) | Intake can read every opportunity: it searches them for duplicates. Eligibility can move any `qualifying` opportunity on to `documents`, identity any opportunity in `documents` on to `assessing`; identity and registration can read any opportunity's documents |
 | A forged or misleading identity document | The CURP read from the image must be the opportunity's, and the name must match; a mismatch goes to a person. The model's answer is data, checked by rules | A forgery with the right CURP and name; text in an image that misleads the model. The model is a reading aid: RENAPO verification stays with risk and the officer |
 | A compromised job uses the eligibility login | The `agent-eligibility` role: reading clients and loan products only (403 on anything else) | It can read any client's record and accounts |
+| A compromised job uses the registration login | The `agent-registration` role: no approval, disbursement or user administration; the bootstrap checks each refusal on every start | It can create and activate clients, submit loan applications and add notes |
 | A compromised container moves sideways | Segmented networks: each database only from its application, agents only to their MCP server and Ollama | The worker is on `core` (the write-back job) |
 | Data leaves the machine | Fineract, the MCP servers and the agents have no route out | The web app, gateway and LOS (published ports), and Lightning, the worker and Ollama (downloads), do |
 | Container escape or privilege escalation | Read-only file systems, no capabilities, no privilege escalation, non-root users, process limits; root only in two one-shot jobs without a network | — |
-| Spoofed callbacks or agent calls | `X-OpenFn-Secret` on the gateway callbacks; a bearer token per agent runner; an API key on the Lightning webhook triggers, one for the loan triggers, one for intake and one for officers' eligibility and identity checks (`[REDACTED]` in run data); a token per LOS caller | — |
+| Spoofed callbacks or agent calls | `X-OpenFn-Secret` on the gateway callbacks; a bearer token per agent runner; an API key on the Lightning webhook triggers, one for the loan triggers, one for intake and one for officers' eligibility, identity and registration requests (`[REDACTED]` in run data); a token per LOS caller | — |
 | Exhausted memory or processes | Memory and process limits; one case at a time per agent with a timeout; the 15-minute stall check | — |
 | Supply chain | Images pinned by tag or digest, Pi from a lockfile, OpenFn adaptors pinned to exact versions (unpinned ones refused in CI), Renovate updates, images built in CI | The adaptors' own dependencies (7.4) |
 

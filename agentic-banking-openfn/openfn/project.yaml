@@ -18,7 +18,10 @@ description: >
 # "los-eligibility" (the LOS's eligibility token) and "fineract-eligibility"
 # (like "fineract", as agent-eligibility, which may only read clients and
 # loan products). The identity workflow uses "los-identity" (the LOS's
-# identity token) and "ollama" ({ "baseUrl", "visionModel" }, no secret).
+# identity token) and "ollama" ({ "baseUrl", "visionModel" }, no secret). The
+# registration workflow uses "los-registration" (the LOS's registration token)
+# and "fineract-registration" (like "fineract", as agent-registration, which may
+# create clients and loan applications but never approve one).
 credentials:
   super@openfn.org-fineract:
     name: fineract
@@ -40,6 +43,12 @@ credentials:
     owner: super@openfn.org
   super@openfn.org-ollama:
     name: ollama
+    owner: super@openfn.org
+  super@openfn.org-los-registration:
+    name: los-registration
+    owner: super@openfn.org
+  super@openfn.org-fineract-registration:
+    name: fineract-registration
     owner: super@openfn.org
 
 # Adaptors are pinned to exact versions, so every run uses the code that was
@@ -1559,4 +1568,265 @@ workflows:
         condition_type: on_job_success
         source_job: read-curp
         target_job: record-check
+        enabled: true
+
+  # -------------------------------------------------------------------------
+  # Workflow 6: Commercial flow registration (an officer asks) → Fineract, LOS
+  # -------------------------------------------------------------------------
+  opportunity-registration:
+    name: Opportunity Registration
+    jobs:
+      read-and-check:
+        name: Read the Qualified Opportunity from the LOS and Check It
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los-registration
+        enabled: true
+        body: |
+          // An officer asks for a qualified opportunity to be registered in
+          // Fineract: { "opportunity_id": "<id in the LOS>" }. Three jobs, because
+          // a job has one credential: this one reads the opportunity, its
+          // documents and events from the LOS and checks it; the next creates
+          // the client, the loan application and a note in Fineract; the last
+          // records the Fineract ids in the LOS. The loan is never approved:
+          // that is Credit's, in Fineract. The webhook replies with the result
+          // (webhook_reply: after_completion).
+          // Uses the "los-registration" credential (raw JSON): { baseUrl, access_token },
+          // the LOS's registration token: it may read an opportunity, its documents
+          // and events, and register it; nothing else.
+          fn(async state => {
+            const id = (state.data || {}).opportunity_id;
+            const done = (decision, extra = {}) => ({ result: { decision, opportunityId: id, reasons: [], ...extra } });
+            if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+              return done('invalid', { reasons: [{ code: 'unknown_opportunity', detail: 'opportunity_id must be the id of an opportunity in the LOS' }] });
+            }
+            let opportunity;
+            try {
+              opportunity = (await get(`/opportunities/${id}`)(state)).data;
+            } catch (e) {
+              if (e.statusCode === 404) return done('invalid', { reasons: [{ code: 'unknown_opportunity', detail: `no opportunity ${id}` }] });
+              throw e;
+            }
+            const stop = (decision, reasons) => done(decision, { externalId: opportunity.external_id, stage: opportunity.stage, reasons });
+            if (opportunity.stage !== 'qualified') return stop('not_qualified', []);
+
+            // What a loan application needs (the eligibility rules checked these,
+            // but the opportunity may have been edited since)
+            const missing = ['full_name', 'national_id', 'requested_amount', 'currency', 'term_months']
+              .filter(key => opportunity[key] === null || opportunity[key] === undefined);
+            if (missing.length) {
+              return stop('invalid', missing.map(key => ({ code: 'missing', detail: `${key} is missing` })));
+            }
+
+            // The client's external ID is the CURP: only one the identity check
+            // found valid on the opportunity's newest CURP document
+            const [document] = (await get(`/opportunities/${id}/documents`)(state)).data.documents.filter(d => d.kind === 'curp');
+            if (!document || document.check_result !== 'valid') {
+              return stop('identity_not_checked', [{ code: 'identity_not_checked',
+                detail: document ? `the newest CURP document is ${document.check_result || 'not checked'}` : 'no CURP document' }]);
+            }
+            const read = document.extracted || {};
+            if (read.curpClave !== opportunity.national_id) {
+              return stop('identity_not_checked', [{ code: 'identity_not_checked', detail: 'the CURP changed since the document was checked' }]);
+            }
+
+            // A note for Credit, from the LOS
+            const events = (await get(`/opportunities/${id}/events`)(state)).data.events;
+            const day = at => String(at).slice(0, 10);
+            const last = match => [...events].reverse().find(match);
+            const eligibility = last(e => e.actor === 'eligibility' && e.action === 'stage');
+            const qualified = last(e => e.action === 'stage' && e.to_stage === 'qualified');
+            const consent = kind => (opportunity[`${kind}_consent_at`] ? day(opportunity[`${kind}_consent_at`]) : 'none');
+            const note = [
+              `Registered from the LOS: opportunity ${opportunity.external_id} (channel ${opportunity.channel})`,
+              `Requested: ${opportunity.requested_amount} ${opportunity.currency} over ${opportunity.term_months} months, productive use: ${opportunity.productive_use || 'not given'}`,
+              `Eligibility: ${eligibility ? `moved to ${eligibility.to_stage} on ${day(eligibility.at)} (eligibility)` : 'not checked by the eligibility workflow'}`,
+              `Identity: CURP ${read.curpClave} checked valid on ${day(document.checked_at)} (name ${read.fullName}, issued ${read.issueDate})`,
+              `Qualified by: ${qualified ? `${qualified.actor} on ${day(qualified.at)}` : 'unknown'}`,
+              `Consents: bureau ${consent('bureau')}, SAT ${consent('sat')}, contact ${consent('contact')}`
+            ].join('\n');
+            return { opportunity, note };
+          });
+
+      register-in-fineract:
+        name: Create the Client, Loan Application and Note in Fineract
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-fineract-registration
+        enabled: true
+        body: |
+          // The client (external ID: the CURP), the loan application (external ID:
+          // the opportunity's) and a note for Credit. A rerun reuses what exists,
+          // so a run that stopped half way can be asked again; anything that does
+          // not match goes to a person (needs_review) and nothing more is created.
+          // Never approves: agent-registration may not (fineract-rbac.json).
+          // Uses the "fineract-registration" credential (raw JSON):
+          //   { baseUrl, username, password, tenantId, productId, officeId, tls }
+          fn(async state => {
+            if (state.result) return state;
+            const cfg = state.configuration || {};
+            const { opportunity, note } = state;
+            const opts = { headers: { 'Fineract-Platform-TenantId': cfg.tenantId || 'default' } };
+            const productId = Number(cfg.productId || 1);
+            const idOf = v => (v && typeof v === 'object' ? v.id : v);
+            const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+              'August', 'September', 'October', 'November', 'December'];
+            const fmt = d => `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+            const dates = { locale: 'en', dateFormat: 'dd MMMM yyyy' };
+            const today = fmt(new Date());
+            const find = async path => {
+              try {
+                return (await get(path, opts)(state)).data;
+              } catch (e) {
+                if (e.statusCode === 404) return null;
+                throw e;
+              }
+            };
+            const stop = (decision, reasons) => ({ result: { decision, opportunityId: opportunity.id,
+              externalId: opportunity.external_id, stage: opportunity.stage, reasons } });
+
+            // The product still fits: the amount is never changed to fit it
+            const product = (await get(`/loanproducts/${productId}`, opts)(state)).data;
+            const amount = Number(opportunity.requested_amount);
+            const term = opportunity.term_months;
+            const reasons = [];
+            const currency = product.currency && product.currency.code;
+            if (opportunity.currency !== currency) {
+              reasons.push({ code: 'currency_not_offered', detail: `currency ${opportunity.currency} not offered (${currency})` });
+            }
+            if ((product.minPrincipal != null && amount < product.minPrincipal) || (product.maxPrincipal != null && amount > product.maxPrincipal)) {
+              reasons.push({ code: 'amount_out_of_range', detail: `amount ${opportunity.requested_amount} outside the product's ${product.minPrincipal} to ${product.maxPrincipal}` });
+            }
+            const monthly = idOf(product.repaymentFrequencyType) === 2 && (product.repaymentEvery || 1) === 1;
+            if (!monthly) {
+              reasons.push({ code: 'product_not_monthly', detail: 'the product does not repay monthly, so the term cannot be its repayments' });
+            } else if ((product.minNumberOfRepayments != null && term < product.minNumberOfRepayments) ||
+                (product.maxNumberOfRepayments != null && term > product.maxNumberOfRepayments)) {
+              reasons.push({ code: 'term_out_of_range', detail: `term ${term} months outside the product's ${product.minNumberOfRepayments} to ${product.maxNumberOfRepayments}` });
+            }
+            if (reasons.length) return stop('invalid', reasons);
+
+            // The client, by CURP: a returning applicant's is reused
+            const clientPath = `/clients/external-id/${encodeURIComponent(opportunity.national_id)}`;
+            const client = await find(clientPath);
+            let clientId;
+            if (client) {
+              const status = (client.status || {}).code;
+              if (status === 'clientStatusType.pending') {
+                await post(`/clients/${client.id}?command=activate`, { activationDate: today, ...dates }, opts)(state);
+              } else if (status !== 'clientStatusType.active') {
+                return stop('needs_review', [{ code: 'client_not_active',
+                  detail: `client ${client.accountNo} with this CURP is ${String((client.status || {}).value).toLowerCase()}` }]);
+              }
+              clientId = client.id;
+            } else {
+              // Mexican names end in two surnames: "María José López García" is
+              // María José / López García; with two words, the second is the surname
+              const words = opportunity.full_name.trim().split(/\s+/);
+              const surnames = words.length >= 3 ? 2 : 1;
+              clientId = (await post('/clients', {
+                officeId: Number(cfg.officeId || 1),
+                firstname: words.length > 1 ? words.slice(0, -surnames).join(' ') : words[0],
+                lastname: words.length > 1 ? words.slice(-surnames).join(' ') : 'NA',
+                legalFormId: 1,
+                active: true,
+                activationDate: today,
+                externalId: opportunity.national_id,
+                ...(opportunity.email ? { emailAddress: opportunity.email } : {}),
+                ...(opportunity.phone ? { mobileNo: opportunity.phone } : {}),
+                ...dates
+              }, opts)(state)).data.clientId;
+            }
+
+            // The loan application, by the opportunity's external ID: reused only
+            // while it still is this opportunity's application
+            const loan = await find(`/loans/external-id/${encodeURIComponent(opportunity.external_id)}`);
+            let loanId;
+            if (loan) {
+              const loanStatus = loan.status || {};
+              const open = loanStatus.pendingApproval || loanStatus.waitingForDisbursal || loanStatus.active;
+              if (loan.clientId !== clientId || Number(loan.principal) !== amount || loan.numberOfRepayments !== term || !open) {
+                return stop('needs_review', [{ code: 'loan_conflict',
+                  detail: `loan ${loan.accountNo} with this external ID is ${String(loanStatus.value).toLowerCase()}, principal ${loan.principal}, ${loan.numberOfRepayments} repayments, client ${loan.clientId}` }]);
+              }
+              loanId = loan.id;
+            } else {
+              loanId = (await post('/loans', {
+                clientId,
+                productId,
+                principal: amount,
+                loanTermFrequency: term,
+                loanTermFrequencyType: 2,
+                numberOfRepayments: term,
+                repaymentEvery: 1,
+                repaymentFrequencyType: 2,
+                interestRatePerPeriod: product.interestRatePerPeriod,
+                amortizationType: idOf(product.amortizationType) ?? 1,
+                interestType: idOf(product.interestType) ?? 0,
+                interestCalculationPeriodType: idOf(product.interestCalculationPeriodType) ?? 1,
+                transactionProcessingStrategyCode: product.transactionProcessingStrategyCode || 'mifos-standard-strategy',
+                // Credit can change it before approving
+                expectedDisbursementDate: fmt(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)),
+                submittedOnDate: today,
+                loanType: 'individual',
+                externalId: opportunity.external_id,
+                ...dates
+              }, opts)(state)).data.loanId;
+            }
+
+            // The note for Credit, once
+            const marker = note.split('\n')[0];
+            const notes = (await get(`/loans/${loanId}/notes`, opts)(state)).data || [];
+            if (!notes.some(n => String(n.note || '').startsWith(marker))) {
+              await post(`/loans/${loanId}/notes`, { note }, opts)(state);
+            }
+            return { opportunity, clientId, loanId };
+          });
+
+      record-registration:
+        name: Record the Fineract Ids in the LOS
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los-registration
+        enabled: true
+        body: |
+          // Moves the opportunity to registered with the Fineract ids, sending the
+          // fields the application was made from: the LOS refuses (409) if any
+          // changed since the first job read them, and the run fails; asked
+          // again, the loan check above sends it to a person. The same ids again
+          // change nothing, so a rerun after a lost reply is safe.
+          // Uses the "los-registration" credential, like the first job.
+          fn(async state => {
+            if (state.result) {
+              console.log('registration', JSON.stringify(state.result));
+              return state.result;
+            }
+            const { opportunity, clientId, loanId } = state;
+            const compared = {};
+            for (const key of ['national_id', 'full_name', 'requested_amount', 'currency', 'term_months']) compared[key] = opportunity[key];
+            const registered = (await post(`/opportunities/${opportunity.id}/registration`,
+              { fineract_client_id: clientId, fineract_loan_id: loanId, compared })(state)).data;
+            console.log('registration', opportunity.external_id, 'client', clientId, 'loan', loanId);
+            return { decision: 'registered', opportunityId: opportunity.id, externalId: opportunity.external_id,
+              stage: registered.stage, clientId, loanId, reasons: [] };
+          });
+
+    triggers:
+      webhook-opportunity-registration:
+        type: webhook
+        enabled: true
+        webhook_reply: after_completion
+
+    edges:
+      webhook-opportunity-registration->read-and-check:
+        source_trigger: webhook-opportunity-registration
+        target_job: read-and-check
+        condition_type: always
+        enabled: true
+      read-and-check->register-in-fineract:
+        condition_type: on_job_success
+        source_job: read-and-check
+        target_job: register-in-fineract
+        enabled: true
+      register-in-fineract->record-registration:
+        condition_type: on_job_success
+        source_job: register-in-fineract
+        target_job: record-registration
         enabled: true

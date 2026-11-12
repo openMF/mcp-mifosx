@@ -246,9 +246,10 @@ def opt_out(con, opportunity_id, actor: str) -> dict:
     return row
 
 
-def register(con, opportunity_id, client_id: int, loan_id: int, actor: str) -> dict:
+def register(con, opportunity_id, client_id: int, loan_id: int, actor: str, compared: dict | None = None) -> dict:
     """Records the Fineract client and loan application of a qualified opportunity.
-    Repeating it with the same ids changes nothing."""
+    Repeating it with the same ids changes nothing. `compared` holds the fields the
+    loan application was made from; the registration is refused if any changed."""
     with _transaction(con):
         row = _locked(con, opportunity_id)
         if row["stage"] == rules.REGISTERED:
@@ -256,6 +257,9 @@ def register(con, opportunity_id, client_id: int, loan_id: int, actor: str) -> d
                 return row
             raise rules.Conflict("the opportunity is already registered with other Fineract ids")
         rules.check_registration(row["stage"])
+        changed = sorted(field for field, value in (compared or {}).items() if row[field] != value)
+        if changed:
+            raise rules.Conflict(f"the opportunity's {' and '.join(changed)} changed since the registration read them")
         row = _set(con, opportunity_id, {"stage": rules.REGISTERED, "fineract_client_id": client_id, "fineract_loan_id": loan_id})
         _event(con, opportunity_id, actor, "registered", {"fineract_client_id": client_id, "fineract_loan_id": loan_id},
                from_stage="qualified", to_stage=rules.REGISTERED)

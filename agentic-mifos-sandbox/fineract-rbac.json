@@ -25,6 +25,11 @@
       "role": "Agent: eligibility",
       "description": "Reads the loan product's limits and a returning applicant's client record and accounts (the eligibility workflow). Never writes.",
       "permissions": ["READ_LOANPRODUCT", "READ_CLIENT"]
+    },
+    "registration": {
+      "role": "Agent: registration",
+      "description": "Registers a qualified opportunity from the LOS: creates or activates the client and submits the loan application with a note for Credit (the registration workflow). Never approves or disburses.",
+      "permissions": ["READ_LOANPRODUCT", "READ_CLIENT", "CREATE_CLIENT", "ACTIVATE_CLIENT", "READ_LOAN", "CREATE_LOAN", "READ_LOANNOTE", "CREATE_LOANNOTE"]
     }
   }
 }
