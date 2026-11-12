@@ -10,6 +10,7 @@ from typing import Optional
 import fastmcp
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from pydantic import StrictInt
 
 # 1. Provide an MCP-specific Logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - [MCP Server] %(message)s')
@@ -461,7 +462,7 @@ def get_center(centerId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("create_new_center")
-def create_new_center(name: str, officeId: int, externalId: str = None) -> dict:
+def create_new_center(name: str, officeId: StrictInt, externalId: str = None) -> dict:
     """Create a new center"""
     return create_center_domain.func(name, officeId, externalId)
 

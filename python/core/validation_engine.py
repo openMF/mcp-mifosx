@@ -97,3 +97,7 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
     # amount is optional here: without it the approved principal is disbursed
     if tool_name == "approve_disburse_loan" and params.get("amount") is not None:
         _require_positive_number(params, "amount")
+
+    if tool_name == "create_new_center":
+        _require_non_blank_str(params, "name")
+        _require_positive_int(params, "officeId")
