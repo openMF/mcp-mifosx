@@ -16,8 +16,9 @@ from typing import Annotated, Literal
 from uuid import UUID
 
 import pg8000.native
-from fastapi import Depends, FastAPI, Query
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Query, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse, Response
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 import auth
@@ -161,6 +162,63 @@ class EventList(BaseModel):
     events: list[Event]
 
 
+class Document(BaseModel):
+    """A document without its image, with its latest check."""
+
+    id: UUID
+    opportunity_id: UUID
+    kind: str
+    content_type: str
+    size: int
+    sha256: str
+    uploaded_at: datetime
+    uploaded_by: str
+    checked_at: datetime | None
+    check_result: str | None
+    check_reasons: list | None
+    extracted: dict | None
+
+
+class DocumentList(BaseModel):
+    documents: list[Document]
+
+
+class CheckReason(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: ReasonCode
+    detail: ReasonNote
+
+
+ExtractedKey = Annotated[str, StringConstraints(pattern=r"^[A-Za-z_]{1,40}$")]
+ExtractedValue = Annotated[str, StringConstraints(max_length=200)] | bool | float | None
+
+
+class CheckCompared(BaseModel):
+    """The applicant's fields as the check read them from the opportunity, to compare with the document."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    national_id: str | None
+    full_name: str | None
+
+
+class DocumentCheck(BaseModel):
+    """What a document's check found. `extracted` is what the model read from the image."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    result: Literal[rules.CHECK_RESULTS]
+    reasons: Annotated[list[CheckReason], Field(max_length=20)] = []
+    extracted: Annotated[dict[ExtractedKey, ExtractedValue], Field(max_length=20)] = {}
+    compared: CheckCompared
+
+
+class CheckRecorded(BaseModel):
+    document: Document
+    opportunity: Opportunity
+
+
 @asynccontextmanager
 async def lifespan(application: FastAPI):
     application.state.tokens = auth.load_tokens(os.environ)
@@ -188,6 +246,8 @@ def _error(status: int, headers: dict | None = None):
 app.add_exception_handler(store.NotFound, _error(404))
 app.add_exception_handler(rules.Conflict, _error(409))
 app.add_exception_handler(rules.Invalid, _error(422))
+app.add_exception_handler(rules.TooLarge, _error(413))
+app.add_exception_handler(rules.UnsupportedType, _error(415))
 app.add_exception_handler(auth.Unauthorized, _error(401, {"WWW-Authenticate": "Bearer"}))
 app.add_exception_handler(auth.Forbidden, _error(403))
 
@@ -280,6 +340,55 @@ def opt_out(who: Annotated[auth.Who, auth.change("opt_out")], opportunity_id: UU
 def register(who: Annotated[auth.Who, auth.change("register")], opportunity_id: UUID, body: Registration, con: Con):
     """Records the Fineract client and loan application created for a qualified opportunity."""
     return store.register(con, opportunity_id, body.fineract_client_id, body.fineract_loan_id, who.actor)
+
+
+# The image is the request body; /docs offers a file picker for it.
+DOCUMENT_BODY = {"requestBody": {"required": True, "content": {
+    content_type: {"schema": {"type": "string", "format": "binary"}} for content_type in rules.DOCUMENT_TYPES}}}
+
+
+@app.post("/opportunities/{opportunity_id}/documents/{kind}", status_code=201, response_model=Document, openapi_extra=DOCUMENT_BODY)
+async def upload_document(who: Annotated[auth.Who, auth.change("upload")], opportunity_id: UUID, kind: Literal[rules.DOCUMENT_KINDS],
+                          request: Request, con: Con):
+    """Keeps an identity document of an open opportunity. The body is the image: PNG or JPEG, at most 5 MB."""
+    content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    rules.check_document_type(content_type)
+    content = bytearray()
+    async for chunk in request.stream():
+        content += chunk
+        if len(content) > rules.MAX_DOCUMENT_BYTES:
+            raise rules.TooLarge(f"a document may be at most {rules.MAX_DOCUMENT_BYTES} bytes")
+    rules.check_document(content_type, bytes(content))
+    return await run_in_threadpool(store.add_document, con, opportunity_id, kind, content_type, bytes(content), who.actor)
+
+
+@app.get("/opportunities/{opportunity_id}/documents", response_model=DocumentList, dependencies=[auth.allow("documents")])
+def list_documents(opportunity_id: UUID, con: Con):
+    """Newest first, each with its latest check; without the images."""
+    return {"documents": store.documents(con, opportunity_id)}
+
+
+@app.get("/opportunities/{opportunity_id}/documents/{document_id}/content", response_class=Response,
+         dependencies=[auth.allow("document_content")],
+         responses={200: {"content": {content_type: {} for content_type in rules.DOCUMENT_TYPES}}})
+def get_document_content(opportunity_id: UUID, document_id: UUID, con: Con):
+    """The document's image, as uploaded."""
+    found = store.document_content(con, opportunity_id, document_id)
+    return Response(content=found["content"], media_type=found["content_type"],
+                    headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@app.post("/opportunities/{opportunity_id}/documents/{document_id}/check", response_model=CheckRecorded)
+def record_document_check(who: Annotated[auth.Who, auth.change("check")], opportunity_id: UUID, document_id: UUID,
+                          body: DocumentCheck, con: Con):
+    """Records what a document's check found (the identity workflow) and, in the same transaction, the move
+    its result calls for: valid moves the opportunity on to assessing, document_mismatch pauses it with the
+    reasons. Refused (409) once the check no longer applies: the opportunity has left documents, a newer
+    document was uploaded, or its CURP or name changed since `compared`. The same check again changes nothing."""
+    document, opportunity = store.record_check(
+        con, opportunity_id, document_id, body.result, [r.model_dump() for r in body.reasons], body.extracted,
+        body.compared.model_dump(), who.actor, may_move=partial(auth.check_move, who.caller))
+    return {"document": document, "opportunity": opportunity}
 
 
 @app.get("/opportunities/{opportunity_id}/events", response_model=EventList, dependencies=[auth.allow("events")])

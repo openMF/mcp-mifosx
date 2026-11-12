@@ -14,8 +14,8 @@
    "fineract" (the write-back job's login, the agent-writeback user),
    "fineract-<agent>" (another job's login, the agent-<agent> user), "los" and
    "los-<caller>" (the LOS API with the intake job's or another caller's
-   token) and "agent-<name>" (the URL and token of an agent's runner, for the
-   job that calls it).
+   token), "ollama" (the vision model's server and name) and "agent-<name>"
+   (the URL and token of an agent's runner, for the job that calls it).
 5. Lightning: provision the OpenFn project from project.yaml.
 
 Every id in the provisioned project is derived from its key in project.yaml
@@ -278,6 +278,10 @@ def credential_body(name, product_id):
         # as `Authorization: Bearer`.
         caller = "intake" if name == "los" else name.removeprefix("los-")
         return {"baseUrl": env("LOS_URL"), "access_token": env(f"LOS_{caller.upper()}_TOKEN")}
+    if name == "ollama":
+        # The vision model, for the identity workflow: the same server and model
+        # the loan flow uses (OLLAMA_URL, OLLAMA_VISION_MODEL). No key.
+        return {"baseUrl": env("OLLAMA_URL"), "visionModel": env("OLLAMA_VISION_MODEL")}
     if name.startswith("agent-"):
         # An agent's HTTP runner: AGENT_<NAME>_URL and AGENT_<NAME>_TOKEN.
         prefix = "AGENT_" + name.removeprefix("agent-").upper().replace("-", "_")
@@ -380,6 +384,7 @@ def provision_project(product_id):
         "webhook-loan-review": env("OPENFN_TRIGGER_LOAN_REVIEW"),
         "webhook-opportunity-intake": env("OPENFN_TRIGGER_OPPORTUNITY_INTAKE"),
         "webhook-opportunity-eligibility": env("OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY"),
+        "webhook-opportunity-identity": env("OPENFN_TRIGGER_OPPORTUNITY_IDENTITY"),
     }
     for cred in (spec.get("credentials") or {}).values():
         name = cred["name"]

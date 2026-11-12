@@ -27,6 +27,10 @@ ACTIONS = {
     "opt_out": "record opt-outs",
     "register": "record registrations",
     "events": "read the audit trail",
+    "upload": "upload documents",
+    "documents": "list documents",
+    "document_content": "read a document's image",
+    "check": "record document checks",
 }
 
 
@@ -52,6 +56,13 @@ CALLERS = {
     "eligibility": Permissions(
         frozenset({"read", "stage"}),
         moves=(frozenset({"qualifying"}), frozenset({"documents", rules.PAUSED})),
+    ),
+    # The OpenFn identity workflow: reads the newest identity document of an
+    # opportunity in documents, records what its check found, then moves the
+    # opportunity on to assessing or pauses it. Never uploads.
+    "identity": Permissions(
+        frozenset({"read", "documents", "document_content", "check", "stage"}),
+        moves=(frozenset({"documents"}), frozenset({"assessing", rules.PAUSED})),
     ),
     # People on the host (curl, /docs).
     "officer": Permissions(frozenset(ACTIONS), shared=True),
