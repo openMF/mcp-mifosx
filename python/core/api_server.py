@@ -110,14 +110,14 @@ class WaiveInterest(BaseModel):
     note: str = "AI Authorized Waiver"
 
 class JournalEntryItem(BaseModel):
-    glAccountId: int
-    amount: float
+    glAccountId: Annotated[int, Field(strict=True, gt=0)]
+    amount: Annotated[float, Field(gt=0)]
 
 class JournalEntryCreate(BaseModel):
-    office_id: int
+    office_id: Annotated[int, Field(strict=True, gt=0)]
     date: str
-    credits: list[JournalEntryItem]
-    debits: list[JournalEntryItem]
+    credits: Annotated[list[JournalEntryItem], Field(min_length=1)]
+    debits: Annotated[list[JournalEntryItem], Field(min_length=1)]
     currency_code: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     comment: str = ""
 
@@ -417,8 +417,8 @@ def get_journal_entries(account_id: Optional[int] = None, transaction_id: Option
 @app.post("/api/accounting/journal-entries", tags=["Accounting"])
 def create_journal_entry(payload: JournalEntryCreate):
     # Convert Pydantic models to dicts for the tool function
-    credits_dict = [item.dict() for item in payload.credits]
-    debits_dict = [item.dict() for item in payload.debits]
+    credits_dict = [item.model_dump() for item in payload.credits]
+    debits_dict = [item.model_dump() for item in payload.debits]
     return handle_response(accounting.create_journal_entry.func(
         office_id=payload.office_id, date=payload.date,
         credits=credits_dict, debits=debits_dict, currency_code=payload.currency_code, comment=payload.comment

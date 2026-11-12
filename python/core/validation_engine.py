@@ -35,6 +35,26 @@ def _require_non_blank_str(params: Dict[str, Any], name: str) -> None:
         raise ValidationError(f"{name} is required and cannot be blank")
 
 
+def _require_journal_entry_items(params: Dict[str, Any], name: str) -> None:
+    value = params.get(name)
+    if not isinstance(value, list) or len(value) == 0:
+        raise ValidationError(f"{name} must be a non-empty list")
+    for item in value:
+        if not isinstance(item, dict):
+            raise ValidationError(f"each item in {name} must be a dict with glAccountId and amount")
+        gl_account_id = item.get("glAccountId")
+        if isinstance(gl_account_id, bool) or not isinstance(gl_account_id, int) or gl_account_id <= 0:
+            raise ValidationError(f"glAccountId in {name} must be a positive integer")
+        amount = item.get("amount")
+        if (
+            isinstance(amount, bool)
+            or not isinstance(amount, (int, float))
+            or amount <= 0
+            or not math.isfinite(amount)
+        ):
+            raise ValidationError(f"amount in {name} must be positive")
+
+
 def _require_positive_resource_ids(params: Dict[str, Any]) -> None:
     """Reject non-positive Fineract resource IDs before any request.
 
@@ -76,7 +96,10 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
         _require_non_blank_str(params, "imagePath")
 
     if tool_name == "record_journal_entry":
+        _require_positive_int(params, "officeId")
         _require_non_blank_str(params, "currencyCode")
+        _require_journal_entry_items(params, "credits")
+        _require_journal_entry_items(params, "debits")
 
     if tool_name == "deposit":
         _require_positive_number(params, "amount")

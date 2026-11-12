@@ -3,6 +3,8 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import math
+
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
@@ -38,8 +40,32 @@ def create_journal_entry(office_id: int, date: str, credits: list, debits: list,
     currency_code is the entry's currency (e.g. "USD"). Fineract requires it, and it differs per
     tenant, so it is not guessed.
     """
+    if isinstance(office_id, bool) or not isinstance(office_id, int) or office_id <= 0:
+        return {"error": "office_id must be a positive integer."}
     if not isinstance(currency_code, str) or not currency_code.strip():
         return {"error": "currency_code is required for a journal entry (e.g. \"USD\") and cannot be blank."}
+    if not isinstance(credits, list) or len(credits) == 0:
+        return {"error": "credits must be a non-empty list."}
+    if not isinstance(debits, list) or len(debits) == 0:
+        return {"error": "debits must be a non-empty list."}
+    for item in credits:
+        if not isinstance(item, dict):
+            return {"error": "Each credit item must be a dictionary with glAccountId and amount."}
+        gl_id = item.get("glAccountId")
+        if isinstance(gl_id, bool) or not isinstance(gl_id, int) or gl_id <= 0:
+            return {"error": "Each credit item must have a positive glAccountId."}
+        amt = item.get("amount")
+        if isinstance(amt, bool) or not isinstance(amt, (int, float)) or amt <= 0 or not math.isfinite(amt):
+            return {"error": "Each credit item must have a positive amount."}
+    for item in debits:
+        if not isinstance(item, dict):
+            return {"error": "Each debit item must be a dictionary with glAccountId and amount."}
+        gl_id = item.get("glAccountId")
+        if isinstance(gl_id, bool) or not isinstance(gl_id, int) or gl_id <= 0:
+            return {"error": "Each debit item must have a positive glAccountId."}
+        amt = item.get("amount")
+        if isinstance(amt, bool) or not isinstance(amt, (int, float)) or amt <= 0 or not math.isfinite(amt):
+            return {"error": "Each debit item must have a positive amount."}
     print("[Tool] Creating Journal Entry...")
     payload = {
         "officeId": office_id,
