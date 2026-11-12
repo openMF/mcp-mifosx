@@ -310,6 +310,12 @@ workflows:
               return { nameOk, registryOk, dateOk, valid: nameOk && registryOk && dateOk, messages };
             };
 
+            // One time budget for all of the case's documents, however many are
+            // sent: on a CPU, reading one image takes about 4 to 7 minutes on 8
+            // cores (seconds with a GPU). With the decision agent's 260 s, the run
+            // stays within its limit (900 s, WORKER_MAX_RUN_DURATION_SECONDS).
+            const VISION_BUDGET_MS = 540000;
+            const deadline = Date.now() + VISION_BUDGET_MS;
             const docResults = [];
             for (const d of documents) {
               const result = { path: d.path, docType: d.docType };
@@ -322,16 +328,24 @@ workflows:
                   validationMessages: ['Generic extraction not implemented (only CURP documents are analysed)'] });
                 continue;
               }
+              const left = deadline - Date.now();
+              if (left < 30000) {
+                docResults.push({ ...result, valid: false, visionModel,
+                  validationMessages: ['Not read: the vision time for this case was used by the documents before it'] });
+                continue;
+              }
               try {
                 await progress('GATHERING_DATA');
                 console.log(`Calling Ollama vision model=${visionModel} for ${d.path}`);
+                // As in the Opportunity Identity Document workflow, the answer is
+                // about 100 tokens; 256 stops a model that rambles on an odd image.
                 const res = await post(`${ollamaUrl}/api/chat`, {
                   model: visionModel,
                   messages: [{ role: 'user', content: VISION_PROMPT, images: [d.imageBase64] }],
                   stream: false,
                   think: false,
-                  options: { temperature: 0.1, num_predict: 2048 }
-                }, { timeout: 300000 })(state);
+                  options: { temperature: 0.1, num_predict: 256 }
+                }, { timeout: left })(state);
                 const message = res.data?.message || {};
                 const raw = String(message.content || message.thinking || res.data?.response || '');
                 const extracted = extract(raw);
@@ -1432,8 +1446,8 @@ workflows:
             };
 
             // On a CPU, reading the image takes most of the time: about 4 to 7
-            // minutes on 8 cores (seconds with a GPU). 540 s leaves the other two
-            // jobs a minute of the run's 600. The answer is about 100 tokens: 256
+            // minutes on 8 cores (seconds with a GPU). 540 s is well within the
+            // run limit (900 s). The answer is about 100 tokens: 256
             // stops a model that rambles on an odd image, and a cut answer is
             // read as unreadable.
             const started = Date.now();
