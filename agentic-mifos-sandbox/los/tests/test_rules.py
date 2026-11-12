@@ -2,7 +2,7 @@
 # This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 import pytest
 
-from rules import Conflict, Invalid, check_open, check_registration, check_stage_change
+from rules import DOCUMENT_TYPES, Conflict, Invalid, UnsupportedType, check_document, check_open, check_registration, check_stage_change
 
 
 @pytest.mark.parametrize("current, target", [
@@ -59,3 +59,29 @@ def test_registration_only_from_qualified():
     check_registration("qualified")
     with pytest.raises(Conflict, match="only a qualified opportunity"):
         check_registration("pre_approved")
+
+
+PNG_START, PNG_END = DOCUMENT_TYPES["image/png"]
+JPEG_START, JPEG_END = DOCUMENT_TYPES["image/jpeg"]
+
+
+@pytest.mark.parametrize("content_type, content", [
+    ("image/png", PNG_START + b"pixels" + PNG_END),
+    ("image/jpeg", JPEG_START + b"pixels" + JPEG_END),
+    ("image/jpeg", JPEG_START + b"pixels" + JPEG_END + b"\x00" * 8),
+])
+def test_a_complete_image_is_accepted(content_type, content):
+    check_document(content_type, content)
+
+
+@pytest.mark.parametrize("content_type, content", [
+    ("image/png", PNG_START + b"pixels"),
+    ("image/png", b"\x89PNG\r\n\x1a\n" + b"pixels" + PNG_END),
+    ("image/png", PNG_START + b"pixels" + PNG_END + b"more"),
+    ("image/jpeg", JPEG_START + b"pixels"),
+    ("image/jpeg", PNG_START + b"pixels" + PNG_END),
+    ("image/png", b""),
+])
+def test_an_incomplete_or_other_file_is_refused(content_type, content):
+    with pytest.raises(UnsupportedType, match="not a complete"):
+        check_document(content_type, content)

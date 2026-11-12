@@ -2,7 +2,7 @@
 
 Keeps commercial opportunities (leads and applicants) from first contact until they are registered in Fineract or discarded. It has its own database and is linked to Fineract by external ID: only a qualified opportunity reaches Fineract.
 
-Leads from channels arrive through the OpenFn intake workflow, which checks them (duplicates, a way to contact) and creates them here with its own token, as the actor `intake`. Once a person has moved an opportunity to `qualifying`, the OpenFn eligibility workflow checks it against the Fineract loan product and the applicant's history there, and moves it on to `documents` or pauses it with a reason code, as the actor `eligibility`. See the sandbox README, section 3.3.
+Leads from channels arrive through the OpenFn intake workflow, which checks them (duplicates, a way to contact) and creates them here with its own token, as the actor `intake`. Once a person has moved an opportunity to `qualifying`, the OpenFn eligibility workflow checks it against the Fineract loan product and the applicant's history there, and moves it on to `documents` or pauses it with a reason code, as the actor `eligibility`. In `documents`, the OpenFn identity workflow checks the applicant's CURP constancia, uploaded here, with a vision model, records the result on the document, and moves the opportunity on to `assessing` or pauses it, as the actor `identity`. See the sandbox README, section 3.3.
 
 The LOS has no access to Fineract. When an opportunity qualifies, the write-back agent creates the client and the loan application with its own Fineract role, then records their ids here (`POST /opportunities/{id}/registration`). The opportunity's `external_id` becomes the loan's external ID in Fineract.
 
@@ -38,9 +38,23 @@ Consent is the client's act. Bureau, SAT and contact consent are recorded by `PO
 | `POST /opportunities/{id}/consents/{kind}` | Record a consent |
 | `POST /opportunities/{id}/opt-out` | Stop contact |
 | `POST /opportunities/{id}/registration` | `{fineract_client_id, fineract_loan_id}` |
+| `POST /opportunities/{id}/documents/{kind}` | Upload a document: the image is the body (see Documents) |
+| `GET /opportunities/{id}/documents` | Its documents, newest first, without the images |
+| `GET /opportunities/{id}/documents/{document_id}/content` | A document's image |
+| `POST /opportunities/{id}/documents/{document_id}/check` | `{result, reasons, extracted, compared}`: what its check found, recorded with the move it calls for |
 | `GET /opportunities/{id}/events` | Audit trail |
 
 Every call but `/health` needs a caller's token (see Access). Phone numbers are stored without spaces, dashes or brackets and national IDs in upper case, so searches match however they were typed. Amounts are returned as strings (`"15000.00"`). The audit trail names the fields that changed, never their values.
+
+## Documents
+
+Identity documents are kept with the opportunity. `POST /opportunities/{id}/documents/curp` takes the image itself as the body, with `Content-Type: image/png` or `image/jpeg` (`curl --data-binary @curp.png`; `/docs` offers a file picker):
+
+- At most 5 MB (`413`), and a complete file of that type, whatever the header says: a PNG from its signature and `IHDR` to `IEND`, a JPEG from its start to its end marker (`415`). The LOS checks those bytes and never decodes an image; reading it is left to the vision model
+- Only while the opportunity is open (`409` once registered or discarded)
+- Every upload is kept, with its size, SHA-256 and who uploaded it; the newest is the one checked
+
+A check records `result` (`valid`, `request_document` or `document_mismatch`), `reasons` (`{code, detail}`) and `extracted`, what the vision model read (strings of at most 200 characters, booleans or numbers), and in the same transaction makes the move the result calls for: `valid` moves the opportunity on to `assessing`, `document_mismatch` pauses it with the reasons as its note, and with `request_document` it stays in `documents`. `compared` is the opportunity's `national_id` and `full_name` as the check read them. The LOS refuses the check (`409`) once it no longer applies: the opportunity is no longer in `documents`, a newer document of the same kind was uploaded, or its CURP or name changed since. The same check again, once applied, changes nothing, so an interrupted run can be retried. A later check of the same document replaces it. The events `document_added` and `document_checked` name the document, its kind and size, and the result; never the image or what was read from it. Only kind `curp` exists so far.
 
 ## Access
 
@@ -50,16 +64,17 @@ Each caller has its own token, `LOS_<CALLER>_TOKEN` in the sandbox's `.env` (mad
 |---|---|---|
 | `intake` | `LOS_INTAKE_TOKEN`, in the OpenFn credential `los` | Search, create, and move a lead from `new` to `paused` or `discarded` (a possible duplicate, no way to contact) |
 | `eligibility` | `LOS_ELIGIBILITY_TOKEN`, in the OpenFn credential `los-eligibility` | Read one opportunity, and move it from `qualifying` to `documents` or `paused` |
-| `officer` | `LOS_OFFICER_TOKEN`, for people (curl, the **Authorize** button at `/docs`) | Everything |
+| `identity` | `LOS_IDENTITY_TOKEN`, in the OpenFn credential `los-identity` | Read an opportunity, list its documents and read their images, record a check, and move it from `documents` to `assessing` or `paused` |
+| `officer` | `LOS_OFFICER_TOKEN`, for people (curl, the **Authorize** button at `/docs`) | Everything, including uploading documents |
 
 - No token, or one the LOS does not know: `401`. A token that does not allow the call: `403`, and nothing is changed.
 - `/health`, `/docs` and `/openapi.json` need no token; they hold no opportunity data.
-- The audit trail names the caller. `intake` and `eligibility` are named by their token: an `X-Actor` naming anyone else is refused. People share the officer token, so `X-Actor` names the person, recorded as `officer:<name>` (`officer` without the header).
+- The audit trail names the caller. `intake`, `eligibility` and `identity` are named by their token: an `X-Actor` naming anyone else is refused. People share the officer token, so `X-Actor` names the person, recorded as `officer:<name>` (`officer` without the header).
 - The LOS does not start if a token is missing, shorter than 32 characters, or the same for two callers.
 
 A new caller (an agent, a job) gets its own entry in `auth.py` and its own token.
 
-Besides its database, only the OpenFn worker shares a network with the LOS (`los-api`, for the intake and eligibility jobs), and its port is published on 127.0.0.1 only.
+Besides its database, only the OpenFn worker shares a network with the LOS (`los-api`, for the intake, eligibility and identity jobs), and its port is published on 127.0.0.1 only.
 
 ## Tests
 

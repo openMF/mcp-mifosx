@@ -2,6 +2,8 @@
 # This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
 """API tests against a real Postgres database (see conftest.py)."""
 
+import base64
+import hashlib
 import json
 import uuid
 
@@ -295,10 +297,11 @@ def test_events_of_an_unknown_opportunity_are_404(client):
 
 def test_every_route_but_health_needs_a_token(client):
     del client.headers["Authorization"]
-    calls = [(method, route.path.replace("{opportunity_id}", str(uuid.uuid4())).replace("{kind}", "bureau"))
+    calls = [(method, route.path.replace("{opportunity_id}", str(uuid.uuid4())).replace("{document_id}", str(uuid.uuid4()))
+              .replace("{kind}", "bureau"))
              for route in app.app.routes if isinstance(route, APIRoute) and route.path != "/health"
              for method in route.methods]
-    assert len(calls) == 9
+    assert len(calls) == 13
     for method, path in calls:
         response = client.request(method, path)
         assert response.status_code == 401, (method, path, response.text)
@@ -425,3 +428,258 @@ def test_eligibility_may_not_search_create_edit_consent_opt_out_register_or_read
         assert response.json()["detail"].startswith("eligibility may not ")
     assert [e["action"] for e in events(client, opportunity)] == ["created", "stage"]
     assert len(client.get("/opportunities").json()["opportunities"]) == 1
+
+
+# --- Documents ----------------------------------------------------------------
+
+# Two-by-two white images, as Pillow writes them.
+PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8//8/AwMDEwMDAwMDAwAkBgMB/DXemwAAAABJRU5ErkJggg==")
+JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/"
+    "2wBDAQkJCQwLDBgNDRgyIRwhMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjL/wAARCAACAAIDASIAAhEBAxEB/8QA"
+    "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkK"
+    "FhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+    "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+    "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+    "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD3+iiigD//2Q==")
+
+
+def upload(client, opportunity, content=PNG, content_type="image/png", kind="curp", headers=None):
+    return client.post(f"/opportunities/{opportunity['id']}/documents/{kind}", content=content,
+                       headers={"Content-Type": content_type, **(headers or {})})
+
+
+def documents(client, opportunity):
+    response = client.get(f"/opportunities/{opportunity['id']}/documents")
+    assert response.status_code == 200, response.text
+    return response.json()["documents"]
+
+
+def opportunity_of(client, opportunity):
+    return client.get(f"/opportunities/{opportunity['id']}").json()
+
+
+def test_a_document_is_kept_with_its_metadata_and_no_check_yet(client):
+    opportunity = create(client)
+    response = upload(client, opportunity, headers={"X-Actor": "maria"})
+    assert response.status_code == 201, response.text
+    document = response.json()
+    assert (document["kind"], document["content_type"], document["size"]) == ("curp", "image/png", len(PNG))
+    assert document["sha256"] == hashlib.sha256(PNG).hexdigest()
+    assert (document["uploaded_by"], document["checked_at"], document["check_result"]) == ("officer:maria", None, None)
+    assert "content" not in document
+    assert events(client, opportunity)[-1]["action"] == "document_added"
+    assert events(client, opportunity)[-1]["detail"] == {"document_id": document["id"], "kind": "curp", "size": len(PNG)}
+
+
+def test_a_jpeg_is_accepted_and_returned_as_uploaded(client):
+    opportunity = create(client)
+    document = upload(client, opportunity, JPEG, "image/jpeg").json()
+    response = client.get(f"/opportunities/{opportunity['id']}/documents/{document['id']}/content")
+    assert response.status_code == 200
+    assert (response.content, response.headers["content-type"]) == (JPEG, "image/jpeg")
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_a_jpeg_padded_with_zeros_after_its_end_is_accepted(client):
+    assert upload(client, create(client), JPEG + b"\x00" * 16, "image/jpeg").status_code == 201
+
+
+@pytest.mark.parametrize("content, content_type", [
+    (PNG, "application/pdf"),
+    (PNG, ""),
+    (b"not an image", "image/png"),
+    (JPEG, "image/png"),
+    (PNG, "image/jpeg"),
+    (b"", "image/png"),
+    (PNG[:16] + b"\x00" * 64, "image/png"),
+    (PNG[:-12], "image/png"),
+    (PNG + b"trailing", "image/png"),
+    (JPEG[:-2], "image/jpeg"),
+])
+def test_only_a_complete_png_or_jpeg_image_is_accepted(client, content, content_type):
+    opportunity = create(client)
+    assert upload(client, opportunity, content, content_type).status_code == 415
+    assert documents(client, opportunity) == []
+
+
+def test_a_document_over_5_mb_is_refused(client):
+    opportunity = create(client)
+    assert upload(client, opportunity, PNG + b"\x00" * (5 * 1024 * 1024)).status_code == 413
+    assert documents(client, opportunity) == []
+
+
+def test_an_unknown_kind_an_unknown_opportunity_and_a_final_one_are_refused(client):
+    opportunity = create(client)
+    assert upload(client, opportunity, kind="passport").status_code == 422
+    assert upload(client, {"id": str(uuid.uuid4())}).status_code == 404
+    move(client, opportunity, "discarded", reason_code="duplicate")
+    assert upload(client, opportunity).status_code == 409
+
+
+def test_documents_are_listed_newest_first_without_images(client):
+    opportunity = create(client)
+    first = upload(client, opportunity).json()
+    second = upload(client, opportunity, JPEG, "image/jpeg").json()
+    listed = documents(client, opportunity)
+    assert [d["id"] for d in listed] == [second["id"], first["id"]]
+    assert all("content" not in d for d in listed)
+
+
+# --- Document checks ----------------------------------------------------------
+
+def in_documents(client, body=None):
+    """An opportunity an officer has moved to documents, with a document uploaded."""
+    opportunity = create(client, body)
+    assert move(client, opportunity, "documents").status_code == 200
+    return opportunity, upload(client, opportunity).json()
+
+
+def check(client, opportunity, document, body, headers=None):
+    """Records a check, comparing the opportunity's CURP and name as created."""
+    body = {"compared": {"national_id": opportunity.get("national_id"), "full_name": opportunity.get("full_name")}, **body}
+    return client.post(f"/opportunities/{opportunity['id']}/documents/{document['id']}/check", json=body, headers=headers)
+
+
+def test_a_check_is_kept_on_the_document_and_audited_without_what_was_read(client):
+    opportunity, document = in_documents(client)
+    body = {"result": "request_document", "reasons": [{"code": "expired", "detail": "issued 45 days ago (at most 30)"}],
+            "extracted": {"curpClave": "LOPA800101MDFRRN09", "fullName": "ANA LOPEZ", "civilRegistryVerified": True, "confidence": 0.9}}
+    response = check(client, opportunity, document, body)
+    assert response.status_code == 200, response.text
+    checked, after = response.json()["document"], response.json()["opportunity"]
+    assert (checked["check_result"], checked["check_reasons"], checked["extracted"]) == (body["result"], body["reasons"], body["extracted"])
+    assert checked["checked_at"] is not None
+    assert after["stage"] == "documents"
+    trail = events(client, opportunity)
+    assert trail[-1]["detail"] == {"document_id": document["id"], "result": "request_document"}
+    assert "LOPA800101MDFRRN09" not in json.dumps(trail)
+
+
+def test_a_valid_check_moves_the_opportunity_on_in_the_same_request(client):
+    opportunity, document = in_documents(client)
+    response = check(client, opportunity, document, {"result": "valid"}, headers={"X-Actor": "maria"})
+    assert (response.status_code, response.json()["opportunity"]["stage"]) == (200, "assessing")
+    assert [(e["actor"], e["action"], e["to_stage"]) for e in events(client, opportunity)[-2:]] == [
+        ("officer:maria", "document_checked", None), ("officer:maria", "stage", "assessing")]
+
+
+def test_a_mismatch_pauses_the_opportunity_with_the_reasons(client):
+    opportunity, document = in_documents(client)
+    reasons = [{"code": "curp_mismatch", "detail": "the CURP on the document is not the opportunity's"},
+               {"code": "not_certified", "detail": "not certified"}]
+    after = check(client, opportunity, document, {"result": "document_mismatch", "reasons": reasons}).json()["opportunity"]
+    assert (after["stage"], after["reason_code"]) == ("paused", "document_mismatch")
+    assert after["reason_note"] == "the CURP on the document is not the opportunity's; not certified"
+
+
+def test_a_check_is_refused_once_a_newer_document_was_uploaded(client):
+    opportunity, older = in_documents(client)
+    upload(client, opportunity, JPEG, "image/jpeg")
+    response = check(client, opportunity, older, {"result": "valid"})
+    assert response.status_code == 409
+    assert "newer document" in response.json()["detail"]
+    assert [d["check_result"] for d in documents(client, opportunity)] == [None, None]
+    assert opportunity_of(client, opportunity)["stage"] == "documents"
+
+
+@pytest.mark.parametrize("change", [{"national_id": "GOMA850101HDFRRN09"}, {"full_name": "Gonzalo Martinez Ruiz"}])
+def test_a_check_is_refused_once_the_curp_or_name_changed(client, change):
+    opportunity, document = in_documents(client, {**ANA, "national_id": "LOPA800101MDFRRN09"})
+    client.patch(f"/opportunities/{opportunity['id']}", json=change)
+    response = check(client, opportunity, document, {"result": "valid"})
+    assert response.status_code == 409
+    assert next(iter(change)) in response.json()["detail"]
+    assert documents(client, opportunity)[0]["check_result"] is None
+    assert opportunity_of(client, opportunity)["stage"] == "documents"
+
+
+@pytest.mark.parametrize("stage, reason", [("qualifying", {}), ("assessing", {}), ("discarded", {"reason_code": "duplicate"})])
+def test_a_check_is_refused_outside_documents(client, stage, reason):
+    opportunity, document = in_documents(client)
+    move(client, opportunity, stage, **reason)
+    assert check(client, opportunity, document, {"result": "valid"}).status_code == 409
+    assert documents(client, opportunity)[0]["check_result"] is None
+
+
+def test_the_same_check_again_changes_nothing(client):
+    opportunity, document = in_documents(client)
+    reasons = [{"code": "name_mismatch", "detail": "another name"}]
+    first = check(client, opportunity, document, {"result": "document_mismatch", "reasons": reasons})
+    trail = events(client, opportunity)
+    again = check(client, opportunity, document, {"result": "document_mismatch", "reasons": reasons})
+    assert (first.status_code, again.status_code) == (200, 200)
+    assert again.json()["opportunity"]["stage"] == "paused"
+    assert events(client, opportunity) == trail
+
+
+@pytest.mark.parametrize("body", [
+    {"result": "approved"},
+    {"result": "valid", "reasons": [{"code": "Not A Code", "detail": "x"}]},
+    {"result": "valid", "extracted": {"bad key!": "x"}},
+    {"result": "valid", "extracted": {"fullName": "x" * 201}},
+    {"result": "valid", "extracted": {"nested": {"a": 1}}},
+    {"result": "valid", "stage": "assessing"},
+    {"result": "valid", "compared": None},
+    {"result": "valid", "compared": {"national_id": "X", "full_name": "Y", "phone": "1"}},
+])
+def test_a_check_is_validated(client, body):
+    opportunity, document = in_documents(client)
+    assert check(client, opportunity, document, body).status_code == 422
+    assert documents(client, opportunity)[0]["check_result"] is None
+
+
+def test_another_opportunitys_document_is_404(client):
+    owner, document = in_documents(client)
+    other, _ = in_documents(client)
+    assert check(client, other, document, {"result": "valid"}).status_code == 404
+    assert client.get(f"/opportunities/{other['id']}/documents/{document['id']}/content").status_code == 404
+
+
+def test_identity_reads_the_document_and_records_its_check_and_move(client, identity):
+    opportunity, document = in_documents(client)
+    path = f"/opportunities/{opportunity['id']}"
+    assert client.get(path, headers=identity).status_code == 200
+    assert [d["id"] for d in client.get(f"{path}/documents", headers=identity).json()["documents"]] == [document["id"]]
+    assert client.get(f"{path}/documents/{document['id']}/content", headers=identity).content == PNG
+    response = check(client, opportunity, document, {"result": "valid"}, headers=identity)
+    assert (response.status_code, response.json()["opportunity"]["stage"]) == (200, "assessing")
+    assert [e["actor"] for e in events(client, opportunity)[-2:]] == ["identity", "identity"]
+
+
+@pytest.mark.parametrize("stage, target", [("qualifying", "documents"), ("documents", "qualified"), ("documents", "discarded")])
+def test_identity_may_make_no_other_move(client, identity, stage, target):
+    opportunity = create(client)
+    move(client, opportunity, stage)
+    reason = {"reason_code": "duplicate"} if target == "discarded" else {}
+    response = move(client, opportunity, target, headers=identity, **reason)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "identity may only move an opportunity from documents to assessing or paused"
+
+
+def test_identity_may_not_upload_search_create_edit_consent_or_read_events(client, identity):
+    opportunity, _ = in_documents(client)
+    path = f"/opportunities/{opportunity['id']}"
+    assert upload(client, opportunity, headers=identity).status_code == 403
+    for method, url, body in [
+        ("GET", "/opportunities", None),
+        ("POST", "/opportunities", ANA),
+        ("PATCH", path, {"email": "ana@example.com"}),
+        ("POST", f"{path}/consents/bureau", None),
+        ("GET", f"{path}/events", None),
+    ]:
+        response = client.request(method, url, json=body, headers=identity)
+        assert response.status_code == 403, (method, url, response.text)
+        assert response.json()["detail"].startswith("identity may not ")
+    assert len(documents(client, opportunity)) == 1
+
+
+def test_intake_and_eligibility_may_not_touch_documents(client, intake, eligibility):
+    opportunity, document = in_documents(client)
+    path = f"/opportunities/{opportunity['id']}/documents"
+    for headers in (intake, eligibility):
+        assert upload(client, opportunity, headers=headers).status_code == 403
+        assert client.get(path, headers=headers).status_code == 403
+        assert client.get(f"{path}/{document['id']}/content", headers=headers).status_code == 403
+        assert check(client, opportunity, document, {"result": "valid"}, headers=headers).status_code == 403
+    assert documents(client, opportunity)[0]["check_result"] is None
