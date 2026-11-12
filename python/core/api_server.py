@@ -66,7 +66,8 @@ class GroupCreate(BaseModel):
 
 class CenterCreate(BaseModel):
     name: str
-    office_id: int
+    # strict, so true is not taken as office 1
+    office_id: Annotated[int, Field(strict=True, gt=0)]
     external_id: Optional[str] = None
 
 class LoanCreate(BaseModel):
