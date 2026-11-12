@@ -543,8 +543,8 @@ public class MifosXServer {
     @Tool(description = "Approve a loan account using the account number. " +
             "Optionally, include the approval date, expected disbursement date, approved loan amount, and a note.")
     JsonNode approveLoanAccount(@ToolArg(description = "Account number (e.g. 1)") Integer accountNumber,
-                                   @ToolArg(description = "Account approval date (e.g. 29 May 2025).", required = false) String approvalDate,
-                                   @ToolArg(description = "Expected disbursement date (e.g. Some observation)", required = false) String expectedDisbursementDate,
+                                   @ToolArg(description = "Account approval date in 'dd MMMM yyyy' format (e.g. \"29 May 2025\"). Defaults to today.", required = false) String approvalDate,
+                                   @ToolArg(description = "Expected disbursement date in 'dd MMMM yyyy' format (e.g. \"30 May 2025\"), on or after the approval date. Defaults to today.", required = false) String expectedDisbursementDate,
                                    @ToolArg(description = "Approved loan amount for the account (e.g. Some 10000)", required = false) Double approvedLoanAmount,
                                    @ToolArg(description = "Note for approval consideration (e.g. Some observation)", required = false) String note)
             throws JsonProcessingException {
@@ -556,35 +556,10 @@ public class MifosXServer {
 
         loanAccountApproval.setDateFormat("dd MMMM yyyy");
 
-        if (approvalDate != null) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern(loanAccountApproval.getDateFormat());
-            LocalDate ad = LocalDate.parse(approvalDate, formatter);
-            LocalDate adTemplate = LocalDate.parse(loanAccountApprovalTemplate.getApprovalDate(), formatter);
-            if (ad.isAfter(adTemplate)) {
-                loanAccountApproval.setApprovedOnDate(approvalDate);
-            }
-            else {
-                throw new IllegalArgumentException("The approval date cannot be earlier than the application date.");
-            }
-        }
-        else {
-            loanAccountApproval.setApprovedOnDate(loanAccountApprovalTemplate.getApprovalDate());
-        }
-
-        if (expectedDisbursementDate != null) {
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern(loanAccountApproval.getDateFormat());
-            LocalDate expectedDate = LocalDate.parse(expectedDisbursementDate, formatter);
-            LocalDate expectedDateTemplate = LocalDate.parse(loanAccountApprovalTemplate.getApprovalDate(), formatter);
-            if (expectedDate.isAfter(expectedDateTemplate)) {
-                loanAccountApproval.setExpectedDisbursementDate(expectedDisbursementDate);
-            }
-            else {
-                throw new IllegalArgumentException("The disbursement date cannot be earlier than the approval date.");
-            }
-        }
-        else {
-            loanAccountApproval.setExpectedDisbursementDate(loanAccountApprovalTemplate.getApprovalDate());
-        }
+        LoanApprovalDates.Dates dates = LoanApprovalDates.resolve(
+                approvalDate, expectedDisbursementDate, loanAccountApprovalTemplate.getApprovalDate());
+        loanAccountApproval.setApprovedOnDate(dates.approvedOnDate());
+        loanAccountApproval.setExpectedDisbursementDate(dates.expectedDisbursementDate());
 
         loanAccountApproval.setApprovedLoanAmount(Optional.ofNullable(approvedLoanAmount).orElse(loanAccountApprovalTemplate.getApprovalAmount()));
         loanAccountApproval.setNote(Optional.ofNullable(note).orElse(""));
