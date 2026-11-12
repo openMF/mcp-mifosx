@@ -17,7 +17,8 @@ description: >
 # intake token) by the intake job. The eligibility workflow has its own pair:
 # "los-eligibility" (the LOS's eligibility token) and "fineract-eligibility"
 # (like "fineract", as agent-eligibility, which may only read clients and
-# loan products).
+# loan products). The identity workflow uses "los-identity" (the LOS's
+# identity token) and "ollama" ({ "baseUrl", "visionModel" }, no secret).
 credentials:
   super@openfn.org-fineract:
     name: fineract
@@ -33,6 +34,12 @@ credentials:
     owner: super@openfn.org
   super@openfn.org-fineract-eligibility:
     name: fineract-eligibility
+    owner: super@openfn.org
+  super@openfn.org-los-identity:
+    name: los-identity
+    owner: super@openfn.org
+  super@openfn.org-ollama:
+    name: ollama
     owner: super@openfn.org
 
 # Adaptors are pinned to exact versions, so every run uses the code that was
@@ -1300,4 +1307,256 @@ workflows:
         condition_type: on_job_success
         source_job: look-up-applicant
         target_job: decide-eligibility
+        enabled: true
+
+  # -------------------------------------------------------------------------
+  # Workflow 5: Commercial flow identity document (an officer asks) → LOS
+  # -------------------------------------------------------------------------
+  opportunity-identity:
+    name: Opportunity Identity Document
+    jobs:
+      read-document:
+        name: Read the Newest CURP Document from the LOS
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los-identity
+        enabled: true
+        body: |
+          // An officer has uploaded the applicant's CURP constancia to the LOS and
+          // asks for it to be checked: { "opportunity_id": "<id in the LOS>" }.
+          // The webhook answers at once, because a vision model on CPU takes
+          // longer than Lightning waits for a reply: the result is kept on the
+          // document in the LOS (GET /opportunities/{id}/documents).
+          // Three jobs, because a job has one credential: this one reads the
+          // newest CURP document, the next reads it with the vision model, the
+          // last applies the rules and records the result in the LOS.
+          // Uses the "los-identity" credential (raw JSON): { baseUrl, access_token },
+          // the LOS's identity token: it may read an opportunity and its documents,
+          // record a check, and move it from documents to assessing or paused.
+          fn(async state => {
+            const id = (state.data || {}).opportunity_id;
+            const done = (decision, extra = {}) => ({ result: { decision, opportunityId: id, ...extra } });
+            if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+              return done('invalid', { errors: ['opportunity_id must be the id of an opportunity in the LOS'] });
+            }
+            let opportunity;
+            try {
+              opportunity = (await get(`/opportunities/${id}`)(state)).data;
+            } catch (e) {
+              if (e.statusCode === 404) return done('invalid', { errors: [`no opportunity ${id}`] });
+              throw e;
+            }
+            if (opportunity.stage !== 'documents') return done('not_documents', { stage: opportunity.stage });
+            const [document] = (await get(`/opportunities/${id}/documents`)(state)).data.documents.filter(d => d.kind === 'curp');
+            if (!document) return done('no_document', { stage: opportunity.stage });
+            const image = (await get(`/opportunities/${id}/documents/${document.id}/content`, { parseAs: 'base64' })(state)).data;
+            return { opportunity, document: { id: document.id }, image };
+          });
+
+      read-curp:
+        name: Read the CURP with the Vision Model
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-ollama
+        enabled: true
+        body: |
+          // The vision model reads the CURP constancia, with the loan flow's prompt
+          // and field extraction (Process Documents (CURP vision) in Loan Submit;
+          // keep the two in step). What it read is untrusted data: the next job's
+          // rules decide. The image is dropped here, so the next job never holds it.
+          // Uses the "ollama" credential (raw JSON): { baseUrl, visionModel }.
+          fn(async state => {
+            if (state.result) return state;
+            const { visionModel } = state.configuration;
+
+            const VISION_PROMPT = [
+              'You are a document specialist for Mexican CURP constancias issued by RENAPO.',
+              'Extract the fields from the image and return ONLY a valid JSON object. Do not include markdown formatting, explanations, or thinking tags.',
+              '',
+              '{',
+              '  "curpClave": "18-character code",',
+              '  "fullName": "Full name as printed on document",',
+              '  "registrationEntity": "State of registration",',
+              '  "issueDate": "YYYY-MM-DD",',
+              '  "civilRegistryVerified": true,',
+              '  "confidence": 0.95',
+              '}',
+              '',
+              'IMPORTANT: Set "civilRegistryVerified" to true ONLY if the document explicitly contains BOTH phrases: "CURP Certificada" AND "verificada con el Registro Civil".'
+            ].join('\n');
+
+            const CURP_CLAVE = /\b([A-Z]{4}\d{6}[HM][A-Z]{5}[0-9A-Z]\d)\b/;
+            const MONTHS_ES = { enero: 1, febrero: 2, marzo: 3, abril: 4, mayo: 5, junio: 6, julio: 7, agosto: 8,
+              septiembre: 9, setiembre: 9, octubre: 10, noviembre: 11, diciembre: 12 };
+            const firstText = (o, ...keys) => {
+              for (const k of keys) {
+                const v = o && o[k];
+                if (v != null && String(v).trim() && String(v).toLowerCase() !== 'null') return String(v);
+              }
+              return null;
+            };
+            const extract = raw => {
+              const cleaned = raw.replace(/<think>[\s\S]*?<\/think>/g, ' ').replace(/```(?:json)?/g, ' ').trim();
+              const doc = { type: 'CURP' };
+              try {
+                const json = JSON.parse(cleaned.slice(cleaned.indexOf('{'), cleaned.lastIndexOf('}') + 1));
+                const clave = firstText(json, 'curpClave', 'curp', 'clave', 'claveCurp', 'CURP');
+                if (clave) doc.curpClave = clave.toUpperCase().replace(/\s+/g, '');
+                const name = firstText(json, 'fullName', 'nombre', 'name', 'nombreCompleto');
+                if (name) doc.fullName = name.trim().toUpperCase();
+                doc.registrationEntity = firstText(json, 'registrationEntity', 'entidad', 'entidadRegistro');
+                const issue = firstText(json, 'issueDate', 'fechaEmision', 'fecha', 'date');
+                if (issue && /^\d{4}-\d{2}-\d{2}/.test(issue.trim())) doc.issueDate = issue.trim().slice(0, 10);
+                doc.civilRegistryVerified = json.civilRegistryVerified === true;
+                if (json.confidence != null) doc.confidence = Number(json.confidence);
+              } catch (e) {
+                console.log('Vision JSON parse failed, using text fallbacks:', e.message);
+              }
+              // Text fallbacks (the model sometimes answers in prose)
+              const upper = cleaned.toUpperCase();
+              if (!doc.curpClave) {
+                const m = upper.replace(/\s+/g, '').match(CURP_CLAVE) || upper.match(CURP_CLAVE);
+                if (m) doc.curpClave = m[1];
+              }
+              if (!doc.fullName) {
+                const m = upper.match(/NOMBRE\s*:?\s*([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ ]{4,80})/);
+                if (m) doc.fullName = m[1].replace(/\s+/g, ' ').trim();
+              }
+              if (!doc.issueDate) {
+                const m = cleaned.match(/(\d{1,2})\s+de\s+([a-záéíóúñ]+)\s+de\s+(\d{4})/i);
+                const month = m && MONTHS_ES[m[2].toLowerCase()];
+                if (month) doc.issueDate = `${m[3]}-${String(month).padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+              }
+              if (!doc.civilRegistryVerified && /CURP\s+Certificada/i.test(cleaned) && /verificada\s+con\s+el\s+Registro\s+Civil/i.test(cleaned)) {
+                doc.civilRegistryVerified = true;
+              }
+              return doc;
+            };
+
+            // On a CPU, reading the image takes most of the time: about 4 to 7
+            // minutes on 8 cores (seconds with a GPU). 540 s leaves the other two
+            // jobs a minute of the run's 600. The answer is about 100 tokens: 256
+            // stops a model that rambles on an odd image, and a cut answer is
+            // read as unreadable.
+            const started = Date.now();
+            const res = await post('/api/chat', {
+              model: visionModel,
+              messages: [{ role: 'user', content: VISION_PROMPT, images: [state.image] }],
+              stream: false,
+              think: false,
+              options: { temperature: 0.1, num_predict: 256 }
+            }, { timeout: 540000 })(state);
+            const message = (res.data && res.data.message) || {};
+            const extracted = extract(String(message.content || message.thinking || (res.data && res.data.response) || ''));
+            const seconds = Math.round((Date.now() - started) / 1000);
+            console.log('identity', state.opportunity.external_id, 'read by', visionModel, 'in', seconds, 's');
+            return { opportunity: state.opportunity, document: state.document, extracted, visionModel, seconds };
+          });
+
+      record-check:
+        name: Apply the Document Rules and Record the Result
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los-identity
+        enabled: true
+        body: |
+          // The rules, on what the vision model read (the loan flow's checks,
+          // against the opportunity instead of an application), in order:
+          //   1. No CURP clave in its format, or no name: unreadable, another
+          //      document is needed (request_document)
+          //   2. Another CURP or another name than the opportunity's: the document
+          //      may be someone else's, paused for a person (document_mismatch)
+          //   3. Not certified ("CURP Certificada: verificada con el Registro Civil"),
+          //      no issue date, or issued more than 30 days ago (request_document)
+          //   Otherwise: valid, on to assessing
+          // One request records the result on the document and makes its move, in
+          // one transaction; with request_document the opportunity stays in
+          // documents for the applicant's next upload. The LOS refuses (409) a check
+          // that no longer applies (a newer upload, or a CURP or name edited while
+          // the model read): the run fails, and the officer asks again. Retrying
+          // this step alone repeats the same check, which then changes nothing.
+          // Uses the "los-identity" credential, like the first job.
+          fn(async state => {
+            if (state.result) {
+              console.log('identity', JSON.stringify(state.result));
+              return state.result;
+            }
+            const { opportunity, document, extracted } = state;
+            // The loan flow's limit for a constancia's age.
+            const MAX_ISSUE_AGE_DAYS = 30;
+            const CURP_FORMAT = /^[A-Z]{4}\d{6}[HM][A-Z]{5}[0-9A-Z]\d$/;
+            const words = s => (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .toUpperCase().replace(/[^A-Z ]/g, ' ').split(/\s+/).filter(Boolean);
+            // Every word of the shorter name is in the longer one, in any order (a
+            // second surname may be missing); at least two words to compare.
+            const sameName = (a, b) => {
+              const [shorter, longer] = [words(a), words(b)].sort((x, y) => x.length - y.length);
+              return shorter.length >= 2 && shorter.every(word => longer.includes(word));
+            };
+
+            const reasons = [];
+            let result;
+            if (!extracted.curpClave || !CURP_FORMAT.test(extracted.curpClave) || !extracted.fullName) {
+              reasons.push({ code: 'unreadable', detail: 'no CURP clave in its format, or no name, could be read from the image' });
+              result = 'request_document';
+            } else {
+              if (extracted.curpClave !== String(opportunity.national_id || '').toUpperCase()) {
+                reasons.push({ code: 'curp_mismatch', detail: "the CURP on the document is not the opportunity's" });
+              }
+              if (!sameName(extracted.fullName, opportunity.full_name)) {
+                reasons.push({ code: 'name_mismatch', detail: "the name on the document is not the opportunity's" });
+              }
+              const mismatch = reasons.length > 0;
+              if (extracted.civilRegistryVerified !== true) {
+                reasons.push({ code: 'not_certified', detail: "no 'CURP Certificada: verificada con el Registro Civil'" });
+              }
+              const age = extracted.issueDate
+                ? Math.floor((Date.now() - Date.parse(`${extracted.issueDate}T00:00:00Z`)) / 86400000) : NaN;
+              if (Number.isNaN(age) || age < 0) {
+                reasons.push({ code: 'issue_date_unreadable', detail: extracted.issueDate ? `issue date ${extracted.issueDate} is in the future` : 'no issue date could be read' });
+              } else if (age > MAX_ISSUE_AGE_DAYS) {
+                reasons.push({ code: 'expired', detail: `issued ${age} days ago (at most ${MAX_ISSUE_AGE_DAYS})` });
+              }
+              result = mismatch ? 'document_mismatch' : reasons.length ? 'request_document' : 'valid';
+            }
+
+            // What the model read, within the LOS's limits
+            const kept = {};
+            for (const [key, value] of Object.entries(extracted)) {
+              kept[key] = typeof value === 'string' ? value.slice(0, 200) : Number.isNaN(value) ? null : value;
+            }
+            const compared = { national_id: opportunity.national_id, full_name: opportunity.full_name };
+            const after = (await post(`/opportunities/${opportunity.id}/documents/${document.id}/check`,
+              { result, reasons, extracted: kept, compared })(state)).data.opportunity;
+            const decision = { valid: 'advance', request_document: 'request_document', document_mismatch: 'document_mismatch' }[result];
+            console.log('identity', opportunity.external_id, decision, reasons.map(r => r.code).join(','));
+            return {
+              decision,
+              opportunityId: opportunity.id,
+              externalId: opportunity.external_id,
+              documentId: document.id,
+              stage: after.stage,
+              reasons,
+              visionModel: state.visionModel,
+              seconds: state.seconds
+            };
+          });
+
+    triggers:
+      webhook-opportunity-identity:
+        type: webhook
+        enabled: true
+
+    edges:
+      webhook-opportunity-identity->read-document:
+        source_trigger: webhook-opportunity-identity
+        target_job: read-document
+        condition_type: always
+        enabled: true
+      read-document->read-curp:
+        condition_type: on_job_success
+        source_job: read-document
+        target_job: read-curp
+        enabled: true
+      read-curp->record-check:
+        condition_type: on_job_success
+        source_job: read-curp
+        target_job: record-check
         enabled: true
