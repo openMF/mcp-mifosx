@@ -79,6 +79,7 @@ def get_loan_history(loan_id: int):
         "accountNo":          response.get("accountNo"),
         "status":             status,
         "principal":          response.get("principal"),
+        "currency":           (response.get("currency") or {}).get("code"),
         "interestRate":       response.get("interestRatePerPeriod"),
         "termMonths":         response.get("termFrequency"),
         "product":            response.get("loanProductName"),

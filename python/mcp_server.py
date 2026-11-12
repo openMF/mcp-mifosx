@@ -185,6 +185,11 @@ def _prefetch_failure(result: Any, message: str) -> Dict[str, Any]:
         return {"error": message}
     return result
 
+def _currency(data) -> Optional[str]:
+    """The currency code Fineract gives an account or transaction (e.g. "MXN"), or None."""
+    currency = data.get("currency") if isinstance(data, dict) else None
+    return currency.get("code") if isinstance(currency, dict) else None
+
 def _fmt_date(d) -> str:
     """Format Fineract dates to '2 March 2026'. Handles list [YYYY,M,D] and string 'YYYY-M-D'."""
     months = ["","January","February","March","April","May","June",
@@ -344,7 +349,8 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
                 "loanId":                loan.get("id"),
                 "accountNo":             loan.get("accountNo"),
                 "status":                loan.get("status", {}).get("value"),
-                "outstandingBalance_USD": loan.get("loanBalance") if loan.get("loanBalance") is not None else 0.00,
+                "outstandingBalance":    loan.get("loanBalance") if loan.get("loanBalance") is not None else 0.00,
+                "currency":              _currency(loan),
             }
             for loan in loans
         ],
@@ -353,7 +359,8 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
                 "savingsId":             s.get("id"),
                 "accountNo":             s.get("accountNo"),
                 "status":                s.get("status", {}).get("value"),
-                "outstandingBalance_USD": s.get("accountBalance") if s.get("accountBalance") is not None else 0.00,
+                "outstandingBalance":    s.get("accountBalance") if s.get("accountBalance") is not None else 0.00,
+                "currency":              _currency(s),
             }
             for s in savings
         ],
@@ -565,8 +572,9 @@ def get_loan(loanId: int) -> dict:
         "productName":         data.get("loanProductName"),
         "status":              data.get("status", {}).get("value"),
         "loanType":            data.get("loanType", {}).get("value"),
-        "principal_USD":       data.get("approvedPrincipal"),
-        "outstandingBalance_USD": data.get("summary", {}).get("totalOutstanding"),
+        "principal":           data.get("approvedPrincipal"),
+        "outstandingBalance":  data.get("summary", {}).get("totalOutstanding"),
+        "currency":            _currency(data),
         "interestRate_pct":    data.get("annualInterestRate"),
         "submittedDate":       _fmt_date(tl.get("submittedOnDate")),
         "approvedDate":        _fmt_date(tl.get("approvedOnDate")),
@@ -594,15 +602,16 @@ def get_repayment_sched(loanId: int) -> dict:
     periods = data.get("periods", [])
     return {
         "loanId": loanId,
+        "currency": _currency(data),
         "periods": [
             {
                 "period":           p.get("period"),
                 "dueDate":          _fmt_date(p.get("dueDate")),
-                "principalDue_USD": p.get("principalDue", 0),
-                "interestDue_USD":  p.get("interestDue", 0),
-                "feesDue_USD":      p.get("feeChargesDue", 0),
-                "totalDue_USD":     p.get("totalDueForPeriod", 0),
-                "totalPaid_USD":    p.get("totalPaidForPeriod", 0),
+                "principalDue":     p.get("principalDue", 0),
+                "interestDue":      p.get("interestDue", 0),
+                "feesDue":          p.get("feeChargesDue", 0),
+                "totalDue":         p.get("totalDueForPeriod", 0),
+                "totalPaid":        p.get("totalPaidForPeriod", 0),
                 "isComplete":       p.get("complete", False),
             }
             for p in periods if p.get("period")  # skip the header period (period=None)
@@ -619,13 +628,14 @@ def get_loan_hist(loanId: int) -> dict:
     txns = data.get("transactions", [])
     return {
         "loanId": loanId,
+        "currency": data.get("currency"),
         "transactions": [
             {
                 "transactionId": t.get("id"),
                 "type":          t.get("type") if isinstance(t.get("type"), str) else (t.get("type") or {}).get("value"),
                 "date":          _fmt_date(t.get("date")),
-                "amount_USD":    t.get("amount"),
-                "runningBalance_USD": t.get("outstandingLoanBalance"),
+                "amount":        t.get("amount"),
+                "runningBalance": t.get("outstandingLoanBalance"),
                 "note":          t.get("noteText"),
             }
             for t in txns
@@ -882,8 +892,9 @@ def get_savings(accountId: int) -> dict:
         "clientName":            data.get("clientName"),
         "productName":           data.get("savingsProductName"),
         "status":                data.get("status", {}).get("value"),
-        "balance_USD":           summary.get("accountBalance"),
-        "availableBalance_USD":  summary.get("availableBalance"),
+        "balance":               summary.get("accountBalance"),
+        "availableBalance":      summary.get("availableBalance"),
+        "currency":              _currency(data),
         "activationDate":        _fmt_date(tl.get("activatedOnDate")),
         "nominalAnnualInterestRate": data.get("nominalAnnualInterestRate"),
     }
@@ -898,13 +909,15 @@ def get_savings_txns(accountId: int) -> dict:
         return txns
     return {
         "savingsId": accountId,
+        # Fineract puts the currency on each transaction; they all share the account's.
+        "currency": _currency(txns[0]) if txns else None,
         "transactions": [
             {
                 "transactionId":   t.get("id"),
                 "type":            t.get("transactionType", {}).get("value"),
                 "date":            _fmt_date(t.get("date")),
-                "amount_USD":      t.get("amount"),
-                "runningBalance_USD": t.get("runningBalance"),
+                "amount":          t.get("amount"),
+                "runningBalance":  t.get("runningBalance"),
             }
             for t in txns
         ],
