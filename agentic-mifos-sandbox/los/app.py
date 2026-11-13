@@ -112,11 +112,24 @@ class StageChange(BaseModel):
     reason_note: ReasonNote | None = None
 
 
+class RegistrationCompared(BaseModel):
+    """The opportunity's fields as the registration read them to make the loan application."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    national_id: str | None
+    full_name: str | None
+    requested_amount: Decimal | None
+    currency: str | None
+    term_months: int | None
+
+
 class Registration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fineract_client_id: int = Field(gt=0)
     fineract_loan_id: int = Field(gt=0)
+    compared: RegistrationCompared | None = Field(None, description="Refused (409) if any of these changed since")
 
 
 class Opportunity(BaseModel):
@@ -338,8 +351,10 @@ def opt_out(who: Annotated[auth.Who, auth.change("opt_out")], opportunity_id: UU
 
 @app.post("/opportunities/{opportunity_id}/registration", response_model=Opportunity)
 def register(who: Annotated[auth.Who, auth.change("register")], opportunity_id: UUID, body: Registration, con: Con):
-    """Records the Fineract client and loan application created for a qualified opportunity."""
-    return store.register(con, opportunity_id, body.fineract_client_id, body.fineract_loan_id, who.actor)
+    """Records the Fineract client and loan application created for a qualified opportunity. With `compared`,
+    refused (409) if the opportunity's CURP, name, amount, currency or term changed since they were read."""
+    return store.register(con, opportunity_id, body.fineract_client_id, body.fineract_loan_id, who.actor,
+                          body.compared.model_dump() if body.compared else None)
 
 
 # The image is the request body; /docs offers a file picker for it.
