@@ -45,14 +45,7 @@ def _require_journal_entry_items(params: Dict[str, Any], name: str) -> None:
         gl_account_id = item.get("glAccountId")
         if isinstance(gl_account_id, bool) or not isinstance(gl_account_id, int) or gl_account_id <= 0:
             raise ValidationError(f"glAccountId in {name} must be a positive integer")
-        amount = item.get("amount")
-        if (
-            isinstance(amount, bool)
-            or not isinstance(amount, (int, float))
-            or amount <= 0
-            or not math.isfinite(amount)
-        ):
-            raise ValidationError(f"amount in {name} must be positive")
+        _require_positive_number({f"amount in {name}": item.get("amount")}, f"amount in {name}")
 
 
 def _require_positive_resource_ids(params: Dict[str, Any]) -> None:

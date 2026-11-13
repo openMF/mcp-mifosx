@@ -32,6 +32,24 @@ def get_journal_entries(account_id: int = None, transaction_id: str = None):
     print("[Tool] Fetching Journal Entries...")
     return fineract_client.execute_get(endpoint)
 
+def _validate_journal_items(items: list, label: str) -> dict | None:
+    for item in items:
+        if not isinstance(item, dict):
+            return {"error": f"Each {label} item must be a dictionary with glAccountId and amount."}
+        gl_id = item.get("glAccountId")
+        if isinstance(gl_id, bool) or not isinstance(gl_id, int) or gl_id <= 0:
+            return {"error": f"Each {label} item must have a positive glAccountId."}
+        amt = item.get("amount")
+        if isinstance(amt, bool) or not isinstance(amt, (int, float)) or amt <= 0:
+            return {"error": f"Each {label} item must have a positive amount."}
+        try:
+            if not math.isfinite(amt):
+                return {"error": f"Each {label} item must have a positive amount."}
+        except OverflowError:
+            return {"error": f"Each {label} item must have a positive amount."}
+    return None
+
+
 @tool
 def create_journal_entry(office_id: int, date: str, credits: list, debits: list, currency_code: str,
                          comment: str = ""):
@@ -48,24 +66,12 @@ def create_journal_entry(office_id: int, date: str, credits: list, debits: list,
         return {"error": "credits must be a non-empty list."}
     if not isinstance(debits, list) or len(debits) == 0:
         return {"error": "debits must be a non-empty list."}
-    for item in credits:
-        if not isinstance(item, dict):
-            return {"error": "Each credit item must be a dictionary with glAccountId and amount."}
-        gl_id = item.get("glAccountId")
-        if isinstance(gl_id, bool) or not isinstance(gl_id, int) or gl_id <= 0:
-            return {"error": "Each credit item must have a positive glAccountId."}
-        amt = item.get("amount")
-        if isinstance(amt, bool) or not isinstance(amt, (int, float)) or amt <= 0 or not math.isfinite(amt):
-            return {"error": "Each credit item must have a positive amount."}
-    for item in debits:
-        if not isinstance(item, dict):
-            return {"error": "Each debit item must be a dictionary with glAccountId and amount."}
-        gl_id = item.get("glAccountId")
-        if isinstance(gl_id, bool) or not isinstance(gl_id, int) or gl_id <= 0:
-            return {"error": "Each debit item must have a positive glAccountId."}
-        amt = item.get("amount")
-        if isinstance(amt, bool) or not isinstance(amt, (int, float)) or amt <= 0 or not math.isfinite(amt):
-            return {"error": "Each debit item must have a positive amount."}
+    credits_err = _validate_journal_items(credits, "credit")
+    if credits_err:
+        return credits_err
+    debits_err = _validate_journal_items(debits, "debit")
+    if debits_err:
+        return debits_err
     print("[Tool] Creating Journal Entry...")
     payload = {
         "officeId": office_id,
