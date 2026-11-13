@@ -267,9 +267,9 @@ services:
       ERL_FLAGS: -mnesia dir '"/tmp/mnesia"' -tzdata autoupdate disabled
       ERL_CRASH_DUMP: /tmp/erl_crash.dump
       # Longest run before Lightning counts it as lost; the worker uses the
-      # same limit. A run with the vision step and the decision agent needs
-      # more than the default 300 s on CPU.
-      WORKER_MAX_RUN_DURATION_SECONDS: &max-run-seconds 600
+      # same limit. On a CPU, a loan run with a document takes up to 540 s for
+      # the vision step and 260 s for the decision agent.
+      WORKER_MAX_RUN_DURATION_SECONDS: &max-run-seconds 900
     # Runs the migrations, creates the admin user if it does not exist yet, and
     # writes an API token for the bootstrap to /state (kept while it stays
     # valid). Safe to run on every `up`.
@@ -364,7 +364,7 @@ services:
       # at debug level, every few seconds.
       WORKER_LOG_LEVEL: debug
       # Longer than any run may take (WORKER_MAX_RUN_DURATION_SECONDS).
-      WORKER_WATCHDOG_SECONDS: ${LIGHTNING_WORKER_WATCHDOG_SECONDS:-900}
+      WORKER_WATCHDOG_SECONDS: ${LIGHTNING_WORKER_WATCHDOG_SECONDS:-1200}
     # Watchdog for a ws-worker bug (still in 1.30.0): a claim sent just before
     # the socket drops is never answered and keeps a capacity slot, so after
     # the reconnect the worker believes it is full and never claims again,
