@@ -218,13 +218,16 @@ def check_agent_access(base, username, password, permissions):
     """Prove the role is enforced: a read inside it works, requests outside it get 403."""
     headers = fineract_headers(username, password)
     allowed = status("GET", f"{base}/clients?limit=1", headers)
-    # Every agent is refused user administration and disbursing a loan; a
-    # read-only agent is also refused creating a client. An empty body would
-    # fail validation anyway, so a misconfigured role still creates nothing.
+    # Every agent is refused user administration and disbursing a loan; one
+    # without APPROVE_LOAN is also refused approving one, and a read-only agent
+    # creating a client. An empty body would fail validation anyway, so a
+    # misconfigured role still creates nothing.
     refused = {
         "GET /users": status("GET", f"{base}/users", headers),
         "POST /loans/0?command=disburse": status("POST", f"{base}/loans/0?command=disburse", headers, {}),
     }
+    if "APPROVE_LOAN" not in permissions:
+        refused["POST /loans/0?command=approve"] = status("POST", f"{base}/loans/0?command=approve", headers, {})
     if "CREATE_CLIENT" not in permissions:
         refused["POST /clients"] = status("POST", f"{base}/clients", headers, {})
     if allowed != 200 or any(code != 403 for code in refused.values()):
@@ -385,6 +388,7 @@ def provision_project(product_id):
         "webhook-opportunity-intake": env("OPENFN_TRIGGER_OPPORTUNITY_INTAKE"),
         "webhook-opportunity-eligibility": env("OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY"),
         "webhook-opportunity-identity": env("OPENFN_TRIGGER_OPPORTUNITY_IDENTITY"),
+        "webhook-opportunity-registration": env("OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION"),
     }
     for cred in (spec.get("credentials") or {}).values():
         name = cred["name"]

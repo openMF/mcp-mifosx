@@ -42,7 +42,7 @@
 #   agent-<name> - internal: one agent and its MCP server
 #   openfn-agents - internal: the OpenFn worker and the agents' runners
 #   los          - internal: the LOS and its database (no route to Fineract)
-#   los-api      - internal: the LOS API for the OpenFn worker (intake, eligibility, identity)
+#   los-api      - internal: the LOS API for the OpenFn worker (the opportunity workflows)
 #   web-app-edge, lightning-edge, gateway-edge, los-edge - one published port each
 #                  (lightning-edge also for the npm adaptor catalogue)
 #   worker-egress - the OpenFn worker, to install adaptors from npm
@@ -57,6 +57,7 @@ x-openfn-triggers:
   opportunity-intake: &trigger-opportunity-intake 5ae8d72f-4cc5-4e83-98a6-27f8f40f1af1
   opportunity-eligibility: &trigger-opportunity-eligibility cdd00975-7e9f-42b6-b43b-bb4dc045a1e3
   opportunity-identity: &trigger-opportunity-identity e48e6a55-52a4-43a8-baba-e4c092800ab9
+  opportunity-registration: &trigger-opportunity-registration 3170dc43-1d7e-48e7-ba83-1a4cd4af2844
 
 # Settings every service gets (see Hardening above).
 x-hardened: &hardened
@@ -410,7 +411,7 @@ services:
     # core: the Fineract write-back job calls Fineract directly.
     # llm: the document job calls Ollama.
     # openfn-agents: the decision job calls agent-decision.
-    # los-api: the intake, eligibility and identity jobs call the LOS.
+    # los-api: the opportunity workflows' jobs call the LOS.
     networks: [openfn, worker-egress, core, llm, openfn-agents, los-api]
     # Lets OLLAMA_URL point at an Ollama server on the Docker host (Linux;
     # Docker Desktop provides this name already).
@@ -444,12 +445,14 @@ services:
       OPENFN_TRIGGER_OPPORTUNITY_INTAKE: *trigger-opportunity-intake
       OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY: *trigger-opportunity-eligibility
       OPENFN_TRIGGER_OPPORTUNITY_IDENTITY: *trigger-opportunity-identity
-      # Lightning credentials "los", "los-eligibility" and "los-identity" (the
-      # LOS API and each workflow's token), used by those workflows.
+      OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION: *trigger-opportunity-registration
+      # Lightning credentials "los", "los-eligibility", "los-identity" and
+      # "los-registration" (the LOS API and each workflow's token).
       LOS_URL: http://los:8000
       LOS_INTAKE_TOKEN: ${LOS_INTAKE_TOKEN:?run scripts/gen-secrets.sh}
       LOS_ELIGIBILITY_TOKEN: ${LOS_ELIGIBILITY_TOKEN:?run scripts/gen-secrets.sh}
       LOS_IDENTITY_TOKEN: ${LOS_IDENTITY_TOKEN:?run scripts/gen-secrets.sh}
+      LOS_REGISTRATION_TOKEN: ${LOS_REGISTRATION_TOKEN:?run scripts/gen-secrets.sh}
       # Lightning credential "ollama" (the vision model), used by the identity
       # workflow: the same server and model as the gateway's below.
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
@@ -461,6 +464,7 @@ services:
       FINERACT_AGENT_WRITEBACK_PASSWORD: ${FINERACT_AGENT_WRITEBACK_PASSWORD:?run scripts/gen-secrets.sh}
       FINERACT_AGENT_INTAKE_PASSWORD: ${FINERACT_AGENT_INTAKE_PASSWORD:?run scripts/gen-secrets.sh}
       FINERACT_AGENT_ELIGIBILITY_PASSWORD: ${FINERACT_AGENT_ELIGIBILITY_PASSWORD:?run scripts/gen-secrets.sh}
+      FINERACT_AGENT_REGISTRATION_PASSWORD: ${FINERACT_AGENT_REGISTRATION_PASSWORD:?run scripts/gen-secrets.sh}
       # Lightning credential "agent-decision" (URL and token of its runner),
       # used by the decision job.
       AGENT_DECISION_URL: http://agent-decision:8080
@@ -500,6 +504,7 @@ services:
       OPENFN_TRIGGER_OPPORTUNITY_INTAKE: *trigger-opportunity-intake
       OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY: *trigger-opportunity-eligibility
       OPENFN_TRIGGER_OPPORTUNITY_IDENTITY: *trigger-opportunity-identity
+      OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION: *trigger-opportunity-registration
     command:
       - /app/bin/lightning
       - eval
@@ -511,7 +516,7 @@ services:
         methods = [
           {"gateway", "OPENFN_WEBHOOK_API_KEY", ~w(OPENFN_TRIGGER_LOAN_SUBMIT OPENFN_TRIGGER_LOAN_REVIEW)},
           {"channels", "OPENFN_INTAKE_API_KEY", ~w(OPENFN_TRIGGER_OPPORTUNITY_INTAKE)},
-          {"officers", "OPENFN_OFFICER_API_KEY", ~w(OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY OPENFN_TRIGGER_OPPORTUNITY_IDENTITY)}
+          {"officers", "OPENFN_OFFICER_API_KEY", ~w(OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY OPENFN_TRIGGER_OPPORTUNITY_IDENTITY OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION)}
         ]
         # The same key in two methods would open both groups of triggers.
         key_vars = Enum.map(methods, fn {_, key_var, _} -> key_var end)
@@ -557,7 +562,7 @@ services:
                   end
                 end
               end)
-            IO.puts("Every webhook trigger requires its own API key: 'gateway' (loans), 'channels' (intake), 'officers' (eligibility, identity)")
+            IO.puts("Every webhook trigger requires its own API key: 'gateway' (loans), 'channels' (intake), 'officers' (eligibility, identity, registration)")
           end)
     volumes: []
     networks: [lightning-db]
@@ -725,6 +730,7 @@ services:
       LOS_INTAKE_TOKEN: ${LOS_INTAKE_TOKEN:?run scripts/gen-secrets.sh}
       LOS_ELIGIBILITY_TOKEN: ${LOS_ELIGIBILITY_TOKEN:?run scripts/gen-secrets.sh}
       LOS_IDENTITY_TOKEN: ${LOS_IDENTITY_TOKEN:?run scripts/gen-secrets.sh}
+      LOS_REGISTRATION_TOKEN: ${LOS_REGISTRATION_TOKEN:?run scripts/gen-secrets.sh}
       LOS_OFFICER_TOKEN: ${LOS_OFFICER_TOKEN:?run scripts/gen-secrets.sh}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
@@ -737,7 +743,7 @@ services:
     ports:
       - "127.0.0.1:${LOS_PORT:-8090}:8000"
     # los-edge: only for the published port; no other service is on it.
-    # los-api: the OpenFn worker (intake, eligibility, identity), without the database.
+    # los-api: the OpenFn worker (the opportunity workflows), without the database.
     networks: [los, los-edge, los-api]
     mem_limit: 256m
     pids_limit: 128
