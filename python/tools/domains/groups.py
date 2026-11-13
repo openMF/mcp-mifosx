@@ -72,7 +72,7 @@ def list_centers(office_id: int = None):
 def get_center(center_id: int):
     """Answers: 'Show me details for center #5'"""
     print(f"[Tool] Fetching details for Center #{center_id}...")
-    return fineract_client.execute_get(f"centers/{center_id}?associations=groupMembers,collectionSheet")
+    return fineract_client.execute_get(f"centers/{center_id}?associations=groupMembers,collectionMeetingCalendar")
 
 @tool
 def create_center(name: str, office_id: int, external_id: str = None):
