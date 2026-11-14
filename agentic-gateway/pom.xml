@@ -20,7 +20,7 @@
 
     <properties>
         <java.version>21</java.version>   <!-- 17+ required; 21/25 recommended -->
-        <spring-ai.version>2.0.1</spring-ai.version>
+        <spring-ai.version>2.0.2</spring-ai.version>
     </properties>
 
     <dependencyManagement>
