@@ -350,7 +350,7 @@ services:
 
   lightning-worker:
     <<: *hardened
-    image: ${LIGHTNING_WORKER_IMAGE:-openfn/ws-worker:v1.29.5}
+    image: ${LIGHTNING_WORKER_IMAGE:-openfn/ws-worker:1.30.2}
     depends_on:
       lightning:
         condition: service_healthy
