@@ -389,6 +389,7 @@ def provision_project(product_id):
         "webhook-opportunity-eligibility": env("OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY"),
         "webhook-opportunity-identity": env("OPENFN_TRIGGER_OPPORTUNITY_IDENTITY"),
         "webhook-opportunity-registration": env("OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION"),
+        "webhook-opportunity-assessment": env("OPENFN_TRIGGER_OPPORTUNITY_ASSESSMENT"),
     }
     for cred in (spec.get("credentials") or {}).values():
         name = cred["name"]
