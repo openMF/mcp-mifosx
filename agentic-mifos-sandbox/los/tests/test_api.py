@@ -683,3 +683,75 @@ def test_intake_and_eligibility_may_not_touch_documents(client, intake, eligibil
         assert client.get(f"{path}/{document['id']}/content", headers=headers).status_code == 403
         assert check(client, opportunity, document, {"result": "valid"}, headers=headers).status_code == 403
     assert documents(client, opportunity)[0]["check_result"] is None
+
+
+# --- Registration by the registration workflow --------------------------------
+
+def qualified_opportunity(client):
+    opportunity = create(client, {**ANA, "national_id": "LOPA800101MDFRRN09"})
+    assert move(client, opportunity, "qualified").status_code == 200
+    return opportunity
+
+
+def read_for_registration(opportunity):
+    """The fields the registration workflow makes the loan application from."""
+    return {key: opportunity[key] for key in ("national_id", "full_name", "requested_amount", "currency", "term_months")}
+
+
+def registration_of(client, opportunity, headers=None, **compared):
+    return client.post(f"/opportunities/{opportunity['id']}/registration", headers=headers, json={
+        "fineract_client_id": 7, "fineract_loan_id": 14, "compared": {**read_for_registration(opportunity), **compared}})
+
+
+def test_registration_reads_the_opportunity_its_documents_and_trail_and_registers_it(client, registration):
+    opportunity = qualified_opportunity(client)
+    path = f"/opportunities/{opportunity['id']}"
+    for url in (path, f"{path}/documents", f"{path}/events"):
+        assert client.get(url, headers=registration).status_code == 200, url
+    response = registration_of(client, opportunity, headers=registration)
+    assert (response.status_code, response.json()["stage"]) == (200, "registered")
+    assert events(client, opportunity)[-1]["actor"] == "registration"
+
+
+@pytest.mark.parametrize("change", [
+    {"requested_amount": 16000},
+    {"currency": "USD"},
+    {"term_months": 24},
+    {"full_name": "Ana María López"},
+    {"national_id": "GOMA850101HDFRRN09"},
+])
+def test_a_registration_is_refused_once_what_it_was_made_from_changed(client, change):
+    opportunity = qualified_opportunity(client)
+    assert client.patch(f"/opportunities/{opportunity['id']}", json=change).status_code == 200
+    response = registration_of(client, opportunity)
+    assert response.status_code == 409
+    assert next(iter(change)) in response.json()["detail"]
+    assert opportunity_of(client, opportunity)["stage"] == "qualified"
+
+
+def test_the_same_registration_again_changes_nothing(client, registration):
+    opportunity = qualified_opportunity(client)
+    assert registration_of(client, opportunity, headers=registration).status_code == 200
+    trail = events(client, opportunity)
+    assert registration_of(client, opportunity, headers=registration).status_code == 200
+    assert events(client, opportunity) == trail
+
+
+def test_registration_may_not_move_edit_consent_upload_search_or_read_images(client, registration):
+    opportunity, document = in_documents(client)
+    path = f"/opportunities/{opportunity['id']}"
+    assert move(client, opportunity, "assessing", headers=registration).status_code == 403
+    assert upload(client, opportunity, headers=registration).status_code == 403
+    for method, url, body in [
+        ("GET", "/opportunities", None),
+        ("POST", "/opportunities", ANA),
+        ("PATCH", path, {"email": "ana@example.com"}),
+        ("POST", f"{path}/consents/bureau", None),
+        ("POST", f"{path}/opt-out", None),
+        ("GET", f"{path}/documents/{document['id']}/content", None),
+        ("POST", f"{path}/documents/{document['id']}/check", {"result": "valid", "compared": {"national_id": None, "full_name": None}}),
+    ]:
+        response = client.request(method, url, json=body, headers=registration)
+        assert response.status_code == 403, (method, url, response.text)
+        assert response.json()["detail"].startswith("registration may not ")
+    assert opportunity_of(client, opportunity)["stage"] == "documents"

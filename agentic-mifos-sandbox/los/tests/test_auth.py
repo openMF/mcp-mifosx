@@ -10,12 +10,15 @@ from auth import ACTIONS, CALLERS, Forbidden, check_move, load_tokens
 INTAKE = "i" * 32
 ELIGIBILITY = "e" * 32
 IDENTITY = "d" * 32
+REGISTRATION = "r" * 32
 OFFICER = "o" * 32
-TOKENS = {"LOS_INTAKE_TOKEN": INTAKE, "LOS_ELIGIBILITY_TOKEN": ELIGIBILITY, "LOS_IDENTITY_TOKEN": IDENTITY, "LOS_OFFICER_TOKEN": OFFICER}
+TOKENS = {"LOS_INTAKE_TOKEN": INTAKE, "LOS_ELIGIBILITY_TOKEN": ELIGIBILITY, "LOS_IDENTITY_TOKEN": IDENTITY,
+          "LOS_REGISTRATION_TOKEN": REGISTRATION, "LOS_OFFICER_TOKEN": OFFICER}
 
 
 def test_each_caller_gets_its_token():
-    assert load_tokens(TOKENS) == {"intake": INTAKE, "eligibility": ELIGIBILITY, "identity": IDENTITY, "officer": OFFICER}
+    assert load_tokens(TOKENS) == {"intake": INTAKE, "eligibility": ELIGIBILITY, "identity": IDENTITY,
+                                   "registration": REGISTRATION, "officer": OFFICER}
 
 
 @pytest.mark.parametrize("environ", [
@@ -30,7 +33,8 @@ def test_a_missing_or_short_token_is_refused(environ):
 
 
 def test_two_callers_may_not_share_a_token():
-    with pytest.raises(ValueError, match="LOS_INTAKE_TOKEN, LOS_ELIGIBILITY_TOKEN, LOS_IDENTITY_TOKEN, LOS_OFFICER_TOKEN must differ") as refused:
+    every = ", ".join(TOKENS)
+    with pytest.raises(ValueError, match=f"{every} must differ") as refused:
         load_tokens({**TOKENS, "LOS_ELIGIBILITY_TOKEN": OFFICER})
     assert OFFICER not in str(refused.value)
 
@@ -89,6 +93,10 @@ def test_identity_may_move_an_opportunity_in_documents_on_or_pause_it(target):
 def test_identity_may_make_no_other_move(current, target):
     with pytest.raises(Forbidden, match="identity may only move an opportunity from documents to assessing or paused"):
         check_move("identity", current, target)
+
+
+def test_registration_moves_no_stage():
+    assert "stage" not in CALLERS["registration"].actions
 
 
 def test_officers_may_make_any_move():

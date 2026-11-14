@@ -18,7 +18,7 @@ Client ──► Agentic Gateway (Spring Boot, :8080)
            OpenFn Lightning (:4000) ── worker runs the jobs ──┘
 ```
 
-Five workflows are defined in [`openfn/project.yaml`](openfn/project.yaml):
+Six workflows are defined in [`openfn/project.yaml`](openfn/project.yaml):
 
 | Workflow | Triggered by | Jobs |
 |---|---|---|
@@ -27,6 +27,7 @@ Five workflows are defined in [`openfn/project.yaml`](openfn/project.yaml):
 | **Opportunity Intake** | A channel posting a lead to its webhook | check the lead and record it in the LOS |
 | **Opportunity Eligibility** | An officer posting an opportunity's id to its webhook | read it from the LOS → look the applicant up in Fineract → apply the rules and record the decision in the LOS |
 | **Opportunity Identity Document** | An officer posting an opportunity's id to its webhook, after uploading its CURP to the LOS | read the newest CURP document from the LOS → read it with the vision model → apply the rules and record the result in the LOS |
+| **Opportunity Registration** | An officer posting a qualified opportunity's id to its webhook | read and check it in the LOS → create the client, the loan application (not approved) and a note in Fineract → record the Fineract ids in the LOS |
 
 Each job reports back to the gateway over HTTP. The gateway tells the jobs where to
 call back by sending `gatewayBaseUrl` in the webhook payload.
@@ -209,7 +210,7 @@ In Lightning: **Credentials → New credential → Raw JSON**, name it **`finera
   expects `credential_bodies: [{"name": "main", "body": {...}}]`), which leaves the
   credential empty.
 
-`project.yaml` names six more credentials. Create them the same way, even if you do not
+`project.yaml` names eight more credentials. Create them the same way, even if you do not
 run what they point to, or the deploy fails:
 
 - **`agent-decision`**: `{"url": "http://<agent runner>:8080", "token": "<its token>"}`, the
@@ -227,6 +228,13 @@ run what they point to, or the deploy fails:
   Opportunity Identity Document workflow.
 - **`ollama`**: `{"baseUrl": "http://<Ollama host>:11434", "visionModel": "qwen2.5vl:3b"}`, the
   vision model that workflow reads documents with. No secret.
+- **`los-registration`**: the same as `los` with the LOS's `LOS_REGISTRATION_TOKEN`, for the
+  Opportunity Registration workflow.
+- **`fineract-registration`**: like `fineract`, signed in as a user of its own whose role has
+  `READ_LOANPRODUCT`, `READ_CLIENT`, `CREATE_CLIENT`, `ACTIVATE_CLIENT`, `READ_LOAN`,
+  `CREATE_LOAN`, `READ_LOANNOTE` and `CREATE_LOANNOTE`, and not `APPROVE_LOAN` (create the role
+  and user as above; the sandbox's is `agent-registration`). The registration workflow creates
+  the client and the loan application with it; approving the loan stays with a person.
 
 ## 5. Deploy the OpenFn project
 
@@ -395,7 +403,7 @@ The same loan, client and notes are visible in the Mifos X web app (loan → *No
 | Submit returns `500`, gateway log shows `OpenFn webhook trigger failed` | Wrong or stale webhook URL – re-read it from `.state.json` after each deploy to a new instance. With `401 Unauthorized` or `404 ... Webhook not found`, the triggers require an API key and `OPENFN_WEBHOOK_API_KEY` is missing or wrong. |
 | `openfn deploy` fails with `source_job_id or source_trigger_id must be present` | Outdated `project.yaml` – pull the latest version of this folder. |
 | Runs never start | No worker connected – check `docker compose logs web` for the built-in worker. |
-| Deploy fails with an error about a credential (`fineract`, `agent-decision`, `los`, `los-eligibility`, `fineract-eligibility`, `los-identity`, `ollama`) | Create the credentials (step 4) before deploying, owned by the user named in `project.yaml`. |
+| Deploy fails with an error about a credential (`fineract`, `agent-decision`, `los`, `los-eligibility`, `fineract-eligibility`, `los-identity`, `ollama`, `los-registration`, `fineract-registration`) | Create the credentials (step 4) before deploying, owned by the user named in `project.yaml`. |
 | Write-back run fails with `Credential environment mismatch ... 'unknown'` | The credential has no body for the `main` environment – recreate it in the UI (step 4). |
 | `final` shows `FINERACT_ERROR` / status `FAILED` | Fineract rejected a request; the error body is in `fineractLoan.details`. Fix the cause (e.g. missing loan product) and `POST /review` again – the job reuses the client/loan already created. |
 | Deploy created a second project with the same name | `.state.json` was missing or stale. Delete the extra project in Lightning (*Settings*) and redeploy with the original `.state.json`, or use the new project's webhook URLs. |

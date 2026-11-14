@@ -64,6 +64,10 @@ CALLERS = {
         frozenset({"read", "documents", "document_content", "check", "stage"}),
         moves=(frozenset({"documents"}), frozenset({"assessing", rules.PAUSED})),
     ),
+    # The OpenFn registration workflow: reads a qualified opportunity, its
+    # documents and its audit trail (for Credit's note in Fineract), and records
+    # the Fineract client and loan application it created. Moves no stage itself.
+    "registration": Permissions(frozenset({"read", "documents", "events", "register"})),
     # People on the host (curl, /docs).
     "officer": Permissions(frozenset(ACTIONS), shared=True),
 }
