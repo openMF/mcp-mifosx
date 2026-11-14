@@ -28,8 +28,10 @@ def test_mcp_tool_requires_an_office() -> None:
 
 @pytest.mark.parametrize("office_id", [True, 0, -3, "3"])
 def test_mcp_tool_rejects_non_positive_or_boolean_office(office_id: object) -> None:
-    with pytest.raises(ToolError):
-        mcp_server.create_new_center(name="Central", officeId=office_id)
+    with patch.object(fineract_client, "execute_post") as post:
+        with pytest.raises(ToolError):
+            mcp_server.create_new_center(name="Central", officeId=office_id)
+    post.assert_not_called()
 
 
 def test_mcp_tool_sends_the_given_office() -> None:
