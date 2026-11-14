@@ -587,7 +587,7 @@ services:
   # Local LLM server, started only with `--profile ollama`.
   ollama:
     <<: *hardened
-    image: &ollama-image ${OLLAMA_IMAGE:-ollama/ollama:0.40.5}
+    image: &ollama-image ${OLLAMA_IMAGE:-ollama/ollama:0.40.16}
     profiles: [ollama]
     depends_on:
       ollama-init:
