@@ -45,8 +45,9 @@
 #   los-api      - internal: the LOS API for the OpenFn worker (the opportunity workflows)
 #   web-app-edge, lightning-edge, gateway-edge, los-edge - one published port each
 #                  (lightning-edge also for the npm adaptor catalogue)
-#   worker-egress - the OpenFn worker, to install adaptors from npm
 #   llm-egress   - Ollama, to download models
+#   host-ollama  - only with docker-compose.host-ollama.yml: the OpenFn worker,
+#                  to reach an Ollama server on the Docker host
 
 # Webhook trigger ids of the OpenFn project. The bootstrap provisions the
 # triggers with exactly these ids, so the webhook URLs (the gateway's, and the
@@ -350,7 +351,11 @@ services:
 
   lightning-worker:
     <<: *hardened
-    image: ${LIGHTNING_WORKER_IMAGE:-openfn/ws-worker:v1.29.5}
+    # The pinned worker with the jobs' adaptors built in from a lockfile
+    # (worker/): it installs nothing at run time and has no route out.
+    build:
+      context: ./worker
+      args: [LIGHTNING_WORKER_IMAGE]
     depends_on:
       lightning:
         condition: service_healthy
@@ -402,19 +407,15 @@ services:
     # Reaps the processes the shell above does not wait for.
     init: true
     user: node
-    tmpfs: ["/tmp:size=64m"]
-    # The adaptors the worker installs at run time (~70 MB): on disk rather
-    # than in memory, and kept across restarts.
-    volumes:
-      - lightning-worker-home:/home/node
-    # worker-egress: adaptors are installed from npm at run time.
+    tmpfs: ["/tmp:size=64m", "/home/node:size=16m,uid=1000,gid=1000"]
     # core: the Fineract write-back job calls Fineract directly.
     # llm: the document job calls Ollama.
     # openfn-agents: the decision job calls agent-decision.
     # los-api: the opportunity workflows' jobs call the LOS.
-    networks: [openfn, worker-egress, core, llm, openfn-agents, los-api]
+    networks: [openfn, core, llm, openfn-agents, los-api]
     # Lets OLLAMA_URL point at an Ollama server on the Docker host (Linux;
-    # Docker Desktop provides this name already).
+    # Docker Desktop provides this name already); reaching it also takes
+    # docker-compose.host-ollama.yml, the worker's only route out.
     extra_hosts:
       - host.docker.internal:host-gateway
     mem_limit: 1g
@@ -853,7 +854,6 @@ networks:
   lightning-edge: {}
   gateway-edge: {}
   los-edge: {}
-  worker-egress: {}
   llm-egress: {}
 
 volumes:
@@ -862,4 +862,3 @@ volumes:
   bootstrap-state: {}
   ollama-data: {}
   los-db-data: {}
-  lightning-worker-home: {}
