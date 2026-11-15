@@ -214,8 +214,28 @@ func newConnection() (string, *http.Client, error) {
 	}, nil
 }
 
+// APIError reports a Fineract response whose HTTP status is 400 or higher. The
+// message is unchanged from the previous fmt.Errorf form, so logs and callers
+// that match on text keep working, while callers that need the status can use
+// errors.As instead of parsing the message.
+type APIError struct {
+	StatusCode int
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("API Error %d", e.StatusCode)
+}
+
 // DoRequest always uses the configured identity; it never selects caller mode.
+// It keeps the original context-free signature; use DoRequestContext when the
+// call must be cancellable or bounded by a deadline.
 func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, queryParams map[string]string) ([]byte, error) {
+	return c.DoRequestContext(context.Background(), method, endpoint, body, queryParams)
+}
+
+// DoRequestContext is DoRequest with the caller's context attached to the HTTP
+// request, so cancellation and deadlines reach the Fineract call itself.
+func (c *FineractClient) DoRequestContext(ctx context.Context, method, endpoint string, body interface{}, queryParams map[string]string) ([]byte, error) {
 	isAttachment := strings.Contains(endpoint, "/attachment") || strings.Contains(endpoint, "/download")
 	endpoint = strings.TrimPrefix(endpoint, "/")
 	url := fmt.Sprintf("%s/%s", c.BaseURL, endpoint)
@@ -229,7 +249,7 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 		reqBody = bytes.NewBuffer(jsonBody)
 	}
 
-	req, err := http.NewRequest(method, url, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +284,7 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 	}
 
 	if resp.StatusCode >= 400 {
-		return respBody, fmt.Errorf("API Error %d", resp.StatusCode)
+		return respBody, &APIError{StatusCode: resp.StatusCode}
 	}
 
 	// If it's a binary/attachment response, return a descriptive string instead of a huge blob
