@@ -172,7 +172,6 @@ flowchart LR
   los -- los --> losdb[(los-db)]
   worker -- los-api --> los
   lightning -. lightning-edge .-> net((internet))
-  worker -. worker-egress .-> net
   ollama -. llm-egress .-> net
 ```
 
@@ -190,7 +189,7 @@ flowchart LR
 | `los-api` | yes | The LOS and the worker (the opportunity workflows), without the database |
 | `web-app-edge`, `gateway-edge`, `los-edge` | no | One service each, for its published port |
 | `lightning-edge` | no | Lightning and its setup job: published port, npm adaptor catalogue |
-| `worker-egress` | no | The worker, to install adaptors from npm |
+| `host-ollama` | no | Only with `docker-compose.host-ollama.yml`: the worker, to reach an Ollama server on the Docker host. Otherwise the worker has no route out: its OpenFn adaptors are built into its image from a lockfile ([worker/](worker/)) |
 | `llm-egress` | no | Ollama, to download models |
 
 Every service also runs with a read-only file system, no Linux capabilities, no privilege escalation, a non-root user and memory and process limits; [scripts/check-hardening.py](scripts/check-hardening.py) checks all of it, and the network memberships above, in CI.
@@ -333,7 +332,7 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 | `OLLAMA_MODEL` | `llama3.2:3b` | The agents' text model |
 | `OLLAMA_VISION_MODEL` | `qwen2.5vl:3b` | The identity document model (the loan flow and the identity workflow) |
 | `OLLAMA_MEM_LIMIT` | `6g` | Ollama's memory cap; keep it below Docker's total |
-| `OLLAMA_URL` | the sandbox's Ollama | An Ollama server you already run, for the OpenFn jobs (the agents always use the sandbox's own) |
+| `OLLAMA_URL` | the sandbox's Ollama | An Ollama server you already run, for the OpenFn jobs (the agents always use the sandbox's own). One on the Docker host (`http://host.docker.internal:11434`, e.g. Ollama on a Mac's GPU) also takes `-f docker-compose.yml -f docker-compose.host-ollama.yml` on every `docker compose` command, the worker's only route out |
 | `LIGHTNING_WORKER_CAPACITY` | 2 | Runs the worker takes at a time |
 | `LIGHTNING_WORKER_WATCHDOG_SECONDS` | 1200 | Seconds without worker output before the worker is restarted (7.4); keep it above a run's longest time (900) |
 | `FINERACT_TIMEZONE` | `UTC` | The default tenant's time zone |
@@ -348,7 +347,7 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 - `./scripts/gen-secrets.sh` fills only empty values: blank one and run it again to generate a new value.
 - Fineract's admin password (`FINERACT_ADMIN_PASSWORD`): the bootstrap sets it only while the image's default (`password`) still works. To change it later, change it in the web app first (the user menu, then change password), then in `.env`.
 
-**Updating**: `git pull`, `./scripts/gen-secrets.sh` (it adds any secret a new version needs), then `docker compose --profile ollama up -d --build --wait`. Volumes are kept.
+**Updating**: `git pull`, `./scripts/gen-secrets.sh` (it adds any secret a new version needs), then `docker compose --profile ollama up -d --build --wait`. Volumes are kept. A sandbox from before the worker's adaptors were built into its image keeps an unused volume: `docker volume rm agentic-mifos-sandbox_lightning-worker-home`.
 
 **Resetting**
 
@@ -357,7 +356,7 @@ docker compose --profile ollama --profile agents down -v   # deletes ALL data, t
 # or keep the models:
 docker compose --profile ollama --profile agents down
 docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_lightning-db-data \
-  agentic-mifos-sandbox_los-db-data agentic-mifos-sandbox_bootstrap-state agentic-mifos-sandbox_lightning-worker-home
+  agentic-mifos-sandbox_los-db-data agentic-mifos-sandbox_bootstrap-state
 ```
 
 ### Troubleshooting
@@ -386,7 +385,9 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_li
 | [agentic-banking-openfn/openfn/project.yaml](../agentic-banking-openfn/openfn/project.yaml) | The Lightning credential `agent-<name>` and a job that calls `<url>/run`, with its own evidence gate and fallback (copy the decision job). A deterministic job instead names `fineract-<name>` or `los-<name>`, which the bootstrap fills with the `agent-<name>` login or `LOS_<NAME>_TOKEN` |
 | [los/auth.py](los/auth.py), if it calls the LOS | Caller `<name>`: what it may do there, and `LOS_<NAME>_TOKEN=` in `.env.example` and the `los` service |
 
-CI then checks the new services: the hardening and network rules (the `agent-<name>` / `mcp-<name>` pattern needs no change to the check), that every adaptor in `project.yaml` is pinned to an exact version, the runner tests, the agent image build, and the Python CI for the profile.
+A job on an adaptor, or an adaptor version, that no job used before also goes in [worker/package.json](worker/package.json) at that exact version, with its lockfile (`npm install --package-lock-only` in `worker/`): the worker has no route to npm, and CI checks that the two agree. Renovate bumps both, and `project.yaml`, in one PR.
+
+CI then checks the new services: the hardening and network rules (the `agent-<name>` / `mcp-<name>` pattern needs no change to the check), that every adaptor in `project.yaml` is pinned to an exact version and built into the worker image, the runner tests, the agent and worker image builds, and the Python CI for the profile.
 
 ## 7. Threat model
 
@@ -413,17 +414,17 @@ This is a local evaluation sandbox. The model below says what protects what toda
 | A prompt injection makes an agent misuse its tools | Only its profile's tools (the decision profile is read-only); its Fineract role (403); no shell or files in Pi | The agent can read what its profile allows |
 | An agent invents findings or a recommendation | The evidence gate and check; the guardrail; the tools called, listed in the note; human approval | A stricter but wrong answer from an agent that did look the applicant up |
 | An agent takes credentials | Agents hold no Fineract password, only their runner token; no tool can read their environment | — |
-| A compromised job or adaptor uses the write-back login | The `agent-writeback` role: no disbursement, no user administration; paying a loan out takes a person in the web app | It can create clients and loans and approve them; an adaptor's own dependencies are resolved when it is installed (7.4) |
+| A compromised job or adaptor uses the write-back login | The `agent-writeback` role: no disbursement, no user administration; paying a loan out takes a person in the web app | It can create clients and loans and approve them |
 | A compromised job uses the LOS | The intake token: search, create, and set aside a lead still in `new`. The eligibility token: read one opportunity, and move it from `qualifying` to `documents` or `paused`. The identity token: read an opportunity and its documents, record a check, and move it from `documents` to `assessing` or `paused`. The registration token: read an opportunity, its documents and its audit trail, and register a `qualified` one. None records consents, edits or uploads, or moves an opportunity between stages other than its own (403) | Intake can read every opportunity: it searches them for duplicates. Eligibility can move any `qualifying` opportunity on to `documents`, identity any opportunity in `documents` on to `assessing`; identity and registration can read any opportunity's documents |
 | A forged or misleading identity document | The CURP read from the image must be the opportunity's, and the name must match; a mismatch goes to a person. The model's answer is data, checked by rules | A forgery with the right CURP and name; text in an image that misleads the model. The model is a reading aid: RENAPO verification stays with risk and the officer |
 | A compromised job uses the eligibility login | The `agent-eligibility` role: reading clients and loan products only (403 on anything else) | It can read any client's record and accounts |
 | A compromised job uses the registration login | The `agent-registration` role: no approval, disbursement or user administration; the bootstrap checks each refusal on every start | It can create and activate clients, submit loan applications and add notes |
 | A compromised container moves sideways | Segmented networks: each database only from its application, agents only to their MCP server and Ollama | The worker is on `core` (the write-back job) |
-| Data leaves the machine | Fineract, the MCP servers and the agents have no route out | The web app, gateway and LOS (published ports), and Lightning, the worker and Ollama (downloads), do |
+| Data leaves the machine | Fineract, the MCP servers and the agents have no route out | The web app, gateway and LOS (published ports), and Lightning and Ollama (downloads), do; the worker only with the host-Ollama override |
 | Container escape or privilege escalation | Read-only file systems, no capabilities, no privilege escalation, non-root users, process limits; root only in two one-shot jobs without a network | — |
 | Spoofed callbacks or agent calls | `X-OpenFn-Secret` on the gateway callbacks; a bearer token per agent runner; an API key on the Lightning webhook triggers, one for the loan triggers, one for intake and one for officers' eligibility, identity and registration requests (`[REDACTED]` in run data); a token per LOS caller | — |
 | Exhausted memory or processes | Memory and process limits; one case at a time per agent with a timeout; the 15-minute stall check | — |
-| Supply chain | Images pinned by tag or digest, Pi from a lockfile, OpenFn adaptors pinned to exact versions (unpinned ones refused in CI), Renovate updates, images built in CI | The adaptors' own dependencies (7.4) |
+| Supply chain | Images pinned by tag or digest, Pi from a lockfile, OpenFn adaptors pinned to exact versions and built into the worker image from a lockfile (both checked in CI), Renovate updates, images built in CI | — |
 
 ### 7.4 Known limits
 
@@ -433,7 +434,6 @@ This is a local evaluation sandbox. The model below says what protects what toda
 - **The gateway API has no authentication**: it is reachable from the host only (127.0.0.1)
 - **People share one LOS token** (`LOS_OFFICER_TOKEN`), so the LOS records the name in `X-Actor` as sent. The trail still shows the change came with the officer token (`officer:<name>`)
 - **The webhook API key is set through Lightning's internal functions** (`lightning-webhook-auth`), as Lightning has no API for it: a Lightning upgrade that changes them makes the job, and so `up`, fail. On a new sandbox the triggers are open for the few seconds before the job's first run
-- **OpenFn adaptors are installed from npm on first use**: pinned to exact versions that Renovate bumps, but without a lockfile, so an adaptor's own dependencies are resolved when it is installed, and the worker needs a route to npm
 - **No TLS between services**, and Fineract's self-signed certificate is not verified
 - **Application data and the callback secret are stored in Lightning's run data** (the webhook bodies), and so are identity document images, which pass from the LOS to the vision model through it. Lightning can erase run data per project, which would also affect every workflow's history
 - **The OpenFn worker can stop claiming runs after a reconnect** (a ws-worker bug, still in 1.30.0): a watchdog restarts it after 20 minutes without output. Cases submitted meanwhile turn `FAILED` and must be submitted again

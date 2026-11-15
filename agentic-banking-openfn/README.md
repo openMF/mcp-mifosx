@@ -153,6 +153,10 @@ Open **http://localhost:4000** and log in.
   execute: `docker compose stop worker`.
 - If the UI loads without styling, the asset build is still running or failed; build it
   manually: `docker compose exec web mix tailwind default && docker compose exec web mix esbuild default`.
+- Lightning's worker installs each job's adaptor from npm the first time a job uses it, so
+  it needs a route to npm, and an adaptor's own dependencies are resolved then. The
+  sandbox instead builds the adaptors into its worker image from a lockfile and gives the
+  worker no route out: see [agentic-mifos-sandbox/worker/](../agentic-mifos-sandbox/worker/).
 
 ## 4. Create the Fineract credential in Lightning
 

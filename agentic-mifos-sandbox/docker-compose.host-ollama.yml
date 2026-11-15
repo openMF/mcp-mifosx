@@ -1,0 +1,13 @@
+# Copyright since 2026 Mifos Initiative
+# This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.
+#
+# For an Ollama server on the Docker host (OLLAMA_URL=http://host.docker.internal:11434),
+# for example Ollama on a Mac, where it runs on the GPU: the OpenFn worker gets
+# a route out, which it otherwise has none of.
+#   docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml up -d
+services:
+  lightning-worker:
+    networks: [host-ollama]
+
+networks:
+  host-ollama: {}

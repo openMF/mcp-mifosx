@@ -1,0 +1,9 @@
+{
+  "name": "openfn-repo",
+  "description": "The OpenFn adaptors the sandbox's jobs use (project.yaml), at exact versions: built into the worker image (Dockerfile), so the worker installs nothing at run time.",
+  "private": true,
+  "dependencies": {
+    "@openfn/language-common": "3.3.5",
+    "@openfn/language-http": "7.3.3"
+  }
+}
