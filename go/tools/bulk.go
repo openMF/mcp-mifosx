@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"strconv"
@@ -175,7 +176,19 @@ func (r *Registry) handleBulk(ctx context.Context, req mcp.CallToolRequest, def 
 	}
 
 	var payloads []map[string]interface{}
-	if err := json.Unmarshal([]byte(requestsRaw), &payloads); err != nil {
+	// UseNumber keeps large JSON identifiers exact. Decoding into float64 can
+	// round 9007199254740993 to 9007199254740992, which would silently target a
+	// different resource.
+	decoder := json.NewDecoder(strings.NewReader(requestsRaw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&payloads); err != nil {
+		return mcp.NewToolResultError("Failed to parse 'requests' array JSON: " + err.Error()), nil
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return mcp.NewToolResultError("Unexpected trailing data after 'requests' array"), nil
+		}
 		return mcp.NewToolResultError("Failed to parse 'requests' array JSON: " + err.Error()), nil
 	}
 
@@ -194,35 +207,37 @@ func (r *Registry) handleBulk(ctx context.Context, req mcp.CallToolRequest, def 
 	return bulkCallResult(r.executeBulk(ctx, def.Name, jobs, limits)), nil
 }
 
-// buildBulkJob maps one request object onto a single-operation call. The path
-// placeholder is filled from the first identifier present, matching the single
-// operation parameter names; the identifier itself is never sent in the body.
+// buildBulkJob maps one request object onto a single-operation call. The target
+// identifier is derived from the operation's endpoint, not from whichever
+// identifier happens to appear first in the payload, so an unrelated identifier
+// cannot redirect a request to another resource. The identifier itself is never
+// sent in the body.
 func buildBulkJob(def BulkDef, index int, payload map[string]interface{}) bulkJob {
 	job := bulkJob{Index: index, Method: def.Method, Endpoint: def.EndpointURL}
 
-	for _, key := range []string{"clientId", "loanId", "savingsId", "groupId"} {
-		if value, ok := payload[key]; ok && value != nil {
-			job.ID, job.IDKey = value, key
-			break
-		}
-	}
-
-	if strings.Contains(job.Endpoint, "%v") {
-		if job.ID == nil {
-			job.Err = fmt.Errorf("%s requires one of clientId, loanId, savingsId or groupId", def.Name)
-			return job
-		}
-		path, err := bulkIdentifier(job.ID)
-		if err != nil {
-			job.Err = fmt.Errorf("%s: invalid %s: %v", def.Name, job.IDKey, err)
-			return job
-		}
-		job.Endpoint = strings.Replace(job.Endpoint, "%v", path, 1)
-	} else {
+	targetKey, hasTarget := bulkTargetKey(def.EndpointURL)
+	switch {
+	case !hasTarget && strings.Contains(def.EndpointURL, "%v"):
+		job.Err = fmt.Errorf("%s has an unsupported target endpoint", def.Name)
+		return job
+	case !hasTarget:
 		// The identifier fields are body data here (clientId when opening an
 		// account, for example), not a batch target, so repeats are legitimate
 		// and must not be treated as duplicate writes.
 		job.IDKey = ""
+	default:
+		value, ok := payload[targetKey]
+		if !ok || value == nil {
+			job.Err = fmt.Errorf("%s requires %s", def.Name, targetKey)
+			return job
+		}
+		job.ID, job.IDKey = value, targetKey
+		path, err := bulkIdentifier(value)
+		if err != nil {
+			job.Err = fmt.Errorf("%s: invalid %s: %v", def.Name, targetKey, err)
+			return job
+		}
+		job.Endpoint = strings.Replace(job.Endpoint, "%v", path, 1)
 	}
 
 	if def.Method == "GET" {
@@ -249,6 +264,28 @@ func buildBulkJob(def BulkDef, index int, payload map[string]interface{}) bulkJo
 	return job
 }
 
+// bulkTargetKey returns the request parameter that supplies the resource id in
+// a bulk endpoint's path. The resource segment is the real API target, so the
+// mapping cannot be influenced by unrelated identifiers in the payload.
+func bulkTargetKey(endpoint string) (string, bool) {
+	resource, _, found := strings.Cut(endpoint, "/%v")
+	if !found {
+		return "", false
+	}
+	switch resource {
+	case "loans":
+		return "loanId", true
+	case "clients":
+		return "clientId", true
+	case "savingsaccounts":
+		return "savingsId", true
+	case "groups":
+		return "groupId", true
+	default:
+		return "", false
+	}
+}
+
 // validateBulkBatch rejects a batch that can never be executed, before any work
 // starts.
 func validateBulkBatch(size int, limits bulkLimits) error {
@@ -262,10 +299,12 @@ func validateBulkBatch(size int, limits bulkLimits) error {
 }
 
 // bulkIdentifier validates one resource identifier before it is placed in an
-// endpoint. JSON numbers arrive as float64; direct callers and json.Number are
-// accepted too, and integral strings are normalised to their numeric form.
-// Null, empty, fractional, non-positive, and unsupported values are rejected so
-// an endpoint is never built from malformed input.
+// endpoint. JSON numbers arrive as json.Number when the batch decoder preserves
+// them and as float64 from MCP arguments; direct callers may pass any integer
+// type. Integral strings and json.Number values are normalised to their exact
+// numeric form. Null, empty, fractional, non-positive, out-of-range, and
+// unsupported values are rejected so an endpoint is never built from malformed
+// or silently rounded input.
 func bulkIdentifier(value any) (string, error) {
 	switch v := value.(type) {
 	case nil:
@@ -285,11 +324,16 @@ func bulkIdentifier(value any) (string, error) {
 	case int64:
 		return bulkIntegerIdentifier(v)
 	case json.Number:
-		parsed, err := v.Int64()
+		if parsed, err := v.Int64(); err == nil {
+			return bulkIntegerIdentifier(parsed)
+		}
+		// Accept an integral decimal form such as 7.0, but only through the
+		// float path that rejects values beyond exact float64 range.
+		parsed, err := v.Float64()
 		if err != nil {
 			return "", fmt.Errorf("identifier %q must be a whole number", v.String())
 		}
-		return bulkIntegerIdentifier(parsed)
+		return bulkFloatIdentifier(parsed)
 	case string:
 		trimmed := strings.TrimSpace(v)
 		if trimmed == "" {
@@ -305,7 +349,13 @@ func bulkIdentifier(value any) (string, error) {
 	}
 }
 
-const bulkMaxIdentifier = int64(^uint64(0) >> 1)
+const (
+	bulkMaxIdentifier = int64(^uint64(0) >> 1)
+	// bulkMaxSafeInteger is the largest integer a float64 represents exactly
+	// (2^53 - 1). A float64 identifier above it may already be a rounded value
+	// that points at another resource.
+	bulkMaxSafeInteger = int64(1<<53 - 1)
+)
 
 func bulkIntegerIdentifier(value int64) (string, error) {
 	if value < 1 {
@@ -317,6 +367,9 @@ func bulkIntegerIdentifier(value int64) (string, error) {
 func bulkFloatIdentifier(value float64) (string, error) {
 	if math.IsNaN(value) || math.IsInf(value, 0) || value != math.Trunc(value) {
 		return "", fmt.Errorf("identifier must be a whole number, got %v", value)
+	}
+	if value > float64(bulkMaxSafeInteger) {
+		return "", fmt.Errorf("identifier %v exceeds the maximum safe integer %d and may have lost precision", value, bulkMaxSafeInteger)
 	}
 	if value < 1 || value >= float64(bulkMaxIdentifier) {
 		return "", fmt.Errorf("identifier must be a positive whole number, got %v", value)
@@ -440,11 +493,23 @@ func rejectDuplicateBulkIDs(toolName string, writes bool, jobs []bulkJob) error 
 }
 
 // executeBulk runs the jobs with bounded concurrency and summarises the
-// outcomes. Result slots that were never started keep the pre-filled
-// "cancelled" value.
+// outcomes. Invalid jobs keep their validation error even when no worker runs;
+// valid result slots that were never started keep "cancelled".
 func (r *Registry) executeBulk(ctx context.Context, toolName string, jobs []bulkJob, limits bulkLimits) bulkReport {
 	results := make([]bulkItemResult, len(jobs))
 	for i, job := range jobs {
+		if job.Err != nil {
+			// Validation failures are known before any work starts. Seeding
+			// them now keeps that error even when the context is already
+			// cancelled and no worker ever visits the job.
+			results[i] = bulkItemResult{
+				Index:  i,
+				ID:     job.ID,
+				Status: bulkItemError,
+				Error:  job.Err.Error(),
+			}
+			continue
+		}
 		results[i] = bulkItemResult{
 			Index:  i,
 			ID:     job.ID,

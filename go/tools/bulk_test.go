@@ -148,6 +148,17 @@ func invokeBulk(t *testing.T, ctx context.Context, handler func(context.Context,
 	return result
 }
 
+// closeBarrier releases a test barrier exactly once, either explicitly or when
+// the test ends. Cleanup runs even after t.Fatal, so handlers blocked on the
+// barrier cannot keep httptest.Server.Close waiting.
+func closeBarrier(t *testing.T, barrier chan struct{}) func() {
+	t.Helper()
+	var once sync.Once
+	release := func() { once.Do(func() { close(barrier) }) }
+	t.Cleanup(release)
+	return release
+}
+
 func decodeBulkReport(t *testing.T, result *mcp.CallToolResult) bulkReport {
 	t.Helper()
 	if len(result.Content) != 1 {
@@ -369,6 +380,9 @@ func TestBulkBoundsConcurrentRequests(t *testing.T) {
 		<-release
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	})
+	// Register the barrier cleanup after the server so it runs before
+	// httptest.Server.Close when an assertion fails.
+	releaseBarrier := closeBarrier(t, release)
 	handler := bulkToolHandler(t, registry, "bulk_get_loan_status")
 
 	payload := make([]map[string]any, 8)
@@ -393,7 +407,7 @@ func TestBulkBoundsConcurrentRequests(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the pool never reached the configured concurrency")
 	}
-	close(release)
+	releaseBarrier()
 
 	var result *mcp.CallToolResult
 	select {
@@ -439,6 +453,7 @@ func TestBulkCancellationStopsSchedulingNewWork(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	done := make(chan *mcp.CallToolResult, 1)
 	go func() {
 		result, err := handler(ctx, mcp.CallToolRequest{
@@ -500,6 +515,7 @@ func TestBulkCancelledBeforeStartSendsNothing(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	t.Cleanup(cancel)
 
 	result := invokeBulk(t, ctx, handler, bulkRequestArgs(t, []map[string]any{
 		{"loanId": 1, "transactionAmount": 10},
@@ -651,7 +667,7 @@ func TestBulkMissingIdentifierBecomesItemError(t *testing.T) {
 		t.Fatalf("a batch whose only item cannot be sent must fail: %+v", report)
 	}
 	item := report.Results[0]
-	if item.Status != bulkItemError || !strings.Contains(item.Error, "requires one of") {
+	if item.Status != bulkItemError || !strings.Contains(item.Error, "requires loanId") {
 		t.Fatalf("unexpected item: %+v", item)
 	}
 	if backend.requestCount() != 0 {
@@ -843,6 +859,7 @@ func TestRunBulkPoolExecutesEveryIndexOnce(t *testing.T) {
 
 func TestRunBulkPoolStopsAfterCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	var mu sync.Mutex
 	ran := 0
 	runBulkPool(ctx, 10, 1, func(_ context.Context, _ int) {
@@ -1179,6 +1196,7 @@ func TestBulkCancellationPreservesCompletedResults(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	done := make(chan *mcp.CallToolResult, 1)
 	go func() {
 		result, err := handler(ctx, mcp.CallToolRequest{
@@ -1235,6 +1253,7 @@ func TestBulkCancellationPreservesCompletedResults(t *testing.T) {
 
 func TestRunBulkPoolStopsSchedulingAtCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	const concurrency = 3
 	const total = 12
 
@@ -1242,6 +1261,7 @@ func TestRunBulkPoolStopsSchedulingAtCancellation(t *testing.T) {
 	started := make(map[int]int)
 	allStarted := make(chan struct{})
 	release := make(chan struct{})
+	releaseBarrier := closeBarrier(t, release)
 	var allOnce sync.Once
 
 	done := make(chan struct{})
@@ -1265,7 +1285,7 @@ func TestRunBulkPoolStopsSchedulingAtCancellation(t *testing.T) {
 		t.Fatal("the pool never filled its worker slots")
 	}
 	cancel()
-	close(release)
+	releaseBarrier()
 
 	select {
 	case <-done:
@@ -1296,6 +1316,14 @@ func TestBulkIdentifierValidation(t *testing.T) {
 		{name: "positive float", value: float64(7), want: "7"},
 		{name: "numeric string", value: " 7 ", want: "7"},
 		{name: "json number", value: json.Number("7"), want: "7"},
+		{name: "json integral decimal", value: json.Number("7.0"), want: "7"},
+		{name: "max safe integer", value: int64(9007199254740991), want: "9007199254740991"},
+		{name: "max safe float", value: float64(1<<53 - 1), want: "9007199254740991"},
+		{name: "exact large json number", value: json.Number("9007199254740993"), want: "9007199254740993"},
+		{name: "exact large numeric string", value: "9007199254740993", want: "9007199254740993"},
+		{name: "float above safe integer", value: float64(1 << 53), wantErr: "safe integer"},
+		{name: "rounded float identifier", value: 9007199254740993.0, wantErr: "safe integer"},
+		{name: "decimal above safe integer", value: json.Number("9007199254740993.0"), wantErr: "safe integer"},
 		{name: "nil", value: nil, wantErr: "null"},
 		{name: "empty string", value: "", wantErr: "empty"},
 		{name: "blank string", value: "   ", wantErr: "empty"},
@@ -1344,5 +1372,312 @@ func TestBulkGenericRejectsMalformedIdentifier(t *testing.T) {
 	}
 	if backend.requestCount() != 0 {
 		t.Fatalf("malformed identifier reached the backend %d times", backend.requestCount())
+	}
+}
+
+func TestCloseBarrierIsIdempotent(t *testing.T) {
+	barrier := make(chan struct{})
+	release := closeBarrier(t, barrier)
+
+	release()
+	release()
+
+	select {
+	case <-barrier:
+	default:
+		t.Fatal("barrier was not released")
+	}
+}
+
+func TestBulkTargetKeyMappingCoversEveryOperation(t *testing.T) {
+	want := map[string]string{
+		"bulk_search_clients":               "",
+		"bulk_get_loan_status":              "loanId",
+		"bulk_disburse_loans":               "loanId",
+		"bulk_make_repayments":              "loanId",
+		"bulk_activate_clients":             "clientId",
+		"bulk_get_savings_balances":         "savingsId",
+		"bulk_apply_fees":                   "loanId",
+		"bulk_close_accounts":               "savingsId",
+		"bulk_create_savings_accounts":      "",
+		"bulk_approve_and_activate_savings": "savingsId",
+		"bulk_deposit_savings":              "savingsId",
+	}
+
+	registry := &Registry{}
+	defs := registry.GetBulkToolDefs()
+	if len(defs) != len(want) {
+		t.Fatalf("expected %d bulk operations, got %d", len(want), len(defs))
+	}
+	for _, def := range defs {
+		expected, ok := want[def.Name]
+		if !ok {
+			t.Fatalf("%s has no expected target mapping", def.Name)
+		}
+		got, _ := bulkTargetKey(def.EndpointURL)
+		if got != expected {
+			t.Errorf("%s targets %q, want %q", def.Name, got, expected)
+		}
+	}
+}
+
+func TestBulkTargetIdentifierFollowsOperation(t *testing.T) {
+	t.Run("apply fees requires loan id", func(t *testing.T) {
+		backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		})
+		handler := bulkToolHandler(t, registry, "bulk_apply_fees")
+
+		result := invokeBulk(t, context.Background(), handler, bulkRequestArgs(t, []map[string]any{
+			{"clientId": 7, "chargeId": 3},
+		}))
+		report := decodeBulkReport(t, result)
+
+		if !result.IsError || report.Status != bulkStatusFailure {
+			t.Fatalf("a client id must not satisfy a loan target: %+v", report)
+		}
+		item := report.Results[0]
+		if item.Status != bulkItemError || !strings.Contains(item.Error, "requires loanId") {
+			t.Fatalf("unexpected item: %+v", item)
+		}
+		if backend.requestCount() != 0 {
+			t.Fatalf("wrong identifier reached the backend %d times", backend.requestCount())
+		}
+	})
+
+	t.Run("apply fees prefers loan id over client id", func(t *testing.T) {
+		backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		})
+		handler := bulkToolHandler(t, registry, "bulk_apply_fees")
+
+		result := invokeBulk(t, context.Background(), handler, bulkRequestArgs(t, []map[string]any{
+			{"clientId": 7, "loanId": 9, "chargeId": 3},
+		}))
+		report := decodeBulkReport(t, result)
+
+		if result.IsError || report.Status != bulkStatusSuccess || report.Succeeded != 1 {
+			t.Fatalf("unexpected report: %+v", report)
+		}
+		calls := backend.recorded()
+		if len(calls) != 1 || calls[0].Path != "/loans/9/charges" {
+			t.Fatalf("unexpected request: %+v", calls)
+		}
+		var body map[string]any
+		if err := json.Unmarshal([]byte(calls[0].Body), &body); err != nil {
+			t.Fatalf("request body is not JSON: %v", err)
+		}
+		for _, field := range []string{"loanId", "clientId"} {
+			if _, ok := body[field]; ok {
+				t.Errorf("identifier %s leaked into the body: %v", field, body)
+			}
+		}
+	})
+
+	t.Run("activate clients prefers client id over loan id", func(t *testing.T) {
+		backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		})
+		handler := bulkToolHandler(t, registry, "bulk_activate_clients")
+
+		result := invokeBulk(t, context.Background(), handler, bulkRequestArgs(t, []map[string]any{
+			{"loanId": 9, "clientId": 4},
+		}))
+		report := decodeBulkReport(t, result)
+
+		if result.IsError || report.Status != bulkStatusSuccess || report.Succeeded != 1 {
+			t.Fatalf("unexpected report: %+v", report)
+		}
+		calls := backend.recorded()
+		if len(calls) != 1 || calls[0].Path != "/clients/4" {
+			t.Fatalf("unexpected request: %+v", calls)
+		}
+	})
+
+	t.Run("savings operation requires savings id", func(t *testing.T) {
+		backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		})
+		handler := bulkToolHandler(t, registry, "bulk_close_accounts")
+
+		result := invokeBulk(t, context.Background(), handler, bulkRequestArgs(t, []map[string]any{
+			{"loanId": 9},
+		}))
+		report := decodeBulkReport(t, result)
+
+		if !result.IsError || report.Status != bulkStatusFailure {
+			t.Fatalf("a loan id must not satisfy a savings target: %+v", report)
+		}
+		if !strings.Contains(report.Results[0].Error, "requires savingsId") {
+			t.Fatalf("unexpected item: %+v", report.Results[0])
+		}
+		if backend.requestCount() != 0 {
+			t.Fatalf("wrong identifier reached the backend %d times", backend.requestCount())
+		}
+	})
+}
+
+func TestBulkDuplicateTargetsResolveToSameEndpoint(t *testing.T) {
+	backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+	handler := bulkToolHandler(t, registry, "bulk_apply_fees")
+
+	result := invokeBulk(t, context.Background(), handler, bulkRequestArgs(t, []map[string]any{
+		{"loanId": 7, "clientId": 1, "chargeId": 3},
+		{"loanId": "7", "clientId": 2, "chargeId": 4},
+	}))
+
+	if !result.IsError {
+		t.Fatal("two payloads targeting the same loan must be rejected")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "loanId=7") {
+		t.Fatalf("duplicate target was not identified by the loan: %q", text)
+	}
+	if backend.requestCount() != 0 {
+		t.Fatalf("duplicate batch sent %d requests", backend.requestCount())
+	}
+}
+
+func TestBulkKeepsExactLargeJSONIdentifiers(t *testing.T) {
+	backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"path": r.URL.Path})
+	})
+	handler := bulkToolHandler(t, registry, "bulk_get_loan_status")
+
+	// 9007199254740993 is not representable as a float64 and would silently
+	// become 9007199254740992 without lossless number decoding.
+	result := invokeBulk(t, context.Background(), handler, map[string]any{
+		"requests": `[{"loanId":9007199254740993},{"loanId":9007199254740991}]`,
+	})
+	report := decodeBulkReport(t, result)
+
+	if result.IsError || report.Status != bulkStatusSuccess || report.Succeeded != 2 {
+		t.Fatalf("exact large identifiers were rejected: %+v", report)
+	}
+	paths := make(map[string]bool)
+	for _, call := range backend.recorded() {
+		paths[call.Path] = true
+	}
+	for _, want := range []string{"/loans/9007199254740993", "/loans/9007199254740991"} {
+		if !paths[want] {
+			t.Errorf("expected exact path %s, saw %v", want, paths)
+		}
+	}
+}
+
+func TestBulkCancelledContextPreservesValidationErrors(t *testing.T) {
+	backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	})
+	handler := bulkToolHandler(t, registry, "bulk_disburse_loans")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	t.Cleanup(cancel)
+
+	result := invokeBulk(t, ctx, handler, bulkRequestArgs(t, []map[string]any{
+		{"transactionAmount": 10},
+		{"loanId": 2, "transactionAmount": 20},
+	}))
+	report := decodeBulkReport(t, result)
+
+	if !result.IsError || report.Status != bulkStatusCancelled {
+		t.Fatalf("pre-cancelled batch is not reported as cancelled: %+v", report)
+	}
+	if report.Succeeded != 0 || report.Failed != 1 || report.Cancelled != 1 {
+		t.Fatalf("validation and cancellation outcomes were mixed up: %+v", report)
+	}
+	invalid := report.Results[0]
+	if invalid.Status != bulkItemError || !strings.Contains(invalid.Error, "requires loanId") {
+		t.Fatalf("validation error was replaced by cancellation: %+v", invalid)
+	}
+	if strings.Contains(invalid.Error, "not started") {
+		t.Fatalf("invalid job was reported as not started: %+v", invalid)
+	}
+	if report.Results[1].Status != bulkItemCancelled {
+		t.Fatalf("valid job was not cancelled: %+v", report.Results[1])
+	}
+	if backend.requestCount() != 0 {
+		t.Fatalf("pre-cancelled batch sent %d requests", backend.requestCount())
+	}
+}
+
+func TestBulkCancellationKeepsValidationErrorDuringExecution(t *testing.T) {
+	t.Setenv(bulkConcurrencyEnv, "1")
+
+	firstDone := make(chan struct{})
+	secondStarted := make(chan struct{})
+	backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/loans/1":
+			writeJSON(w, http.StatusOK, map[string]any{"loanId": 1})
+			close(firstDone)
+		case "/loans/2":
+			close(secondStarted)
+			<-r.Context().Done()
+		default:
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"unexpected": r.URL.Path})
+		}
+	})
+	handler := bulkToolHandler(t, registry, "bulk_disburse_loans")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan *mcp.CallToolResult, 1)
+	go func() {
+		result, err := handler(ctx, mcp.CallToolRequest{
+			Params: mcp.CallToolParams{Name: "bulk", Arguments: bulkRequestArgs(t, []map[string]any{
+				{"loanId": 1, "transactionAmount": 10},
+				{"transactionAmount": 20},
+				{"loanId": 2, "transactionAmount": 30},
+			})},
+		})
+		if err != nil || result == nil {
+			done <- nil
+			return
+		}
+		done <- result
+	}()
+
+	select {
+	case <-firstDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the first item never completed")
+	}
+	select {
+	case <-secondStarted:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the second valid item never started")
+	}
+	cancel()
+
+	var result *mcp.CallToolResult
+	select {
+	case result = <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("bulk call did not return after cancellation")
+	}
+	if result == nil {
+		t.Fatal("bulk call failed")
+	}
+
+	report := decodeBulkReport(t, result)
+	if !result.IsError || report.Status != bulkStatusCancelled {
+		t.Fatalf("cancelled batch is not reported as cancelled: %+v", report)
+	}
+	if report.Succeeded != 1 || report.Failed != 1 || report.Cancelled != 1 {
+		t.Fatalf("completed, invalid, and cancelled outcomes were not separated: %+v", report)
+	}
+	invalid := report.Results[1]
+	if invalid.Status != bulkItemError || !strings.Contains(invalid.Error, "requires loanId") {
+		t.Fatalf("validation error was replaced during cancellation: %+v", invalid)
+	}
+	if report.Results[2].Status != bulkItemCancelled {
+		t.Fatalf("in-flight valid job was not cancelled: %+v", report.Results[2])
+	}
+	if backend.requestCount() != 2 {
+		t.Fatalf("jobs started after cancellation: %d requests", backend.requestCount())
 	}
 }
