@@ -28,7 +28,7 @@ Seven workflows are defined in [`openfn/project.yaml`](openfn/project.yaml):
 | **Opportunity Eligibility** | An officer posting an opportunity's id to its webhook | read it from the LOS → look the applicant up in Fineract → apply the rules and record the decision in the LOS |
 | **Opportunity Identity Document** | An officer posting an opportunity's id to its webhook, after uploading its CURP to the LOS | read the newest CURP document from the LOS → read it with the vision model → apply the rules and record the result in the LOS |
 | **Opportunity Assessment** | An officer posting the id of an opportunity in `assessing` to its webhook | read it from the LOS → query the bureau (simulated) and apply the rules → ask agent-decision, with the evidence gate and guardrail → record the assessment in the LOS |
-| **Opportunity Registration** | An officer posting a qualified opportunity's id to its webhook | read and check it in the LOS → create the client, the loan application (not approved) and a note in Fineract → record the Fineract ids in the LOS |
+| **Opportunity Registration** | An officer posting a qualified opportunity's id to its webhook | read and check it in the LOS → create the client, attach its CURP image, then the loan application (not approved) and a note in Fineract → record the Fineract ids in the LOS |
 
 Each job reports back to the gateway over HTTP. The gateway tells the jobs where to
 call back by sending `gatewayBaseUrl` in the webhook payload.
@@ -238,10 +238,13 @@ run what they point to, or the deploy fails:
 - **`los-assessment`**: the same as `los` with the LOS's `LOS_ASSESSMENT_TOKEN`, for the
   Opportunity Assessment workflow, which also uses `agent-decision`.
 - **`fineract-registration`**: like `fineract`, signed in as a user of its own whose role has
-  `READ_LOANPRODUCT`, `READ_CLIENT`, `CREATE_CLIENT`, `ACTIVATE_CLIENT`, `READ_LOAN`,
-  `CREATE_LOAN`, `READ_LOANNOTE` and `CREATE_LOANNOTE`, and not `APPROVE_LOAN` (create the role
-  and user as above; the sandbox's is `agent-registration`). The registration workflow creates
-  the client and the loan application with it; approving the loan stays with a person.
+  `READ_LOANPRODUCT`, `READ_CLIENT`, `CREATE_CLIENT`, `ACTIVATE_CLIENT`, `READ_DOCUMENT`,
+  `CREATE_DOCUMENT`, `READ_LOAN`, `CREATE_LOAN`, `READ_LOANNOTE` and `CREATE_LOANNOTE`, and not
+  `APPROVE_LOAN` (create the role and user as above; the sandbox's is `agent-registration`). The
+  registration workflow creates the client, attaches its identity document and makes the loan
+  application with it; approving the loan stays with a person. Fineract saves documents under
+  `FINERACT_CONTENT_FILESYSTEM_ROOT_FOLDER` (by default `~/.fineract`), which must be writable
+  by the user Fineract runs as.
 
 ## 5. Deploy the OpenFn project
 

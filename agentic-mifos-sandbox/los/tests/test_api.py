@@ -737,7 +737,13 @@ def test_the_same_registration_again_changes_nothing(client, registration):
     assert events(client, opportunity) == trail
 
 
-def test_registration_may_not_move_edit_consent_upload_search_or_read_images(client, registration):
+def test_registration_reads_the_image_it_attaches_in_fineract(client, registration):
+    opportunity, document = in_documents(client)
+    response = client.get(f"/opportunities/{opportunity['id']}/documents/{document['id']}/content", headers=registration)
+    assert (response.status_code, response.content) == (200, PNG)
+
+
+def test_registration_may_not_move_edit_consent_upload_search_or_check(client, registration):
     opportunity, document = in_documents(client)
     path = f"/opportunities/{opportunity['id']}"
     assert move(client, opportunity, "assessing", headers=registration).status_code == 403
@@ -748,7 +754,6 @@ def test_registration_may_not_move_edit_consent_upload_search_or_read_images(cli
         ("PATCH", path, {"email": "ana@example.com"}),
         ("POST", f"{path}/consents/bureau", None),
         ("POST", f"{path}/opt-out", None),
-        ("GET", f"{path}/documents/{document['id']}/content", None),
         ("POST", f"{path}/documents/{document['id']}/check", {"result": "valid", "compared": {"national_id": None, "full_name": None}}),
     ]:
         response = client.request(method, url, json=body, headers=registration)
