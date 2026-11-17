@@ -65,7 +65,15 @@ FASTMCP_TRANSPORT=http FASTMCP_HOST=0.0.0.0 FASTMCP_PORT=8000 python mcp_server.
 # clients connect to http://<host>:8000/mcp
 ```
 
-The HTTP endpoint has no authentication of its own: anyone who can reach it acts as the configured Fineract user. Keep it on a private network, as the agentic Mifos sandbox does (one network per agent and its MCP server).
+The MCP HTTP transport has no authentication of its own: anyone who can reach it acts as the configured Fineract user. Keep it on a private network, as the agentic Mifos sandbox does (one network per agent and its MCP server).
+
+The optional REST bridge (`core/api_server.py`) is authenticated. It requires `MCP_REST_API_KEY` and also enforces the active tool profile, so it cannot call a tool the MCP server hides. Send the key as `X-API-Key: <key>` or `Authorization: Bearer <key>`:
+
+```bash
+curl -H "X-API-Key: $MCP_REST_API_KEY" http://localhost:8000/api/clients/search?name=Ann
+```
+
+Missing or invalid credentials return `401`; a tool outside the active profile returns `403`; and the bridge refuses every request with `503` when no key or an unusable profile is configured. Browser origins are closed unless `MCP_REST_CORS_ORIGINS` lists them.
 
 By default it exposes only the read-only tools. Set `MCP_AGENT_PROFILE` to choose which tools it exposes; see [Tool profiles](#tool-profiles-enforced-by-the-server).
 
@@ -280,6 +288,8 @@ By keeping this server "pure," you gain:
 | `MIFOSX_PASSWORD`  | Fineract API password                   | `password` |
 | `MCP_AGENT_PROFILE` | Tool profile to expose: a name from `profiles.toml`, or `all` | `read-only` |
 | `MCP_PROFILES_FILE` | Path to the tool profiles file          | `profiles.toml` |
+| `MCP_REST_API_KEY` | Required by the REST bridge; send as `X-API-Key` or `Authorization: Bearer`. Unset means the bridge refuses every request | — |
+| `MCP_REST_CORS_ORIGINS` | Comma-separated browser origins allowed to call the REST bridge | empty (no cross-origin access) |
 | `FASTMCP_TRANSPORT` | `stdio`, or `http` for streamable HTTP at `/mcp` | `stdio` |
 | `FASTMCP_HOST` / `FASTMCP_PORT` | Address the HTTP transport listens on | `127.0.0.1` / `8000` |
 
@@ -369,6 +379,8 @@ MCP_AGENT_PROFILE=decision python mcp_server.py
 | `all` | every tool, including those that change or delete data |
 
 Tools outside the profile are neither listed nor callable: calling one by name fails with `Unknown tool`. A tool added to `mcp_server.py` later stays hidden until a profile lists it. The server refuses to start when the profile does not exist, when `profiles.toml` names a tool the server does not have, or when the file cannot be read.
+
+The REST bridge enforces the same profile: an endpoint whose MCP tool is outside the active profile returns `403`, and it refuses every request with `503` when the profile configuration is unusable.
 
 To give an agent its own set of tools, add a `[profiles.<name>]` table with a `tools` list to `profiles.toml` (or point `MCP_PROFILES_FILE` at your own file, which must also define `read-only`).
 

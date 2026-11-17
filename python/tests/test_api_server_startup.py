@@ -16,6 +16,14 @@ from uvicorn.importer import import_from_string
 
 from core import api_server
 
+REST_KEY = "test-rest-api-key"
+AUTH_HEADERS = {"X-API-Key": REST_KEY}
+
+
+@pytest.fixture(autouse=True)
+def _rest_api_key(monkeypatch):
+    monkeypatch.setenv("MCP_REST_API_KEY", REST_KEY)
+
 
 @pytest.fixture(autouse=True)
 def _reset_agent():
@@ -27,7 +35,7 @@ def _reset_agent():
 def test_starts_without_the_agent_module() -> None:
     with patch.dict(sys.modules, {"agent": None}):  # None makes the import fail
         with TestClient(api_server.app) as client:
-            response = client.post("/api/chat", json={"message": "hi"})
+            response = client.post("/api/chat", json={"message": "hi"}, headers=AUTH_HEADERS)
     assert response.status_code == 503
     assert response.json()["detail"] == "Agent not initialized"
 
@@ -36,7 +44,7 @@ def test_a_restart_without_the_module_clears_the_old_agent() -> None:
     api_server.banking_agent = object()
     with patch.dict(sys.modules, {"agent": None}):
         with TestClient(api_server.app) as client:
-            response = client.post("/api/chat", json={"message": "hi"})
+            response = client.post("/api/chat", json={"message": "hi"}, headers=AUTH_HEADERS)
     assert response.status_code == 503
 
 

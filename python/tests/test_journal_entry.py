@@ -15,7 +15,6 @@ from fastmcp.exceptions import ToolError
 from pydantic import StrictInt
 
 import mcp_server
-from core import api_server
 from tools.domains import accounting
 from tools.mcp_adapter import fineract_client
 
@@ -59,19 +58,19 @@ def test_domain_tool_rejects_a_blank_currency(currency: str) -> None:
     assert "currency_code is required" in result["error"]
 
 
-def test_rest_endpoint_sends_the_currency() -> None:
+def test_rest_endpoint_sends_the_currency(client: TestClient) -> None:
     body = {"office_id": 1, "date": "10 March 2026", "credits": CREDITS, "debits": DEBITS, "currency_code": "INR"}
     with patch.object(fineract_client, "execute_post", return_value={"transactionId": "MAN2"}) as post:
-        response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
+        response = client.post("/api/accounting/journal-entries", json=body)
     assert response.status_code == 200
     assert post.call_args.args[1]["currencyCode"] == "INR"
 
 
 @pytest.mark.parametrize("currency", [{}, {"currency_code": ""}, {"currency_code": "   "}])
-def test_rest_endpoint_needs_a_currency(currency: Dict[str, str]) -> None:
+def test_rest_endpoint_needs_a_currency(client: TestClient, currency: Dict[str, str]) -> None:
     body = {"office_id": 1, "date": "10 March 2026", "credits": CREDITS, "debits": DEBITS, **currency}
     with patch.object(fineract_client, "execute_post") as post:
-        response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
+        response = client.post("/api/accounting/journal-entries", json=body)
     assert response.status_code == 422
     post.assert_not_called()
 
@@ -148,10 +147,10 @@ def test_domain_tool_rejects_bad_entry_items(bad_items: list) -> None:
 
 
 @pytest.mark.parametrize("office_id", [True, 0, -1, "bad"])
-def test_rest_endpoint_rejects_invalid_office(office_id: Any) -> None:
+def test_rest_endpoint_rejects_invalid_office(client: TestClient, office_id: Any) -> None:
     body = {"office_id": office_id, "date": "10 March 2026", "credits": CREDITS, "debits": DEBITS, "currency_code": "USD"}
     with patch.object(fineract_client, "execute_post") as post:
-        response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
+        response = client.post("/api/accounting/journal-entries", json=body)
     assert response.status_code == 422
     post.assert_not_called()
 
@@ -161,10 +160,12 @@ def test_rest_endpoint_rejects_invalid_office(office_id: Any) -> None:
     (CREDITS, []),
     ([], [])
 ])
-def test_rest_endpoint_rejects_empty_credits_or_debits(credits_val: list, debits_val: list) -> None:
+def test_rest_endpoint_rejects_empty_credits_or_debits(
+    client: TestClient, credits_val: list, debits_val: list
+) -> None:
     body = {"office_id": 1, "date": "10 March 2026", "credits": credits_val, "debits": debits_val, "currency_code": "USD"}
     with patch.object(fineract_client, "execute_post") as post:
-        response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
+        response = client.post("/api/accounting/journal-entries", json=body)
     assert response.status_code == 422
     post.assert_not_called()
 
@@ -175,9 +176,9 @@ def test_rest_endpoint_rejects_empty_credits_or_debits(credits_val: list, debits
     [{"glAccountId": 1, "amount": -10}],
     [{"glAccountId": True, "amount": 100}],
 ])
-def test_rest_endpoint_rejects_invalid_items(bad_credits: list) -> None:
+def test_rest_endpoint_rejects_invalid_items(client: TestClient, bad_credits: list) -> None:
     body = {"office_id": 1, "date": "10 March 2026", "credits": bad_credits, "debits": DEBITS, "currency_code": "USD"}
     with patch.object(fineract_client, "execute_post") as post:
-        response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
+        response = client.post("/api/accounting/journal-entries", json=body)
     assert response.status_code == 422
     post.assert_not_called()
