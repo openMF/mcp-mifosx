@@ -462,7 +462,7 @@ def get_center(centerId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("create_new_center")
-def create_new_center(name: str, officeId: int, externalId: str = None) -> dict:
+def create_new_center(name: str, officeId: StrictInt, externalId: str = None) -> dict:
     """Create a new center"""
     return create_center_domain.func(name, officeId, externalId)
 

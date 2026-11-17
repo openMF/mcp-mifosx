@@ -6,6 +6,7 @@ Keeps commercial opportunities, from first contact until they are registered
 in Fineract or discarded. See README.md for the stages and rules.
 """
 
+import json
 import os
 import re
 from contextlib import asynccontextmanager
@@ -112,11 +113,24 @@ class StageChange(BaseModel):
     reason_note: ReasonNote | None = None
 
 
+class RegistrationCompared(BaseModel):
+    """The opportunity's fields as the registration read them to make the loan application."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    national_id: str | None
+    full_name: str | None
+    requested_amount: Decimal | None
+    currency: str | None
+    term_months: int | None
+
+
 class Registration(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     fineract_client_id: int = Field(gt=0)
     fineract_loan_id: int = Field(gt=0)
+    compared: RegistrationCompared | None = Field(None, description="Refused (409) if any of these changed since")
 
 
 class Opportunity(BaseModel):
@@ -216,6 +230,68 @@ class DocumentCheck(BaseModel):
 
 class CheckRecorded(BaseModel):
     document: Document
+    opportunity: Opportunity
+
+
+Recommendation = Literal[rules.RECOMMENDATIONS]
+
+
+def bounded(limit: int) -> AfterValidator:
+    """A JSON object of at most `limit` characters written out compactly, as JSON.stringify does, with
+    letters such as "é" counted once rather than as \\u escapes."""
+    def check(value: dict | None) -> dict | None:
+        if value is not None and len(json.dumps(value, ensure_ascii=False, separators=(",", ":"))) > limit:
+            raise ValueError(f"must be at most {limit} characters as JSON")
+        return value
+    return AfterValidator(check)
+
+
+class AssessmentRecord(BaseModel):
+    """An assessment: the bureau result, the rules', the agent's and the final recommendation, with its reasons.
+    `compared` is the opportunity's fields as the assessment read them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID | None = Field(None, description="The assessment's id: sending the same assessment again with it changes nothing")
+    recommendation: Recommendation
+    reasons: Annotated[list[CheckReason], Field(max_length=20)] = []
+    bureau: Annotated[dict | None, bounded(2000)] = None
+    rules: Annotated[dict | None, bounded(4000)] = None
+    agent: Annotated[dict | None, bounded(4000)] = None
+    compared: RegistrationCompared
+
+    @model_validator(mode="after")
+    def consistent(self):
+        if self.recommendation == "consent_missing":
+            if self.bureau or self.rules or self.agent:
+                raise ValueError("consent_missing means nothing was queried: no bureau, rules or agent")
+        elif not (self.bureau and self.rules):
+            raise ValueError("an assessment needs the bureau result and the rules' outcome")
+        if self.recommendation == "reject" and not self.reasons:
+            raise ValueError("a reject needs a reason")
+        if self.agent and len(str(self.agent.get("findings") or "")) > 2000:
+            raise ValueError("the agent's findings may be at most 2000 characters")
+        return self
+
+
+class Assessment(BaseModel):
+    id: UUID
+    opportunity_id: UUID
+    at: datetime
+    actor: str
+    recommendation: str
+    reasons: list
+    bureau: dict | None
+    rules: dict | None
+    agent: dict | None
+
+
+class AssessmentList(BaseModel):
+    assessments: list[Assessment]
+
+
+class AssessmentRecorded(BaseModel):
+    assessment: Assessment
     opportunity: Opportunity
 
 
@@ -338,8 +414,10 @@ def opt_out(who: Annotated[auth.Who, auth.change("opt_out")], opportunity_id: UU
 
 @app.post("/opportunities/{opportunity_id}/registration", response_model=Opportunity)
 def register(who: Annotated[auth.Who, auth.change("register")], opportunity_id: UUID, body: Registration, con: Con):
-    """Records the Fineract client and loan application created for a qualified opportunity."""
-    return store.register(con, opportunity_id, body.fineract_client_id, body.fineract_loan_id, who.actor)
+    """Records the Fineract client and loan application created for a qualified opportunity. With `compared`,
+    refused (409) if the opportunity's CURP, name, amount, currency or term changed since they were read."""
+    return store.register(con, opportunity_id, body.fineract_client_id, body.fineract_loan_id, who.actor,
+                          body.compared.model_dump() if body.compared else None)
 
 
 # The image is the request body; /docs offers a file picker for it.
@@ -389,6 +467,25 @@ def record_document_check(who: Annotated[auth.Who, auth.change("check")], opport
         con, opportunity_id, document_id, body.result, [r.model_dump() for r in body.reasons], body.extracted,
         body.compared.model_dump(), who.actor, may_move=partial(auth.check_move, who.caller))
     return {"document": document, "opportunity": opportunity}
+
+
+@app.post("/opportunities/{opportunity_id}/assessments", response_model=AssessmentRecorded)
+def record_assessment(who: Annotated[auth.Who, auth.change("assess")], opportunity_id: UUID, body: AssessmentRecord, con: Con):
+    """Records an assessment (the assessment workflow) and, in the same transaction, the move it calls for: a
+    reject pauses the opportunity with its reasons; approve and refer leave it in assessing, for a person. Refused
+    (409) once it no longer applies: the opportunity has left assessing, its fields changed since `compared`, or,
+    for one that queried the bureau, no bureau consent is recorded. The same assessment again, with the same `id`,
+    changes nothing."""
+    assessment, opportunity = store.record_assessment(
+        con, opportunity_id, body.recommendation, [r.model_dump() for r in body.reasons], body.bureau, body.rules, body.agent,
+        body.compared.model_dump(), who.actor, may_move=partial(auth.check_move, who.caller), assessment_id=body.id)
+    return {"assessment": assessment, "opportunity": opportunity}
+
+
+@app.get("/opportunities/{opportunity_id}/assessments", response_model=AssessmentList, dependencies=[auth.allow("assessments")])
+def list_assessments(opportunity_id: UUID, con: Con):
+    """Newest first."""
+    return {"assessments": store.assessments(con, opportunity_id)}
 
 
 @app.get("/opportunities/{opportunity_id}/events", response_model=EventList, dependencies=[auth.allow("events")])
