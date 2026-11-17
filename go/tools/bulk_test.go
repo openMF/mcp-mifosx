@@ -1317,13 +1317,31 @@ func TestBulkIdentifierValidation(t *testing.T) {
 		{name: "numeric string", value: " 7 ", want: "7"},
 		{name: "json number", value: json.Number("7"), want: "7"},
 		{name: "json integral decimal", value: json.Number("7.0"), want: "7"},
+		{name: "json integral decimal trailing zeros", value: json.Number("7.0000000000000000"), want: "7"},
+		{name: "json integral exponent", value: json.Number("7e0"), want: "7"},
+		{name: "json integral positive exponent", value: json.Number("1e3"), want: "1000"},
+		{name: "json fractional decimal", value: json.Number("7.5"), wantErr: "whole number"},
+		// 7.0000000000000001 is not an integer, but converting it to float64
+		// rounds it to 7. Exact integrality must be checked first.
+		{name: "json fractional decimal below float precision", value: json.Number("7.0000000000000001"), wantErr: "whole number"},
+		{name: "json fractional exponent", value: json.Number("1E-3"), wantErr: "whole number"},
+		{name: "json negative integral decimal", value: json.Number("-7.0"), wantErr: "positive"},
+		{name: "json zero decimal", value: json.Number("0.0"), wantErr: "positive"},
+		{name: "json fraction syntax", value: json.Number("1/1"), wantErr: "whole number"},
+		{name: "json hex syntax", value: json.Number("0x10"), wantErr: "whole number"},
+		{name: "json NaN", value: json.Number("NaN"), wantErr: "whole number"},
+		{name: "json Inf", value: json.Number("Inf"), wantErr: "whole number"},
+		{name: "json trailing dot", value: json.Number("7."), wantErr: "whole number"},
+		{name: "json leading dot", value: json.Number(".7"), wantErr: "whole number"},
 		{name: "max safe integer", value: int64(9007199254740991), want: "9007199254740991"},
 		{name: "max safe float", value: float64(1<<53 - 1), want: "9007199254740991"},
+		{name: "max safe integral decimal", value: json.Number("9007199254740991.0"), want: "9007199254740991"},
 		{name: "exact large json number", value: json.Number("9007199254740993"), want: "9007199254740993"},
 		{name: "exact large numeric string", value: "9007199254740993", want: "9007199254740993"},
 		{name: "float above safe integer", value: float64(1 << 53), wantErr: "safe integer"},
 		{name: "rounded float identifier", value: 9007199254740993.0, wantErr: "safe integer"},
 		{name: "decimal above safe integer", value: json.Number("9007199254740993.0"), wantErr: "safe integer"},
+		{name: "decimal just above safe integer", value: json.Number("9007199254740992.0"), wantErr: "safe integer"},
 		{name: "nil", value: nil, wantErr: "null"},
 		{name: "empty string", value: "", wantErr: "empty"},
 		{name: "blank string", value: "   ", wantErr: "empty"},
@@ -1564,6 +1582,61 @@ func TestBulkKeepsExactLargeJSONIdentifiers(t *testing.T) {
 		if !paths[want] {
 			t.Errorf("expected exact path %s, saw %v", want, paths)
 		}
+	}
+}
+
+func TestBulkApplyFeesRejectsFractionalJSONIdentifier(t *testing.T) {
+	backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"path": r.URL.Path})
+	})
+	handler := bulkToolHandler(t, registry, "bulk_apply_fees")
+
+	// The raw JSON is kept exactly as written because marshalling the value
+	// would already round 7.0000000000000001 to 7.
+	result := invokeBulk(t, context.Background(), handler, map[string]any{
+		"requests": `[{"loanId":7.0000000000000001,"chargeId":3}]`,
+	})
+	report := decodeBulkReport(t, result)
+
+	if !result.IsError || report.Status != bulkStatusFailure || report.Failed != 1 || report.Succeeded != 0 {
+		t.Fatalf("fractional identifier was not rejected: %+v", report)
+	}
+	item := report.Results[0]
+	if item.Status != bulkItemError || !strings.Contains(item.Error, "invalid loanId") {
+		t.Fatalf("validation error was not preserved: %+v", item)
+	}
+	if backend.requestCount() != 0 {
+		t.Fatalf("fractional identifier sent %d requests: %v", backend.requestCount(), backend.recorded())
+	}
+	for _, call := range backend.recorded() {
+		if call.Method == http.MethodPost && call.Path == "/loans/7/charges" {
+			t.Fatalf("fractional identifier reached %s %s", call.Method, call.Path)
+		}
+	}
+}
+
+func TestBulkApplyFeesAcceptsIntegralDecimalJSONIdentifier(t *testing.T) {
+	backend, registry := newBulkBackend(t, func(_ *bulkBackend, w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]any{"path": r.URL.Path})
+	})
+	handler := bulkToolHandler(t, registry, "bulk_apply_fees")
+
+	// 7.0 is mathematically integral and must keep working through the exact
+	// decimal path.
+	result := invokeBulk(t, context.Background(), handler, map[string]any{
+		"requests": `[{"loanId":7.0,"chargeId":3}]`,
+	})
+	report := decodeBulkReport(t, result)
+
+	if result.IsError || report.Status != bulkStatusSuccess || report.Succeeded != 1 {
+		t.Fatalf("integral decimal identifier was rejected: %+v", report)
+	}
+	calls := backend.recorded()
+	if len(calls) != 1 {
+		t.Fatalf("expected one backend request, got %d: %v", len(calls), calls)
+	}
+	if calls[0].Method != http.MethodPost || calls[0].Path != "/loans/7/charges" {
+		t.Fatalf("unexpected request: %s %s", calls[0].Method, calls[0].Path)
 	}
 }
 

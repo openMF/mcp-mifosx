@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"os"
 	"strconv"
 	"strings"
@@ -324,16 +325,7 @@ func bulkIdentifier(value any) (string, error) {
 	case int64:
 		return bulkIntegerIdentifier(v)
 	case json.Number:
-		if parsed, err := v.Int64(); err == nil {
-			return bulkIntegerIdentifier(parsed)
-		}
-		// Accept an integral decimal form such as 7.0, but only through the
-		// float path that rejects values beyond exact float64 range.
-		parsed, err := v.Float64()
-		if err != nil {
-			return "", fmt.Errorf("identifier %q must be a whole number", v.String())
-		}
-		return bulkFloatIdentifier(parsed)
+		return bulkJSONNumberIdentifier(v)
 	case string:
 		trimmed := strings.TrimSpace(v)
 		if trimmed == "" {
@@ -375,6 +367,52 @@ func bulkFloatIdentifier(value float64) (string, error) {
 		return "", fmt.Errorf("identifier must be a positive whole number, got %v", value)
 	}
 	return bulkIntegerIdentifier(int64(value))
+}
+
+// bulkJSONNumberIdentifier validates a json.Number identifier exactly. Integer
+// literals keep their full int64 range. Decimal and exponent forms must be
+// mathematically integral, and are held to the float64 safe-integer bound so
+// the existing precision restriction does not widen.
+func bulkJSONNumberIdentifier(value json.Number) (string, error) {
+	raw := value.String()
+	if parsed, err := value.Int64(); err == nil {
+		return bulkIntegerIdentifier(parsed)
+	}
+	if !bulkJSONNumberSyntax(raw) {
+		return "", fmt.Errorf("identifier %q must be a whole number", raw)
+	}
+	exact, ok := new(big.Rat).SetString(raw)
+	if !ok || !exact.IsInt() {
+		return "", fmt.Errorf("identifier %q must be a whole number", raw)
+	}
+	if exact.Sign() < 1 {
+		return "", fmt.Errorf("identifier %s must be a positive whole number", raw)
+	}
+	numerator := exact.Num()
+	if !numerator.IsInt64() || numerator.Int64() > bulkMaxSafeInteger {
+		return "", fmt.Errorf("identifier %s exceeds the maximum safe integer %d and may have lost precision", raw, bulkMaxSafeInteger)
+	}
+	return strconv.FormatInt(numerator.Int64(), 10), nil
+}
+
+// bulkJSONNumberSyntax reports whether raw is exactly one JSON number token.
+// json.Number values can be constructed directly, so a value reaching
+// bulkIdentifier has not necessarily been produced by the JSON decoder.
+func bulkJSONNumberSyntax(raw string) bool {
+	if strings.TrimSpace(raw) != raw {
+		return false
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return false
+	}
+	if _, ok := value.(json.Number); !ok {
+		return false
+	}
+	var trailing any
+	return decoder.Decode(&trailing) == io.EOF
 }
 
 // bulkNonEmptyString validates a textual native parameter such as a search
