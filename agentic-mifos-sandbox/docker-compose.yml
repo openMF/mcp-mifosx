@@ -113,6 +113,8 @@ services:
     depends_on:
       fineract-db:
         condition: service_healthy
+      state-init:
+        condition: service_completed_successfully
     environment:
       SPRING_PROFILES_ACTIVE: test,diagnostics
       FINERACT_NODE_ID: 1
@@ -132,6 +134,9 @@ services:
       FINERACT_SERVER_SSL_ENABLED: "true"
       FINERACT_INSECURE_HTTP_CLIENT: "true"
       FINERACT_EXTERNAL_EVENTS_ENABLED: "false"
+      # Documents (clients' identity documents, uploads from the web app) on a
+      # volume: the rest of the file system is read-only.
+      FINERACT_CONTENT_FILESYSTEM_ROOT_FOLDER: /var/lib/fineract/documents
       JAVA_TOOL_OPTIONS: >-
         -Xmx1536m -Xms512m
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
@@ -148,6 +153,8 @@ services:
     # Docker's init reaps them.
     init: true
     tmpfs: ["/tmp:size=128m"]
+    volumes:
+      - fineract-documents:/var/lib/fineract/documents
     networks: [fineract-db, core]
     mem_limit: 2g
     pids_limit: 1024
@@ -220,16 +227,18 @@ services:
     restart: unless-stopped
 
   # Hands the shared bootstrap-state volume to uid 1000 (the Lightning and
-  # bootstrap images), so neither needs to run as root. FOWNER: on later runs
-  # the folder already belongs to 1000, and root needs it to chmod.
+  # bootstrap images), and the fineract-documents volume to nobody (65534,
+  # Fineract), so none of them needs to run as root. FOWNER: on later runs the
+  # folders already belong to those users, and root needs it to chmod.
   state-init:
     <<: *hardened
     image: busybox:1.38
-    command: ["sh", "-c", "chown 1000:1000 /state && chmod 700 /state"]
+    command: ["sh", "-c", "chown 1000:1000 /state && chmod 700 /state && chown 65534:65534 /fineract-documents && chmod 700 /fineract-documents"]
     user: root
     cap_add: [CHOWN, FOWNER]
     volumes:
       - bootstrap-state:/state
+      - fineract-documents:/fineract-documents
     network_mode: none
     mem_limit: 32m
     pids_limit: 32
@@ -863,6 +872,7 @@ networks:
 
 volumes:
   fineract-db-data: {}
+  fineract-documents: {}
   lightning-db-data: {}
   bootstrap-state: {}
   ollama-data: {}

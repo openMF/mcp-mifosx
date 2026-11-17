@@ -21,6 +21,10 @@ server {
         proxy_ssl_verify off;
         proxy_connect_timeout 30s;
         proxy_read_timeout 120s;
+        # Document uploads: Fineract takes files up to 5 MB in requests up to
+        # 10 MB, above nginx's 1 MB default. Bodies are buffered in the
+        # /var/cache/nginx tmpfs.
+        client_max_body_size 10m;
     }
 
     # Rendered at start-up into /run, as the image is read-only.

@@ -67,9 +67,10 @@ CALLERS = {
         moves=(frozenset({"documents"}), frozenset({"assessing", rules.PAUSED})),
     ),
     # The OpenFn registration workflow: reads a qualified opportunity, its
-    # documents and its audit trail (for Credit's note in Fineract), and records
+    # documents and its audit trail (for Credit's note in Fineract), and the
+    # identity document's image it attaches to the Fineract client, and records
     # the Fineract client and loan application it created. Moves no stage itself.
-    "registration": Permissions(frozenset({"read", "documents", "events", "register"})),
+    "registration": Permissions(frozenset({"read", "documents", "document_content", "events", "register"})),
     # The OpenFn assessment workflow: reads an opportunity in assessing and records
     # its assessment, whose only move is a reject to paused. Approving is a proposal
     # a person confirms.
