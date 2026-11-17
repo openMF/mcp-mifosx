@@ -14,7 +14,7 @@ the routes that must keep working when both controls pass.
 import ast
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List
 
 import pytest
 from fastapi.routing import APIRoute
@@ -55,7 +55,7 @@ def profiles_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture
-def client(profiles_file: Path) -> TestClient:
+def client(profiles_file: Path) -> Iterator[TestClient]:
     with TestClient(api_server.app) as test_client:
         yield test_client
 
@@ -230,6 +230,38 @@ def test_unreadable_profiles_file_fails_closed(
     calls: List[Dict[str, Any]] = []
     monkeypatch.setattr(api_server.clients, "search_clients_by_name", _tool({}, calls))
     monkeypatch.setenv("MCP_PROFILES_FILE", str(tmp_path / "missing.toml"))
+
+    response = client.get(
+        "/api/clients/search", params={"name": "Ann"}, headers=AUTH_HEADERS
+    )
+
+    assert response.status_code == 503
+    assert calls == []
+
+
+def test_profiles_path_that_is_a_directory_fails_closed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: List[Dict[str, Any]] = []
+    monkeypatch.setattr(api_server.clients, "search_clients_by_name", _tool({}, calls))
+    monkeypatch.setenv("MCP_PROFILES_FILE", str(tmp_path))
+
+    response = client.get(
+        "/api/clients/search", params={"name": "Ann"}, headers=AUTH_HEADERS
+    )
+
+    assert response.status_code == 503
+    assert calls == []
+
+
+def test_profiles_file_that_is_not_utf8_fails_closed(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: List[Dict[str, Any]] = []
+    monkeypatch.setattr(api_server.clients, "search_clients_by_name", _tool({}, calls))
+    path = tmp_path / "invalid-utf8.toml"
+    path.write_bytes(b"\xff\xfe\x00")
+    monkeypatch.setenv("MCP_PROFILES_FILE", str(path))
 
     response = client.get(
         "/api/clients/search", params={"name": "Ann"}, headers=AUTH_HEADERS

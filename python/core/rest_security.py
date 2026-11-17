@@ -95,6 +95,8 @@ def active_tool_profile() -> ToolProfile:
     try:
         return resolve_tool_profile()
     except ProfileError as e:
+        # load_profiles normalizes missing, unreadable (including a directory),
+        # undecodable and malformed files into ProfileError.
         logger.error("REST request refused: %s", e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

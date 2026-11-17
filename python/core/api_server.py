@@ -217,8 +217,9 @@ async def chat_with_agent(req: ChatRequest):
 
         return {"reply": "Failed to get AI response"}
     except Exception:
-        # Do not echo exception text to the caller: it can contain backend
-        # paths or configuration from the agent stack.
+        # The optional agent package is external and has no declared exception
+        # contract. Every agent failure becomes a generic reply, and is logged
+        # server-side, rather than surfacing backend details to the caller.
         logger.exception("Agent chat failed")
         return {"reply": "The agent could not complete the request."}
 

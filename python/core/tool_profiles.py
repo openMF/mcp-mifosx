@@ -61,14 +61,22 @@ def load_profiles(path: Union[str, os.PathLike]) -> Dict[str, FrozenSet[str]]:
     Raises
     ------
     ProfileError
-        The file is missing or not valid TOML, a profile has no tool list,
-        the default profile is missing, or the file redefines ``all``.
+        The file is missing, cannot be read, is not valid UTF-8, is not
+        valid TOML, a profile has no tool list, the default profile is
+        missing, or the file redefines ``all``.
     """
     path = Path(path)
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         raise ProfileError(f"Tool profiles file not found: {path}") from None
+    except OSError as e:
+        raise ProfileError(f"Tool profiles file {path} cannot be read: {e}") from None
+    except UnicodeDecodeError as e:
+        raise ProfileError(f"Tool profiles file {path} is not valid UTF-8: {e}") from None
+
+    try:
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
         raise ProfileError(f"Tool profiles file {path} is not valid TOML: {e}") from None
 

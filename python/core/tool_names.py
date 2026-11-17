@@ -16,7 +16,10 @@ Keep this map in step with the registry. ``tests/test_api_server_security.py``
 fails when a registry tool has no entry here.
 """
 
-DOMAIN_TOOL_TO_MCP_TOOL = {
+from types import MappingProxyType
+from typing import Mapping
+
+DOMAIN_TOOL_TO_MCP_TOOL: Mapping[str, str] = MappingProxyType({
     # Clients
     "search_clients_by_name": "search_clients",
     "get_client_details": "get_client",
@@ -101,4 +104,4 @@ DOMAIN_TOOL_TO_MCP_TOOL = {
     "list_codes": "list_system_codes",
     "get_code_values": "get_code_values",
     "list_datatables": "list_all_datatables",
-}
+})

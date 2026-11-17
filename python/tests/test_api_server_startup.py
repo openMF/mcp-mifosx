@@ -21,7 +21,7 @@ AUTH_HEADERS = {"X-API-Key": REST_KEY}
 
 
 @pytest.fixture(autouse=True)
-def _rest_api_key(monkeypatch):
+def _rest_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MCP_REST_API_KEY", REST_KEY)
 
 
