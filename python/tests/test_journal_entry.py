@@ -3,14 +3,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-"""Journal entries used to be posted without a currencyCode, which Fineract always rejects."""
+"""Journal entries require a valid office_id, currencyCode, non-empty credits and debits."""
 
+import inspect
 from typing import Any, Dict
 from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
 from fastmcp.exceptions import ToolError
+from pydantic import StrictInt
 
 import mcp_server
 from core import api_server
@@ -68,6 +70,113 @@ def test_rest_endpoint_sends_the_currency() -> None:
 @pytest.mark.parametrize("currency", [{}, {"currency_code": ""}, {"currency_code": "   "}])
 def test_rest_endpoint_needs_a_currency(currency: Dict[str, str]) -> None:
     body = {"office_id": 1, "date": "10 March 2026", "credits": CREDITS, "debits": DEBITS, **currency}
+    with patch.object(fineract_client, "execute_post") as post:
+        response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
+    assert response.status_code == 422
+    post.assert_not_called()
+
+
+def test_mcp_tool_office_signature_and_strict_int() -> None:
+    param = inspect.signature(mcp_server.record_journal_entry).parameters["officeId"]
+    assert param.default is inspect.Parameter.empty
+    assert param.annotation is StrictInt
+
+
+@pytest.mark.parametrize("office_id", [True, 0, -3, "1"])
+def test_mcp_tool_rejects_invalid_office(office_id: Any) -> None:
+    with patch.object(fineract_client, "execute_post") as post:
+        result = _call(officeId=office_id, date="10 March 2026", credits=CREDITS, debits=DEBITS, currencyCode="USD")
+    post.assert_not_called()
+    assert "officeId" in result["error"]
+
+
+@pytest.mark.parametrize("credits_val,debits_val", [
+    ([], DEBITS),
+    (CREDITS, []),
+    ([], [])
+])
+def test_mcp_tool_rejects_empty_credits_or_debits(credits_val: list, debits_val: list) -> None:
+    with patch.object(fineract_client, "execute_post") as post:
+        result = _call(officeId=1, date="10 March 2026", credits=credits_val, debits=debits_val, currencyCode="USD")
+    post.assert_not_called()
+    assert "non-empty list" in result["error"]
+
+
+@pytest.mark.parametrize("bad_credits", [
+    [{"glAccountId": 0, "amount": 100}],
+    [{"glAccountId": -1, "amount": 100}],
+    [{"glAccountId": True, "amount": 100}],
+    [{"glAccountId": 1, "amount": 0}],
+    [{"glAccountId": 1, "amount": -50}],
+    ["invalid_item"],
+])
+def test_mcp_tool_rejects_invalid_entry_items(bad_credits: list) -> None:
+    with patch.object(fineract_client, "execute_post") as post:
+        result = _call(officeId=1, date="10 March 2026", credits=bad_credits, debits=DEBITS, currencyCode="USD")
+    post.assert_not_called()
+    assert "error" in result
+
+
+@pytest.mark.parametrize("office_id", [True, 0, -1, "2"])
+def test_domain_tool_rejects_invalid_office(office_id: Any) -> None:
+    with patch.object(fineract_client, "execute_post") as post:
+        result = accounting.create_journal_entry.func(office_id, "10 March 2026", CREDITS, DEBITS, "USD")
+    post.assert_not_called()
+    assert "office_id must be a positive integer" in result["error"]
+
+
+def test_domain_tool_rejects_empty_credits_or_debits() -> None:
+    with patch.object(fineract_client, "execute_post") as post:
+        result1 = accounting.create_journal_entry.func(1, "10 March 2026", [], DEBITS, "USD")
+        result2 = accounting.create_journal_entry.func(1, "10 March 2026", CREDITS, [], "USD")
+    post.assert_not_called()
+    assert "credits must be a non-empty list" in result1["error"]
+    assert "debits must be a non-empty list" in result2["error"]
+
+
+@pytest.mark.parametrize("bad_items", [
+    [{"glAccountId": 0, "amount": 100}],
+    [{"glAccountId": 1, "amount": 0}],
+    [{"glAccountId": 1, "amount": -10}],
+    ["not_a_dict"]
+])
+def test_domain_tool_rejects_bad_entry_items(bad_items: list) -> None:
+    with patch.object(fineract_client, "execute_post") as post:
+        result = accounting.create_journal_entry.func(1, "10 March 2026", bad_items, DEBITS, "USD")
+    post.assert_not_called()
+    assert "error" in result
+
+
+@pytest.mark.parametrize("office_id", [True, 0, -1, "bad"])
+def test_rest_endpoint_rejects_invalid_office(office_id: Any) -> None:
+    body = {"office_id": office_id, "date": "10 March 2026", "credits": CREDITS, "debits": DEBITS, "currency_code": "USD"}
+    with patch.object(fineract_client, "execute_post") as post:
+        response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
+    assert response.status_code == 422
+    post.assert_not_called()
+
+
+@pytest.mark.parametrize("credits_val,debits_val", [
+    ([], DEBITS),
+    (CREDITS, []),
+    ([], [])
+])
+def test_rest_endpoint_rejects_empty_credits_or_debits(credits_val: list, debits_val: list) -> None:
+    body = {"office_id": 1, "date": "10 March 2026", "credits": credits_val, "debits": debits_val, "currency_code": "USD"}
+    with patch.object(fineract_client, "execute_post") as post:
+        response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
+    assert response.status_code == 422
+    post.assert_not_called()
+
+
+@pytest.mark.parametrize("bad_credits", [
+    [{"glAccountId": 0, "amount": 100}],
+    [{"glAccountId": 1, "amount": 0}],
+    [{"glAccountId": 1, "amount": -10}],
+    [{"glAccountId": True, "amount": 100}],
+])
+def test_rest_endpoint_rejects_invalid_items(bad_credits: list) -> None:
+    body = {"office_id": 1, "date": "10 March 2026", "credits": bad_credits, "debits": DEBITS, "currency_code": "USD"}
     with patch.object(fineract_client, "execute_post") as post:
         response = TestClient(api_server.app).post("/api/accounting/journal-entries", json=body)
     assert response.status_code == 422
