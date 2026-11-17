@@ -21,7 +21,9 @@ description: >
 # identity token) and "ollama" ({ "baseUrl", "visionModel" }, no secret). The
 # registration workflow uses "los-registration" (the LOS's registration token)
 # and "fineract-registration" (like "fineract", as agent-registration, which may
-# create clients and loan applications but never approve one).
+# create clients and loan applications but never approve one). The assessment
+# workflow uses "los-assessment" (the LOS's assessment token) and
+# "agent-decision".
 credentials:
   super@openfn.org-fineract:
     name: fineract
@@ -49,6 +51,9 @@ credentials:
     owner: super@openfn.org
   super@openfn.org-fineract-registration:
     name: fineract-registration
+    owner: super@openfn.org
+  super@openfn.org-los-assessment:
+    name: los-assessment
     owner: super@openfn.org
 
 # Adaptors are pinned to exact versions, so every run uses the code that was
@@ -1843,4 +1848,253 @@ workflows:
         condition_type: on_job_success
         source_job: register-in-fineract
         target_job: record-registration
+        enabled: true
+
+  # -------------------------------------------------------------------------
+  # Workflow 7: Commercial flow assessment (an officer asks) → LOS
+  # -------------------------------------------------------------------------
+  opportunity-assessment:
+    name: Opportunity Assessment
+    jobs:
+      read-opportunity:
+        name: Read the Opportunity in Assessing from the LOS
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los-assessment
+        enabled: true
+        body: |
+          // An officer asks for an opportunity in `assessing` to be assessed:
+          // { "opportunity_id": "<id in the LOS>" }. The webhook answers at once:
+          // the decision agent can take minutes on a CPU, longer than Lightning
+          // waits for a reply. The assessment is kept in the LOS
+          // (GET /opportunities/{id}/assessments). Four jobs, one credential each:
+          // this one reads the opportunity; the next queries the bureau and applies
+          // the rules; the next asks the decision agent; the last records it all.
+          // Uses the "los-assessment" credential (raw JSON): { baseUrl, access_token },
+          // the LOS's assessment token: it may read an opportunity and record an
+          // assessment (whose only move is to paused), nothing else.
+          fn(async state => {
+            const id = (state.data || {}).opportunity_id;
+            const done = (decision, extra = {}) => ({ result: { decision, opportunityId: id, reasons: [], ...extra } });
+            if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+              return done('invalid', { reasons: [{ code: 'unknown_opportunity', detail: 'opportunity_id must be the id of an opportunity in the LOS' }] });
+            }
+            let opportunity;
+            try {
+              opportunity = (await get(`/opportunities/${id}`)(state)).data;
+            } catch (e) {
+              if (e.statusCode === 404) return done('invalid', { reasons: [{ code: 'unknown_opportunity', detail: `no opportunity ${id}` }] });
+              throw e;
+            }
+            if (opportunity.stage !== 'assessing') return done('not_assessing', { stage: opportunity.stage });
+            const missing = ['full_name', 'national_id', 'requested_amount', 'currency', 'term_months']
+              .filter(key => opportunity[key] === null || opportunity[key] === undefined);
+            if (missing.length) {
+              return done('invalid', { stage: opportunity.stage, reasons: missing.map(key => ({ code: 'missing', detail: `${key} is missing` })) });
+            }
+            // The assessment's id, made once per run: retrying only the last step sends
+            // it again, and the LOS then changes nothing.
+            const hex = n => Array.from({ length: n }, () => Math.floor(Math.random() * 16).toString(16)).join('');
+            const assessmentId = `${hex(8)}-${hex(4)}-4${hex(3)}-${'89ab'[Math.floor(Math.random() * 4)]}${hex(3)}-${hex(12)}`;
+            // Consent is the client's act: without it, nothing is queried
+            return { opportunity, assessmentId, consentMissing: !opportunity.bureau_consent_at };
+          });
+
+      bureau-and-rules:
+        name: Query the Bureau and Apply the Rules
+        adaptor: "@openfn/language-common@3.3.5"
+        enabled: true
+        body: |
+          // The bureau check is SIMULATED in the sandbox, like the loan flow's
+          // credit data: a real connector (its consent evidence, query and raw
+          // results) replaces this one job. The result depends on the CURP's last
+          // character, so tests and demos can choose it:
+          //   0-5: score 720, no delinquencies   6-7: score 610
+          //   8: score 520                        9: score 680, 2 delinquencies
+          // The rules use the loan flow's credit thresholds, placeholders for the
+          // institution's score inputs and weights. A reject wins over a refer.
+          fn(state => {
+            if (state.result || state.consentMissing) return state;
+            const { opportunity } = state;
+            const last = String(opportunity.national_id).slice(-1);
+            const profile = /[67]/.test(last) ? { score: 610, delinquencies: 0 }
+              : last === '8' ? { score: 520, delinquencies: 0 }
+                : last === '9' ? { score: 680, delinquencies: 2 }
+                  : { score: 720, delinquencies: 0 };
+            const bureau = { provider: 'simulated-bureau', simulated: true, queriedAt: new Date().toISOString(), ...profile };
+
+            const reject = [];
+            const refer = [];
+            if (bureau.delinquencies > 0) reject.push({ code: 'delinquent', detail: `${bureau.delinquencies} delinquent accounts at the bureau` });
+            if (bureau.score < 550) reject.push({ code: 'bureau_score_low', detail: `bureau score ${bureau.score}, below 550` });
+            else if (bureau.score < 650) refer.push({ code: 'bureau_score_borderline', detail: `bureau score ${bureau.score}, between 550 and 649` });
+            if (Number(opportunity.requested_amount) > 50000) {
+              refer.push({ code: 'high_amount', detail: `amount ${opportunity.requested_amount}, above 50000: a person reviews it` });
+            }
+            const recommendation = reject.length ? 'reject' : refer.length ? 'refer' : 'approve';
+            console.log('assessment', opportunity.external_id, 'rules', recommendation, [...reject, ...refer].map(r => r.code).join(','));
+            return { opportunity, assessmentId: state.assessmentId, bureau, rules: { recommendation, reasons: [...reject, ...refer] } };
+          });
+
+      decision-support:
+        name: Decision Support (agent-decision + guardrail)
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-agent-decision
+        enabled: true
+        body: |
+          // agent-decision looks the applicant up in Fineract (read-only MCP tools)
+          // and recommends, as in the loan flow's decision job: its answer counts
+          // only if it looked the applicant up (evidence gate), and the final
+          // recommendation is never more lenient than the rules' (guardrail, in the
+          // next job). If the agent cannot be reached, runs out of time, skips the
+          // lookup or answers in another shape, the rules decide (rules-fallback).
+          // state.configuration is the "agent-decision" credential: { url, token }.
+          fn(async state => {
+            if (state.result || state.consentMissing) return state;
+            const { opportunity, bureau, rules } = state;
+            const agent = state.configuration || {};
+            const fallback = reason => {
+              console.log(`agent-decision not used (${reason}); the rules decide`);
+              return { ...state, agent: { recommendation: rules.recommendation, source: 'rules-fallback', error: String(reason).slice(0, 300) } };
+            };
+            if (!agent.url || !agent.token) return fallback('no agent-decision credential');
+
+            const verdict = { approve: 'PASS', refer: 'REFER', reject: 'FAIL' }[rules.recommendation];
+            const rationale = rules.reasons.map(r => r.detail).join('; ') || 'The bureau check passed.';
+            const input = JSON.stringify({
+              applicant: {
+                fullName: opportunity.full_name,
+                curp: opportunity.national_id,
+                requestedAmount: Number(opportunity.requested_amount),
+                termMonths: opportunity.term_months
+              },
+              rules: { recommendation: rules.recommendation.toUpperCase(), rationale },
+              assessments: [{ type: 'CREDIT', verdict, rationale: `bureau score ${bureau.score}, ${bureau.delinquencies} delinquencies (simulated)` }],
+              credit: { bureau: bureau.provider, score: bureau.score, delinquencies: bureau.delinquencies }
+            }, null, 2);
+
+            // The runner stops the agent at 240 s and answers 504; the request
+            // timeout leaves it room to do so.
+            const options = {
+              headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + agent.token },
+              timeout: 260000
+            };
+            let reply;
+            try {
+              reply = (await post(`${agent.url}/run`, { input, timeout_seconds: 240 }, options)(state)).data || {};
+            } catch (e) {
+              return fallback(e.message);
+            }
+            let answer;
+            try {
+              const raw = String(reply.output || '');
+              answer = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
+            } catch (e) {
+              return fallback(`unreadable answer (${e.message})`);
+            }
+            const recommendation = String(answer.recommendation || '').toLowerCase();
+            if (!['approve', 'refer', 'reject'].includes(recommendation)) {
+              return fallback(`unexpected recommendation: ${answer.recommendation}`);
+            }
+            // Evidence gate: "no client found" (a new applicant) comes back as a tool
+            // error, so any lookup call counts
+            const calls = reply.tool_calls || [];
+            if (!calls.some(t => t.tool === 'get_client_accts' || t.tool === 'search_clients')) {
+              return fallback('the agent did not look the applicant up in Fineract');
+            }
+            console.log('agent-decision', recommendation, calls.map(t => t.tool).join(','));
+            return { ...state, agent: {
+              recommendation,
+              source: 'agent-decision',
+              findings: String(answer.summary || '').slice(0, 2000),
+              toolCalls: calls.slice(0, 20).map(t => String(t.is_error ? `${t.tool} (failed)` : t.tool).slice(0, 60)),
+              model: String(reply.model || '').slice(0, 100),
+              durationMs: reply.duration_ms
+            } };
+          });
+
+      record-assessment:
+        name: Record the Assessment in the LOS
+        adaptor: "@openfn/language-http@7.3.3"
+        credential: super@openfn.org-los-assessment
+        enabled: true
+        body: |
+          // The final recommendation is the stricter of the rules' and the agent's
+          // (approve < refer < reject): the agent may tighten it, never loosen it.
+          // One request records the assessment and the move it calls for: reject
+          // pauses the opportunity with its first reason code; approve is a proposal
+          // a person confirms by moving it to pre_approved; refer is theirs to decide.
+          // The LOS refuses (409) if the opportunity left assessing, or its CURP,
+          // name, amount, currency or term changed since the first job read them.
+          // Uses the "los-assessment" credential, like the first job.
+          fn(async state => {
+            if (state.result) {
+              console.log('assessment', JSON.stringify(state.result));
+              return state.result;
+            }
+            const { opportunity, bureau, rules } = state;
+            // The LOS keeps at most 4000 characters of the agent's object, written out
+            // compactly: shorten the findings to fit (JSON.stringify counts at least
+            // as many characters as the LOS does), or keep only what decided.
+            const LIMIT = 4000;
+            let agent = state.agent;
+            if (agent && JSON.stringify(agent).length > LIMIT) {
+              const findings = String(agent.findings || '');
+              const over = JSON.stringify(agent).length - LIMIT;
+              agent = { ...agent, findings: `${findings.slice(0, Math.max(0, findings.length - over - 3))}...` };
+              if (JSON.stringify(agent).length > LIMIT) {
+                agent = { recommendation: agent.recommendation, source: agent.source, error: 'the agent\'s details were too long to keep' };
+              }
+            }
+            const compared = {};
+            for (const key of ['national_id', 'full_name', 'requested_amount', 'currency', 'term_months']) compared[key] = opportunity[key];
+            let body;
+            if (state.consentMissing) {
+              body = { id: state.assessmentId, recommendation: 'consent_missing', compared, reasons: [{ code: 'consent_missing',
+                detail: 'no bureau consent recorded: the client gives it, an officer records it (POST /consents/bureau)' }] };
+            } else {
+              const severity = { approve: 0, refer: 1, reject: 2 };
+              const stricter = severity[agent.recommendation] > severity[rules.recommendation];
+              const recommendation = stricter ? agent.recommendation : rules.recommendation;
+              const reasons = stricter
+                ? [{ code: 'decision_agent', detail: `the decision agent recommended ${agent.recommendation}: ${String(agent.findings || '').slice(0, 300)}` }, ...rules.reasons]
+                : rules.reasons;
+              body = { id: state.assessmentId, recommendation, reasons, bureau, rules, agent, compared };
+            }
+            const recorded = (await post(`/opportunities/${opportunity.id}/assessments`, body)(state)).data;
+            console.log('assessment', opportunity.external_id, body.recommendation, body.reasons.map(r => r.code).join(','));
+            return {
+              decision: body.recommendation,
+              opportunityId: opportunity.id,
+              externalId: opportunity.external_id,
+              stage: recorded.opportunity.stage,
+              reasons: body.reasons,
+              source: agent ? agent.source : null
+            };
+          });
+
+    triggers:
+      webhook-opportunity-assessment:
+        type: webhook
+        enabled: true
+
+    edges:
+      webhook-opportunity-assessment->read-opportunity:
+        source_trigger: webhook-opportunity-assessment
+        target_job: read-opportunity
+        condition_type: always
+        enabled: true
+      read-opportunity->bureau-and-rules:
+        condition_type: on_job_success
+        source_job: read-opportunity
+        target_job: bureau-and-rules
+        enabled: true
+      bureau-and-rules->decision-support:
+        condition_type: on_job_success
+        source_job: bureau-and-rules
+        target_job: decision-support
+        enabled: true
+      decision-support->record-assessment:
+        condition_type: on_job_success
+        source_job: decision-support
+        target_job: record-assessment
         enabled: true

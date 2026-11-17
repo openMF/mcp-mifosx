@@ -38,6 +38,12 @@ MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
 # it for a person; for another one, it stays in documents.
 CHECK_RESULTS = ("valid", "request_document", "document_mismatch")
 CHECK_MOVES = {"valid": "assessing", "document_mismatch": PAUSED}
+# An assessment's recommendation (the assessment workflow): approve is a
+# proposal a person confirms by moving the opportunity to pre_approved, refer
+# is theirs to decide, reject pauses it; consent_missing means nothing was
+# assessed, the client has not given the bureau consent.
+RECOMMENDATIONS = ("approve", "refer", "reject", "consent_missing")
+ASSESSMENT_MOVES = {"reject": PAUSED}
 
 
 class Conflict(Exception):

@@ -301,7 +301,7 @@ def test_every_route_but_health_needs_a_token(client):
               .replace("{kind}", "bureau"))
              for route in app.app.routes if isinstance(route, APIRoute) and route.path != "/health"
              for method in route.methods]
-    assert len(calls) == 13
+    assert len(calls) == 15
     for method, path in calls:
         response = client.request(method, path)
         assert response.status_code == 401, (method, path, response.text)
@@ -755,3 +755,164 @@ def test_registration_may_not_move_edit_consent_upload_search_or_read_images(cli
         assert response.status_code == 403, (method, url, response.text)
         assert response.json()["detail"].startswith("registration may not ")
     assert opportunity_of(client, opportunity)["stage"] == "documents"
+
+
+# --- Assessments ----------------------------------------------------------------
+
+BUREAU = {"provider": "simulated-bureau", "simulated": True, "score": 720, "delinquencies": 0}
+
+
+def in_assessing(client, consent=True):
+    opportunity = create(client, {**ANA, "national_id": "LOPA800101MDFRRN01"})
+    if consent:
+        client.post(f"/opportunities/{opportunity['id']}/consents/bureau")
+    assert move(client, opportunity, "assessing").status_code == 200
+    return opportunity
+
+
+def assess(client, opportunity, recommendation="approve", reasons=(), headers=None, **fields):
+    body = {"recommendation": recommendation, "reasons": list(reasons), "compared": read_for_registration(opportunity)}
+    if recommendation != "consent_missing":
+        body.update(bureau=BUREAU, rules={"recommendation": recommendation, "reasons": list(reasons)},
+                    agent={"recommendation": recommendation, "source": "rules-fallback", "error": "no agent"})
+    body.update(fields)
+    return client.post(f"/opportunities/{opportunity['id']}/assessments", json=body, headers=headers)
+
+
+LOW = [{"code": "bureau_score_low", "detail": "bureau score 520, below 550"},
+       {"code": "high_amount", "detail": "amount 60000.00, above 50000"}]
+
+
+def test_approve_and_refer_are_kept_and_leave_the_opportunity_in_assessing(client, assessment):
+    opportunity = in_assessing(client)
+    for recommendation in ("approve", "refer"):
+        response = assess(client, opportunity, recommendation, headers=assessment)
+        assert response.status_code == 200, response.text
+        assert (response.json()["assessment"]["recommendation"], response.json()["opportunity"]["stage"]) == (recommendation, "assessing")
+    listed = client.get(f"/opportunities/{opportunity['id']}/assessments").json()["assessments"]
+    assert [a["recommendation"] for a in listed] == ["refer", "approve"]
+    assert listed[0]["bureau"] == BUREAU and listed[0]["actor"] == "assessment"
+
+
+def test_a_reject_pauses_the_opportunity_with_its_reasons(client, assessment):
+    opportunity = in_assessing(client)
+    after = assess(client, opportunity, "reject", LOW, headers=assessment).json()["opportunity"]
+    assert (after["stage"], after["reason_code"]) == ("paused", "bureau_score_low")
+    assert after["reason_note"] == "bureau score 520, below 550; amount 60000.00, above 50000"
+
+
+def test_the_event_names_the_recommendation_and_codes_but_not_the_bureau(client, assessment):
+    opportunity = in_assessing(client)
+    assess(client, opportunity, "reject", LOW, headers=assessment)
+    assessed = next(e for e in events(client, opportunity) if e["action"] == "assessed")
+    assert (assessed["actor"], assessed["detail"]["recommendation"], assessed["detail"]["reasons"]) == (
+        "assessment", "reject", ["bureau_score_low", "high_amount"])
+    assert "520" not in json.dumps(events(client, opportunity))
+
+
+def test_consent_missing_is_recorded_without_a_bureau_result(client, assessment):
+    opportunity = in_assessing(client, consent=False)
+    reasons = [{"code": "consent_missing", "detail": "no bureau consent recorded"}]
+    response = assess(client, opportunity, "consent_missing", reasons, headers=assessment)
+    assert response.status_code == 200, response.text
+    assert (response.json()["assessment"]["bureau"], response.json()["opportunity"]["stage"]) == (None, "assessing")
+
+
+def test_a_bureau_based_assessment_without_consent_is_refused(client, assessment):
+    opportunity = in_assessing(client, consent=False)
+    response = assess(client, opportunity, "approve", headers=assessment)
+    assert response.status_code == 409
+    assert "bureau consent" in response.json()["detail"]
+    assert client.get(f"/opportunities/{opportunity['id']}/assessments").json()["assessments"] == []
+
+
+def test_an_assessment_is_refused_outside_assessing_or_after_a_change(client, assessment):
+    opportunity = in_assessing(client)
+    client.patch(f"/opportunities/{opportunity['id']}", json={"requested_amount": 16000})
+    response = assess(client, opportunity, headers=assessment)
+    assert (response.status_code, "requested_amount" in response.json()["detail"]) == (409, True)
+    other = in_assessing(client)
+    move(client, other, "pre_approved")
+    assert assess(client, other, headers=assessment).status_code == 409
+    assert client.get(f"/opportunities/{other['id']}/assessments").json()["assessments"] == []
+
+
+def test_the_same_assessment_again_with_its_id_changes_nothing(client, assessment):
+    opportunity = in_assessing(client)
+    same = str(uuid.uuid4())
+    first = assess(client, opportunity, "reject", LOW, headers=assessment, id=same)
+    assert (first.status_code, first.json()["assessment"]["id"]) == (200, same)
+    trail = events(client, opportunity)
+    again = assess(client, opportunity, "reject", LOW, headers=assessment, id=same)
+    assert (again.status_code, again.json()["opportunity"]["stage"]) == (200, "paused")
+    assert events(client, opportunity) == trail
+
+
+def test_an_id_already_recorded_with_other_content_is_refused(client, assessment):
+    opportunity = in_assessing(client)
+    same = str(uuid.uuid4())
+    assert assess(client, opportunity, "approve", headers=assessment, id=same).status_code == 200
+    other = assess(client, opportunity, "approve", headers=assessment, id=same, bureau={**BUREAU, "score": 740})
+    assert other.status_code == 409
+    assert len(client.get(f"/opportunities/{opportunity['id']}/assessments").json()["assessments"]) == 1
+
+
+def test_a_new_assessment_with_the_same_recommendation_is_kept(client, assessment):
+    opportunity = in_assessing(client)
+    assert assess(client, opportunity, "approve", headers=assessment, id=str(uuid.uuid4())).status_code == 200
+    assert assess(client, opportunity, "approve", headers=assessment, id=str(uuid.uuid4()),
+                  bureau={**BUREAU, "score": 740}).status_code == 200
+    listed = client.get(f"/opportunities/{opportunity['id']}/assessments").json()["assessments"]
+    assert [a["bureau"]["score"] for a in listed] == [740, 720]
+
+
+def test_a_new_assessment_from_a_stale_snapshot_is_refused(client, assessment):
+    opportunity = in_assessing(client)
+    assert assess(client, opportunity, "approve", headers=assessment, id=str(uuid.uuid4())).status_code == 200
+    client.patch(f"/opportunities/{opportunity['id']}", json={"requested_amount": 16000})
+    stale = assess(client, opportunity, "approve", headers=assessment, id=str(uuid.uuid4()))
+    assert (stale.status_code, "requested_amount" in stale.json()["detail"]) == (409, True)
+
+
+def test_the_size_limit_counts_letters_not_their_escapes(client, assessment):
+    opportunity = in_assessing(client)
+    agent = {"recommendation": "approve", "source": "agent-decision", "findings": "é" * 2000, "toolCalls": ["get_client_accts"]}
+    assert assess(client, opportunity, "approve", headers=assessment, agent=agent).status_code == 200
+
+
+@pytest.mark.parametrize("change", [
+    {"recommendation": "maybe"},
+    {"recommendation": "reject", "reasons": []},
+    {"bureau": None},
+    {"agent": {"findings": "x" * 2001}},
+    {"bureau": {"blob": "x" * 2001}},
+    {"compared": None},
+    {"stage": "pre_approved"},
+])
+def test_an_assessment_is_validated(client, change):
+    opportunity = in_assessing(client)
+    assert assess(client, opportunity, **change).status_code == 422
+    assert client.get(f"/opportunities/{opportunity['id']}/assessments").json()["assessments"] == []
+
+
+def test_consent_missing_carries_no_bureau_result(client):
+    opportunity = in_assessing(client, consent=False)
+    assert assess(client, opportunity, "consent_missing", bureau=BUREAU).status_code == 422
+
+
+def test_assessment_may_not_list_move_edit_consent_or_read_documents(client, assessment):
+    opportunity = in_assessing(client)
+    path = f"/opportunities/{opportunity['id']}"
+    assert move(client, opportunity, "pre_approved", headers=assessment).status_code == 403
+    for method, url, body in [
+        ("GET", f"{path}/assessments", None),
+        ("GET", "/opportunities", None),
+        ("PATCH", path, {"email": "ana@example.com"}),
+        ("POST", f"{path}/consents/sat", None),
+        ("GET", f"{path}/documents", None),
+        ("GET", f"{path}/events", None),
+    ]:
+        response = client.request(method, url, json=body, headers=assessment)
+        assert response.status_code == 403, (method, url, response.text)
+        assert response.json()["detail"].startswith("assessment may not ")
+    assert opportunity_of(client, opportunity)["stage"] == "assessing"

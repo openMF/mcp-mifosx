@@ -41,6 +41,8 @@ Consent is the client's act. Bureau, SAT and contact consent are recorded by `PO
 | `POST /opportunities/{id}/documents/{kind}` | Upload a document: the image is the body (see Documents) |
 | `GET /opportunities/{id}/documents` | Its documents, newest first, without the images |
 | `GET /opportunities/{id}/documents/{document_id}/content` | A document's image |
+| `POST /opportunities/{id}/assessments` | Record an assessment, with the move it calls for (see Assessments) |
+| `GET /opportunities/{id}/assessments` | Its assessments, newest first |
 | `POST /opportunities/{id}/documents/{document_id}/check` | `{result, reasons, extracted, compared}`: what its check found, recorded with the move it calls for |
 | `GET /opportunities/{id}/events` | Audit trail |
 
@@ -56,6 +58,12 @@ Identity documents are kept with the opportunity. `POST /opportunities/{id}/docu
 
 A check records `result` (`valid`, `request_document` or `document_mismatch`), `reasons` (`{code, detail}`) and `extracted`, what the vision model read (strings of at most 200 characters, booleans or numbers), and in the same transaction makes the move the result calls for: `valid` moves the opportunity on to `assessing`, `document_mismatch` pauses it with the reasons as its note, and with `request_document` it stays in `documents`. `compared` is the opportunity's `national_id` and `full_name` as the check read them. The LOS refuses the check (`409`) once it no longer applies: the opportunity is no longer in `documents`, a newer document of the same kind was uploaded, or its CURP or name changed since. The same check again, once applied, changes nothing, so an interrupted run can be retried. A later check of the same document replaces it. The events `document_added` and `document_checked` name the document, its kind and size, and the result; never the image or what was read from it. Only kind `curp` exists so far.
 
+## Assessments
+
+An assessment records the bureau result, the rules' and the decision agent's outcome, and the final `recommendation`: `approve`, `refer`, `reject` or `consent_missing` (nothing was queried), with its `reasons` (`{code, detail}`). Each one is kept; the newest is the current one. Recording it also makes the move it calls for, in the same transaction: a `reject` pauses the opportunity, its first reason code as `reason_code` and every reason in the note; `approve` (a proposal a person confirms by moving it to `pre_approved`) and `refer` leave it in `assessing`.
+
+The LOS refuses an assessment (`409`) once it no longer applies: the opportunity has left `assessing`, or its CURP, name, amount, currency or term (`compared`) changed since the assessment read them. It refuses one that queried the bureau while no bureau consent is recorded: consent is the client's act. An assessment may carry its `id` (the workflow makes one per run): the same assessment sent again with it, as a retried step does, changes nothing, and that `id` with other content is refused (`409`). Any other assessment is a new one, kept and checked. `bureau` may be at most 2000 characters and `rules` and `agent` 4000 each, written out as compact JSON (a letter such as "é" counts once); the agent's `findings` at most 2000. The event `assessed` names the recommendation and the reason codes, never the bureau result or the agent's findings.
+
 ## Access
 
 Each caller has its own token, `LOS_<CALLER>_TOKEN` in the sandbox's `.env` (made by `scripts/gen-secrets.sh`), sent as `Authorization: Bearer <token>`. The token decides who the caller is and what it may do ([auth.py](auth.py)):
@@ -66,11 +74,12 @@ Each caller has its own token, `LOS_<CALLER>_TOKEN` in the sandbox's `.env` (mad
 | `eligibility` | `LOS_ELIGIBILITY_TOKEN`, in the OpenFn credential `los-eligibility` | Read one opportunity, and move it from `qualifying` to `documents` or `paused` |
 | `identity` | `LOS_IDENTITY_TOKEN`, in the OpenFn credential `los-identity` | Read an opportunity, list its documents and read their images, record a check, and move it from `documents` to `assessing` or `paused` |
 | `registration` | `LOS_REGISTRATION_TOKEN`, in the OpenFn credential `los-registration` | Read an opportunity, list its documents, read its audit trail, and register a `qualified` one |
+| `assessment` | `LOS_ASSESSMENT_TOKEN`, in the OpenFn credential `los-assessment` | Read an opportunity and record its assessment, whose only move is from `assessing` to `paused` |
 | `officer` | `LOS_OFFICER_TOKEN`, for people (curl, the **Authorize** button at `/docs`) | Everything, including uploading documents |
 
 - No token, or one the LOS does not know: `401`. A token that does not allow the call: `403`, and nothing is changed.
 - `/health`, `/docs` and `/openapi.json` need no token; they hold no opportunity data.
-- The audit trail names the caller. `intake`, `eligibility`, `identity` and `registration` are named by their token: an `X-Actor` naming anyone else is refused. People share the officer token, so `X-Actor` names the person, recorded as `officer:<name>` (`officer` without the header).
+- The audit trail names the caller. `intake`, `eligibility`, `identity`, `assessment` and `registration` are named by their token: an `X-Actor` naming anyone else is refused. People share the officer token, so `X-Actor` names the person, recorded as `officer:<name>` (`officer` without the header).
 - The LOS does not start if a token is missing, shorter than 32 characters, or the same for two callers.
 
 A new caller (an agent, a job) gets its own entry in `auth.py` and its own token.

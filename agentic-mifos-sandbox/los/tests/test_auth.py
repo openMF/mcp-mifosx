@@ -11,14 +11,15 @@ INTAKE = "i" * 32
 ELIGIBILITY = "e" * 32
 IDENTITY = "d" * 32
 REGISTRATION = "r" * 32
+ASSESSMENT = "a" * 32
 OFFICER = "o" * 32
 TOKENS = {"LOS_INTAKE_TOKEN": INTAKE, "LOS_ELIGIBILITY_TOKEN": ELIGIBILITY, "LOS_IDENTITY_TOKEN": IDENTITY,
-          "LOS_REGISTRATION_TOKEN": REGISTRATION, "LOS_OFFICER_TOKEN": OFFICER}
+          "LOS_REGISTRATION_TOKEN": REGISTRATION, "LOS_ASSESSMENT_TOKEN": ASSESSMENT, "LOS_OFFICER_TOKEN": OFFICER}
 
 
 def test_each_caller_gets_its_token():
     assert load_tokens(TOKENS) == {"intake": INTAKE, "eligibility": ELIGIBILITY, "identity": IDENTITY,
-                                   "registration": REGISTRATION, "officer": OFFICER}
+                                   "registration": REGISTRATION, "assessment": ASSESSMENT, "officer": OFFICER}
 
 
 @pytest.mark.parametrize("environ", [
@@ -97,6 +98,13 @@ def test_identity_may_make_no_other_move(current, target):
 
 def test_registration_moves_no_stage():
     assert "stage" not in CALLERS["registration"].actions
+
+
+def test_assessment_may_only_pause_an_opportunity_in_assessing():
+    check_move("assessment", "assessing", "paused")
+    for current, target in [("assessing", "pre_approved"), ("assessing", "discarded"), ("documents", "paused")]:
+        with pytest.raises(Forbidden, match="assessment may only move an opportunity from assessing to paused"):
+            check_move("assessment", current, target)
 
 
 def test_officers_may_make_any_move():
