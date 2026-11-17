@@ -24,6 +24,7 @@ EDITABLE = ("full_name", "phone", "email", "national_id", "requested_amount", "c
 _stages = ", ".join(f"'{stage}'" for stage in rules.STAGES)
 _kinds = ", ".join(f"'{kind}'" for kind in rules.DOCUMENT_KINDS)
 _results = ", ".join(f"'{result}'" for result in rules.CHECK_RESULTS)
+_recommendations = ", ".join(f"'{recommendation}'" for recommendation in rules.RECOMMENDATIONS)
 SCHEMA = (
     f"""
     CREATE TABLE IF NOT EXISTS opportunities (
@@ -90,6 +91,21 @@ SCHEMA = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS opportunity_documents_opportunity ON opportunity_documents (opportunity_id, uploaded_at)",
+    # Each assessment is kept; the newest is the current one.
+    f"""
+    CREATE TABLE IF NOT EXISTS opportunity_assessments (
+        id uuid PRIMARY KEY,
+        opportunity_id uuid NOT NULL REFERENCES opportunities (id),
+        at timestamptz NOT NULL DEFAULT clock_timestamp(),
+        actor text NOT NULL,
+        recommendation text NOT NULL CHECK (recommendation IN ({_recommendations})),
+        reasons jsonb NOT NULL DEFAULT '[]',
+        bureau jsonb,
+        rules jsonb,
+        agent jsonb
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS opportunity_assessments_opportunity ON opportunity_assessments (opportunity_id, at)",
 )
 # A document without its image, for listings and replies.
 DOCUMENT_COLUMNS = ("id, opportunity_id, kind, content_type, size, sha256, uploaded_at, uploaded_by,"
@@ -98,6 +114,9 @@ DOCUMENT_COLUMNS = ("id, opportunity_id, kind, content_type, size, sha256, uploa
 
 class NotFound(Exception):
     """No opportunity, or no document of it, with that id (HTTP 404)."""
+
+
+ASSESSMENT_COLUMNS = "id, opportunity_id, at, actor, recommendation, reasons, bureau, rules, agent"
 
 
 def connect() -> pg8000.native.Connection:
@@ -344,6 +363,61 @@ def record_check(con, opportunity_id, document_id, result: str, reasons: list, e
             _event(con, opportunity_id, actor, "stage", {"reason_code": reason_code} if reason_code else {},
                    from_stage="documents", to_stage=target)
     return document, row
+
+
+def record_assessment(con, opportunity_id, recommendation: str, reasons: list, bureau: dict | None, rule_outcome: dict | None,
+                      agent: dict | None, compared: dict, actor: str, may_move=None,
+                      assessment_id: uuid.UUID | None = None) -> tuple[dict, dict]:
+    """Records an assessment and the move its recommendation calls for (rules.ASSESSMENT_MOVES) in one
+    transaction, only while it still applies: the opportunity in assessing, its fields in `compared` the ones
+    the assessment used, and, for one that queried the bureau, the client's bureau consent recorded. An
+    `assessment_id` already recorded is a retry: with the same content it changes nothing, with other content it
+    is refused. The event names the recommendation and reason codes only."""
+    target = rules.ASSESSMENT_MOVES.get(recommendation)
+    with _transaction(con):
+        row = _locked(con, opportunity_id)
+        if assessment_id:
+            found = _rows(con, f"SELECT {ASSESSMENT_COLUMNS} FROM opportunity_assessments WHERE id = :id", id=assessment_id)
+            if found:
+                same = (found[0]["opportunity_id"], found[0]["recommendation"], found[0]["reasons"], found[0]["bureau"],
+                        found[0]["rules"], found[0]["agent"]) == (opportunity_id, recommendation, reasons, bureau, rule_outcome, agent)
+                if not same:
+                    raise rules.Conflict(f"assessment {assessment_id} is already recorded with other content")
+                return found[0], row
+        rules.check_open(row["stage"])
+        if row["stage"] != "assessing":
+            raise rules.Conflict(f"the opportunity is {row['stage']}, not assessing: the assessment no longer applies")
+        changed = sorted(field for field, value in compared.items() if row[field] != value)
+        if changed:
+            raise rules.Conflict(f"the opportunity's {' and '.join(changed)} changed since the assessment read them")
+        if recommendation != "consent_missing" and not row["bureau_consent_at"]:
+            raise rules.Conflict("no bureau consent is recorded: the bureau may not be queried")
+        if target and may_move:
+            may_move(row["stage"], target)
+        assessment = _rows(
+            con,
+            "INSERT INTO opportunity_assessments (id, opportunity_id, actor, recommendation, reasons, bureau, rules, agent)"
+            " VALUES (:id, :opportunity_id, :actor, :recommendation, CAST(:reasons AS jsonb), CAST(:bureau AS jsonb),"
+            f" CAST(:rules AS jsonb), CAST(:agent AS jsonb)) RETURNING {ASSESSMENT_COLUMNS}",
+            id=assessment_id or uuid.uuid4(), opportunity_id=opportunity_id, actor=actor, recommendation=recommendation,
+            reasons=json.dumps(reasons), bureau=json.dumps(bureau), rules=json.dumps(rule_outcome), agent=json.dumps(agent),
+        )[0]
+        _event(con, opportunity_id, actor, "assessed", {"assessment_id": str(assessment["id"]), "recommendation": recommendation,
+                                                        "reasons": [r["code"] for r in reasons]})
+        if target:
+            # A paused opportunity keeps why: the assessment's reasons.
+            reason_code, reason_note = reasons[0]["code"], "; ".join(r["detail"] for r in reasons)[:1000]
+            rules.check_stage_change(row["stage"], target, reason_code, reason_note, row["opted_out"])
+            row = _set(con, opportunity_id, {"stage": target, "reason_code": reason_code, "reason_note": reason_note})
+            _event(con, opportunity_id, actor, "stage", {"reason_code": reason_code}, from_stage="assessing", to_stage=target)
+    return assessment, row
+
+
+def assessments(con: pg8000.native.Connection, opportunity_id: uuid.UUID) -> list[dict]:
+    """The opportunity's assessments, newest first."""
+    get(con, opportunity_id)
+    return _rows(con, f"SELECT {ASSESSMENT_COLUMNS} FROM opportunity_assessments WHERE opportunity_id = :id"
+                      " ORDER BY at DESC, id", id=opportunity_id)
 
 
 def events(con: pg8000.native.Connection, opportunity_id: uuid.UUID) -> list[dict]:

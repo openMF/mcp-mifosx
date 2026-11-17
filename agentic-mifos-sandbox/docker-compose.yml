@@ -45,8 +45,9 @@
 #   los-api      - internal: the LOS API for the OpenFn worker (the opportunity workflows)
 #   web-app-edge, lightning-edge, gateway-edge, los-edge - one published port each
 #                  (lightning-edge also for the npm adaptor catalogue)
-#   worker-egress - the OpenFn worker, to install adaptors from npm
 #   llm-egress   - Ollama, to download models
+#   host-ollama  - only with docker-compose.host-ollama.yml: the OpenFn worker,
+#                  to reach an Ollama server on the Docker host
 
 # Webhook trigger ids of the OpenFn project. The bootstrap provisions the
 # triggers with exactly these ids, so the webhook URLs (the gateway's, and the
@@ -58,6 +59,7 @@ x-openfn-triggers:
   opportunity-eligibility: &trigger-opportunity-eligibility cdd00975-7e9f-42b6-b43b-bb4dc045a1e3
   opportunity-identity: &trigger-opportunity-identity e48e6a55-52a4-43a8-baba-e4c092800ab9
   opportunity-registration: &trigger-opportunity-registration 3170dc43-1d7e-48e7-ba83-1a4cd4af2844
+  opportunity-assessment: &trigger-opportunity-assessment 657417e5-882b-49e5-955e-2fc0ff9e5579
 
 # Settings every service gets (see Hardening above).
 x-hardened: &hardened
@@ -350,7 +352,11 @@ services:
 
   lightning-worker:
     <<: *hardened
-    image: ${LIGHTNING_WORKER_IMAGE:-openfn/ws-worker:v1.29.5}
+    # The pinned worker with the jobs' adaptors built in from a lockfile
+    # (worker/): it installs nothing at run time and has no route out.
+    build:
+      context: ./worker
+      args: [LIGHTNING_WORKER_IMAGE]
     depends_on:
       lightning:
         condition: service_healthy
@@ -402,19 +408,15 @@ services:
     # Reaps the processes the shell above does not wait for.
     init: true
     user: node
-    tmpfs: ["/tmp:size=64m"]
-    # The adaptors the worker installs at run time (~70 MB): on disk rather
-    # than in memory, and kept across restarts.
-    volumes:
-      - lightning-worker-home:/home/node
-    # worker-egress: adaptors are installed from npm at run time.
+    tmpfs: ["/tmp:size=64m", "/home/node:size=16m,uid=1000,gid=1000"]
     # core: the Fineract write-back job calls Fineract directly.
     # llm: the document job calls Ollama.
     # openfn-agents: the decision job calls agent-decision.
     # los-api: the opportunity workflows' jobs call the LOS.
-    networks: [openfn, worker-egress, core, llm, openfn-agents, los-api]
+    networks: [openfn, core, llm, openfn-agents, los-api]
     # Lets OLLAMA_URL point at an Ollama server on the Docker host (Linux;
-    # Docker Desktop provides this name already).
+    # Docker Desktop provides this name already); reaching it also takes
+    # docker-compose.host-ollama.yml, the worker's only route out.
     extra_hosts:
       - host.docker.internal:host-gateway
     mem_limit: 1g
@@ -446,13 +448,15 @@ services:
       OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY: *trigger-opportunity-eligibility
       OPENFN_TRIGGER_OPPORTUNITY_IDENTITY: *trigger-opportunity-identity
       OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION: *trigger-opportunity-registration
-      # Lightning credentials "los", "los-eligibility", "los-identity" and
-      # "los-registration" (the LOS API and each workflow's token).
+      OPENFN_TRIGGER_OPPORTUNITY_ASSESSMENT: *trigger-opportunity-assessment
+      # Lightning credentials "los" and "los-<workflow>" (the LOS API and each
+      # workflow's token).
       LOS_URL: http://los:8000
       LOS_INTAKE_TOKEN: ${LOS_INTAKE_TOKEN:?run scripts/gen-secrets.sh}
       LOS_ELIGIBILITY_TOKEN: ${LOS_ELIGIBILITY_TOKEN:?run scripts/gen-secrets.sh}
       LOS_IDENTITY_TOKEN: ${LOS_IDENTITY_TOKEN:?run scripts/gen-secrets.sh}
       LOS_REGISTRATION_TOKEN: ${LOS_REGISTRATION_TOKEN:?run scripts/gen-secrets.sh}
+      LOS_ASSESSMENT_TOKEN: ${LOS_ASSESSMENT_TOKEN:?run scripts/gen-secrets.sh}
       # Lightning credential "ollama" (the vision model), used by the identity
       # workflow: the same server and model as the gateway's below.
       OLLAMA_URL: ${OLLAMA_URL:-http://ollama:11434}
@@ -505,6 +509,7 @@ services:
       OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY: *trigger-opportunity-eligibility
       OPENFN_TRIGGER_OPPORTUNITY_IDENTITY: *trigger-opportunity-identity
       OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION: *trigger-opportunity-registration
+      OPENFN_TRIGGER_OPPORTUNITY_ASSESSMENT: *trigger-opportunity-assessment
     command:
       - /app/bin/lightning
       - eval
@@ -516,7 +521,7 @@ services:
         methods = [
           {"gateway", "OPENFN_WEBHOOK_API_KEY", ~w(OPENFN_TRIGGER_LOAN_SUBMIT OPENFN_TRIGGER_LOAN_REVIEW)},
           {"channels", "OPENFN_INTAKE_API_KEY", ~w(OPENFN_TRIGGER_OPPORTUNITY_INTAKE)},
-          {"officers", "OPENFN_OFFICER_API_KEY", ~w(OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY OPENFN_TRIGGER_OPPORTUNITY_IDENTITY OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION)}
+          {"officers", "OPENFN_OFFICER_API_KEY", ~w(OPENFN_TRIGGER_OPPORTUNITY_ELIGIBILITY OPENFN_TRIGGER_OPPORTUNITY_IDENTITY OPENFN_TRIGGER_OPPORTUNITY_ASSESSMENT OPENFN_TRIGGER_OPPORTUNITY_REGISTRATION)}
         ]
         # The same key in two methods would open both groups of triggers.
         key_vars = Enum.map(methods, fn {_, key_var, _} -> key_var end)
@@ -562,7 +567,7 @@ services:
                   end
                 end
               end)
-            IO.puts("Every webhook trigger requires its own API key: 'gateway' (loans), 'channels' (intake), 'officers' (eligibility, identity, registration)")
+            IO.puts("Every webhook trigger requires its own API key: 'gateway' (loans), 'channels' (intake), 'officers' (eligibility, identity, assessment, registration)")
           end)
     volumes: []
     networks: [lightning-db]
@@ -731,6 +736,7 @@ services:
       LOS_ELIGIBILITY_TOKEN: ${LOS_ELIGIBILITY_TOKEN:?run scripts/gen-secrets.sh}
       LOS_IDENTITY_TOKEN: ${LOS_IDENTITY_TOKEN:?run scripts/gen-secrets.sh}
       LOS_REGISTRATION_TOKEN: ${LOS_REGISTRATION_TOKEN:?run scripts/gen-secrets.sh}
+      LOS_ASSESSMENT_TOKEN: ${LOS_ASSESSMENT_TOKEN:?run scripts/gen-secrets.sh}
       LOS_OFFICER_TOKEN: ${LOS_OFFICER_TOKEN:?run scripts/gen-secrets.sh}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=4)"]
@@ -853,7 +859,6 @@ networks:
   lightning-edge: {}
   gateway-edge: {}
   los-edge: {}
-  worker-egress: {}
   llm-egress: {}
 
 volumes:
@@ -862,4 +867,3 @@ volumes:
   bootstrap-state: {}
   ollama-data: {}
   los-db-data: {}
-  lightning-worker-home: {}

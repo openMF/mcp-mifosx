@@ -49,8 +49,9 @@ OUTER_NETWORKS = {
     "lightning-edge": {"lightning", "lightning-setup"},
     "gateway-edge": {"gateway"},
     "los-edge": {"los"},
-    "worker-egress": {"lightning-worker"},
     "llm-egress": {"ollama"},
+    # Only with docker-compose.host-ollama.yml: an Ollama server on the host.
+    "host-ollama": {"lightning-worker"},
 }
 
 
