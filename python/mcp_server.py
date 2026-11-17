@@ -1056,7 +1056,7 @@ def list_journal_entries(glAccountId: int = None, transactionId: str = None) -> 
 
 @mcp.tool()
 @safe_tool("record_journal_entry")
-def record_journal_entry(officeId: int, date: str, credits: list, debits: list, currencyCode: str,
+def record_journal_entry(officeId: StrictInt, date: str, credits: list, debits: list, currencyCode: str,
                          comment: str = "") -> dict:
     """Record a manual journal entry. Date format: 'dd MMMM yyyy' e.g. '10 March 2026'
     currencyCode is the entry's currency (e.g. "USD"); Fineract requires it."""

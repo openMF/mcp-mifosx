@@ -31,6 +31,8 @@ ACTIONS = {
     "documents": "list documents",
     "document_content": "read a document's image",
     "check": "record document checks",
+    "assess": "record assessments",
+    "assessments": "read assessments",
 }
 
 
@@ -68,6 +70,13 @@ CALLERS = {
     # documents and its audit trail (for Credit's note in Fineract), and records
     # the Fineract client and loan application it created. Moves no stage itself.
     "registration": Permissions(frozenset({"read", "documents", "events", "register"})),
+    # The OpenFn assessment workflow: reads an opportunity in assessing and records
+    # its assessment, whose only move is a reject to paused. Approving is a proposal
+    # a person confirms.
+    "assessment": Permissions(
+        frozenset({"read", "assess"}),
+        moves=(frozenset({"assessing"}), frozenset({rules.PAUSED})),
+    ),
     # People on the host (curl, /docs).
     "officer": Permissions(frozenset(ACTIONS), shared=True),
 }
