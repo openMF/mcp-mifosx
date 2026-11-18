@@ -158,6 +158,11 @@ def _locked(con: pg8000.native.Connection, opportunity_id: uuid.UUID) -> dict:
     return found[0]
 
 
+def _same_json(stored, sent) -> bool:
+    """Equal as JSON: object key order does not matter, and true is not 1 (Python's == says it is)."""
+    return json.dumps(stored, sort_keys=True) == json.dumps(sent, sort_keys=True)
+
+
 def _event(con, opportunity_id, actor, action, detail=None, from_stage=None, to_stage=None) -> None:
     con.run(
         "INSERT INTO opportunity_events (opportunity_id, actor, action, from_stage, to_stage, detail)"
@@ -323,8 +328,10 @@ def record_check(con, opportunity_id, document_id, result: str, reasons: list, e
     """Records a document's check and the move its result calls for (rules.CHECK_MOVES) in one
     transaction, only while the check still applies: the opportunity in documents, the document
     the newest of its kind, and the applicant's fields in `compared` (CURP, name) the ones the
-    check compared with it. The same check again, once applied, changes nothing, so an
-    interrupted run can be retried. Returns the document and the opportunity."""
+    check compared with it. The same check again (the same result, reasons and values read,
+    with the CURP and name still the ones it compared), once applied, changes nothing, so an
+    interrupted run can be retried; any other check is checked as a new one. Returns the
+    document and the opportunity."""
     target = rules.CHECK_MOVES.get(result)
     with _transaction(con):
         row = _locked(con, opportunity_id)
@@ -333,7 +340,11 @@ def record_check(con, opportunity_id, document_id, result: str, reasons: list, e
         if not found:
             raise NotFound(f"no document {document_id} of opportunity {opportunity_id}")
         document = found[0]
-        if (document["check_result"], document["check_reasons"]) == (result, reasons) and row["stage"] == (target or "documents"):
+        retry = (document["check_result"] == result
+                 and _same_json(document["check_reasons"], reasons) and _same_json(document["extracted"], extracted)
+                 and row["stage"] == (target or "documents")
+                 and all(row[field] == value for field, value in compared.items()))
+        if retry:
             return document, row
         rules.check_open(row["stage"])
         if row["stage"] != "documents":
@@ -370,7 +381,8 @@ def record_assessment(con, opportunity_id, recommendation: str, reasons: list, b
                       assessment_id: uuid.UUID | None = None) -> tuple[dict, dict]:
     """Records an assessment and the move its recommendation calls for (rules.ASSESSMENT_MOVES) in one
     transaction, only while it still applies: the opportunity in assessing, its fields in `compared` the ones
-    the assessment used, and, for one that queried the bureau, the client's bureau consent recorded. An
+    the assessment used, and the client's bureau consent recorded for one that queried the bureau, not
+    recorded for consent_missing (a consent recorded while the run went on makes it stale). An
     `assessment_id` already recorded is a retry: with the same content it changes nothing, with other content it
     is refused. The event names the recommendation and reason codes only."""
     target = rules.ASSESSMENT_MOVES.get(recommendation)
@@ -379,8 +391,9 @@ def record_assessment(con, opportunity_id, recommendation: str, reasons: list, b
         if assessment_id:
             found = _rows(con, f"SELECT {ASSESSMENT_COLUMNS} FROM opportunity_assessments WHERE id = :id", id=assessment_id)
             if found:
-                same = (found[0]["opportunity_id"], found[0]["recommendation"], found[0]["reasons"], found[0]["bureau"],
-                        found[0]["rules"], found[0]["agent"]) == (opportunity_id, recommendation, reasons, bureau, rule_outcome, agent)
+                same = ((found[0]["opportunity_id"], found[0]["recommendation"]) == (opportunity_id, recommendation)
+                        and _same_json((found[0]["reasons"], found[0]["bureau"], found[0]["rules"], found[0]["agent"]),
+                                       (reasons, bureau, rule_outcome, agent)))
                 if not same:
                     raise rules.Conflict(f"assessment {assessment_id} is already recorded with other content")
                 return found[0], row
@@ -392,6 +405,9 @@ def record_assessment(con, opportunity_id, recommendation: str, reasons: list, b
             raise rules.Conflict(f"the opportunity's {' and '.join(changed)} changed since the assessment read them")
         if recommendation != "consent_missing" and not row["bureau_consent_at"]:
             raise rules.Conflict("no bureau consent is recorded: the bureau may not be queried")
+        if recommendation == "consent_missing" and row["bureau_consent_at"]:
+            raise rules.Conflict("the bureau consent is recorded now: this assessment found none and no longer applies;"
+                                 " ask for the assessment again")
         if target and may_move:
             may_move(row["stage"], target)
         assessment = _rows(
