@@ -55,6 +55,8 @@ The first start takes about 3 minutes, most of it Fineract's database migrations
 | Gateway: http://localhost:8080/actuator/health | none (see 7.4) |
 | LOS API docs: http://localhost:8090/docs | **Authorize** with `LOS_OFFICER_TOKEN` from `.env` |
 
+To see the commercial flow end to end, from a lead to a loan application in Fineract: `python3 scripts/demo.py` (4.9).
+
 ## 3. Architecture
 
 ### 3.1 Components
@@ -276,7 +278,7 @@ The webhook answers when the three jobs have finished:
 
 ### 4.5 Checking an identity document
 
-With the opportunity from 4.4 in `documents`, and `curp.png` an image of a CURP constancia with the opportunity's CURP and name:
+With the opportunity from 4.4 in `documents`, and `curp.png` an image of a CURP constancia with the opportunity's CURP and name (`scripts/demo_constancia.py` draws a fictitious one; see its header):
 
 ```bash
 AUTH="Authorization: Bearer $(grep '^LOS_OFFICER_TOKEN=' .env | cut -d= -f2-)"
@@ -345,6 +347,41 @@ docker compose --profile ollama run --rm agent-decision -p "List the loan produc
 
 The agent has only its MCP server's tools. From a script, add `-T` and close stdin (`< /dev/null`): without a terminal, Pi reads stdin into the prompt and waits for it to end.
 
+### 4.9 The demo: the commercial flow in one command
+
+`scripts/demo.py` takes a fictitious applicant through the whole commercial flow, the way an officer drives it (4.3 to 4.7), and shows each decision as it is made. It needs Python 3.10 or newer on the host, and nothing else:
+
+```bash
+python3 scripts/demo.py               # the main run (the ollama profile up, or OLLAMA_URL set to your server)
+python3 scripts/demo.py --scenarios   # then three cases the rules stop
+python3 scripts/demo.py --fast        # the officer records the identity checks: no vision model
+python3 scripts/demo.py --pause       # wait for Enter before each step, for presenting
+```
+
+The main run, in eight steps:
+
+1. A lead arrives from the web channel (intake).
+2. The officer moves it to `qualifying`, and eligibility checks it against the loan product and the applicant's history in Fineract.
+3. The officer uploads the CURP constancia, and the vision model reads it. The script draws the constancia for the run in the MCP server's image (`scripts/demo_constancia.py`): fictitious, and marked as a test document.
+4. The officer records the client's bureau consent.
+5. The assessment: the simulated bureau, the rules and, if it is running, the decision agent.
+6. The officer confirms the pre-approval and qualifies the opportunity.
+7. Registration in Fineract.
+8. What Credit sees in Fineract: the client with the CURP image under Documents, the loan application waiting for approval, and the note. The script ends with the web app link where a person approves or rejects it.
+
+`--scenarios` adds three cases that end `paused` with their reason code: an amount above the product's limit (`amount_out_of_range`), a constancia with someone else's CURP (`document_mismatch`: the vision model reads it, or with `--fast` the officer records the mismatch), and a bureau score below 550 (`bureau_score_low`; the officer records its identity check, so that it reaches the assessment quickly).
+
+Measured in November 2026 on a laptop CPU with 8 threads (Intel i5-10300H) and no GPU:
+
+| Run | Took |
+|---|---|
+| `--fast`, with or without `--scenarios`, decision agent stopped | about 1 minute |
+| The main run, decision agent stopped | 4 to 8 minutes: the vision model reads the constancia in 3 to 7 (longest when it first loads) |
+| Any run with the decision agent running | 1 to 3 minutes more for each assessment, which waits for the agent |
+| The main run with `--scenarios`, decision agent stopped | 7 to 12 minutes: the mismatch scenario uses the vision model too |
+
+With the decision agent running, every assessment waits for its answer; `docker compose stop agent-decision` lets the rules decide at once. The script calls only the published ports, reads its keys and tokens from `.env` without printing them, and never starts or stops a service. Every run creates new applicants (CURPs starting with `PRUE`), so runs do not collide; they stay in the LOS and Fineract until a reset (5). It exits 0 when every step had its expected outcome, and otherwise names the step that did not. `python3 scripts/demo.py --check-config` only checks that the configuration has what the script needs.
+
 ## 5. Operating
 
 **Health and logs**: `docker compose ps` and `docker compose logs -f <service>`. The OpenFn jobs' own output (`console.log`) is in Lightning's run view, not in the worker's logs.
@@ -397,6 +434,7 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_fi
 - **An assessment's agent says `rules-fallback`**: the decision agent was not used, and `agent.error` says why (unreachable, over 260 s, no Fineract lookup, another answer shape). The rules decided, as they would without an agent.
 - **A registration answers `needs_review`**: Fineract already has something under the opportunity's ids that does not fit, as `reasons` says: a closed or rejected client with this CURP (`client_not_active`), or a loan application with the opportunity's external ID for another amount, term or client, or rejected (`loan_conflict`). Resolve it in the web app (reopen the client; reject the stale application, or correct the opportunity), then ask again.
 - **An agent run never returns in a script**: stdin is open; add `-T` and `< /dev/null`.
+- **`scripts/demo.py` stops with `the MCP server's image has no Pillow`**: the image was built before the MCP server needed Pillow. Rebuild it: `docker compose --profile ollama build mcp-decision`.
 - **`docker compose up` fails on the first start**: read `docker compose logs lightning-setup bootstrap`; the bootstrap stops with the request that failed.
 - **The bootstrap stops with `the password of Fineract's admin 'mifos' is neither FINERACT_ADMIN_PASSWORD nor the default`**: the password was changed in the web app, or this `.env` is new while Fineract's volume is not. Set `FINERACT_ADMIN_PASSWORD` to the current password.
 
