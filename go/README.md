@@ -229,6 +229,10 @@ Go-native concurrent routines that execute batch operations in parallel using go
 | `bulk_apply_charges_to_batch` | Apply a charge to multiple clients concurrently — Go-native |
 | `bulk_make_repayments_native` | Submit multiple loan repayments in parallel — Go-native |
 
+**Limits and results.** Bulk calls keep at most `MCP_BULK_MAX_CONCURRENCY` Fineract requests in flight (default `8`) and reject batches larger than `MCP_BULK_MAX_BATCH_SIZE` items (default `100`) before sending anything. Write tools reject a batch that repeats the same target id, except the repayment tools, where several repayments against one loan are separate legitimate transactions; read tools, and identifiers used only as body data (for example `clientId` when opening accounts), may also repeat.
+
+Every bulk call returns one JSON envelope: `status` is `success`, `partial_failure`, `failure` or `cancelled`, and `results` lists one entry per input item in input order with `index`, `id`, `status`, `http_status` (when a response arrived), `error` and the raw Fineract `result`. Batches that did not fully succeed are returned as MCP errors so a client cannot mistake them for success, but completed items keep their payloads.
+
 ### 🔗 Composite & Diagnostics (5 tools)
 
 Intelligent endpoints that aggregate multi-domain data in a single call.
