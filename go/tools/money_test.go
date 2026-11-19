@@ -61,12 +61,6 @@ func (b *testBank) postCount() int {
 	return len(b.posts)
 }
 
-func (b *testBank) getCount() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.gets)
-}
-
 func (b *testBank) postPaths() []string {
 	b.mu.Lock()
 	defer b.mu.Unlock()

@@ -5,7 +5,6 @@
 package idempotency
 
 import (
-	"fmt"
 	"regexp"
 )
 
@@ -47,11 +46,6 @@ func (e *Error) Body() map[string]any {
 		body["details"] = e.Details
 	}
 	return body
-}
-
-func (e *Error) withCorrelation(correlationID string) *Error {
-	e.CorrelationID = correlationID
-	return e
 }
 
 // ErrMissingKey reports a money move attempted without a key in strict mode.
@@ -145,11 +139,4 @@ func ValidateKey(key, correlationID string) error {
 		return ErrInvalidKey(correlationID)
 	}
 	return nil
-}
-
-func asError(err error) *Error {
-	if typed, ok := err.(*Error); ok {
-		return typed
-	}
-	return &Error{Code: "idempotency_error", Message: fmt.Sprintf("%v", err), HTTPStatus: 500}
 }

@@ -466,14 +466,6 @@ var DefaultMarkerFields = []string{
 	"comments",
 }
 
-func errorCode(value map[string]any) string {
-	if value == nil {
-		return ""
-	}
-	code, _ := value["code"].(string)
-	return code
-}
-
 // classifyLegacyFailure decides whether a persisted FAILED record may start a
 // new attempt.
 //
