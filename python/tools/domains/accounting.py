@@ -4,9 +4,11 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import math
+from typing import Optional
 
 from langchain_core.tools import tool
 
+from tools.idempotent_money import post_money
 from tools.mcp_adapter import fineract_client
 
 
@@ -52,7 +54,7 @@ def _validate_journal_items(items: list, label: str) -> dict | None:
 
 @tool
 def create_journal_entry(office_id: int, date: str, credits: list, debits: list, currency_code: str,
-                         comment: str = ""):
+                         comment: str = "", idempotency_key: Optional[str] = None):
     """Answers: 'Record a manual journal entry'
     credits/debits format: [{"glAccountId": 1, "amount": 100}]
     currency_code is the entry's currency (e.g. "USD"). Fineract requires it, and it differs per
@@ -83,4 +85,26 @@ def create_journal_entry(office_id: int, date: str, credits: list, debits: list,
         "credits": credits,
         "debits": debits
     }
-    return fineract_client.execute_post("journalentries", payload)
+    # A manual journal entry cannot be looked up by content: Fineract's journal
+    # endpoint is queried by GL account or by the transaction id it returns, and
+    # a lost response leaves us without that id. So there is no reconciler:
+    # an ambiguous outcome stays UNKNOWN for a human to check, while the
+    # backend Idempotency-Key still prevents a duplicate where Fineract
+    # honours it.
+    return post_money(
+        operation="journal.entry",
+        resource=f"office:{office_id}",
+        payload={
+            "office_id": office_id,
+            "date": date,
+            "currency_code": currency_code.strip(),
+            "credits": credits,
+            "debits": debits,
+            "comment": comment,
+        },
+        endpoint="journalentries",
+        body=payload,
+        idempotency_key=idempotency_key,
+        reconciler=None,
+        reconciliation={"office_id": office_id},
+    )

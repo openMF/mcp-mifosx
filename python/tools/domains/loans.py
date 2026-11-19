@@ -8,6 +8,13 @@ from typing import Optional
 from langchain_core.tools import tool
 
 from tools.domains.products import product_required
+from tools.idempotent_money import (
+    loan_charge_reconciler,
+    loan_disbursal_reconciler,
+    loan_repayment_reconciler,
+    loan_waive_interest_reconciler,
+    post_money,
+)
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
 
@@ -215,10 +222,12 @@ def _loan_status(loan_id: int) -> Optional[str]:
     return loan.get("status", {}).get("value")
 
 @tool
-def approve_and_disburse_loan(loan_id: int, amount: float = None, already_approved: bool = False):
+def approve_and_disburse_loan(loan_id: int, amount: float = None, already_approved: bool = False,
+                              idempotency_key: Optional[str] = None):
     """Answers: 'Approve this loan and disburse today'
     With already_approved=True only the disbursement is done (finishing an earlier
-    call whose approval succeeded but whose disbursement failed)."""
+    call whose approval succeeded but whose disbursement failed). The disbursement is
+    guarded by idempotency_key, so a retry cannot disburse the loan twice."""
     today = get_fineract_today()
     base_payload = {"dateFormat": "dd MMMM yyyy", "locale": "en"}
 
@@ -234,7 +243,16 @@ def approve_and_disburse_loan(loan_id: int, amount: float = None, already_approv
     disburse_payload = {**base_payload, "actualDisbursementDate": today}
     if amount: disburse_payload["transactionAmount"] = amount
 
-    disbursal = fineract_client.execute_post(f"loans/{loan_id}?command=disburse", disburse_payload)
+    disbursal = post_money(
+        operation="loan.disburse",
+        resource=f"loan:{loan_id}",
+        payload={"loan_id": loan_id, "amount": amount},
+        endpoint=f"loans/{loan_id}?command=disburse",
+        body=disburse_payload,
+        idempotency_key=idempotency_key,
+        reconciler=loan_disbursal_reconciler(),
+        reconciliation={"loan_id": loan_id},
+    )
     if "error" not in disbursal:
         return disbursal
     # A timeout or server error can follow a disbursement Fineract did make, so read
@@ -277,11 +295,13 @@ def reject_loan_application(loan_id: int, note: str = "Rejected via AI Agent due
 # --- LOAN TRANSACTION OPERATIONS ---
 
 @tool
-def make_loan_repayment(loan_id: int, amount: float, payment_type_id: Optional[int] = None):
+def make_loan_repayment(loan_id: int, amount: float, payment_type_id: Optional[int] = None,
+                        idempotency_key: Optional[str] = None):
     """Answers: 'The client just paid $150 towards their loan.'
     payment_type_id records how the money arrived, when the caller knows it (payment types
     are tenant-specific, so nothing is guessed). A repayment does not need one in Fineract,
-    so it is left out of the request when not given."""
+    so it is left out of the request when not given. Pass idempotency_key so a retry can
+    never record the same repayment twice."""
     print(f"[Tool] Logging repayment of {amount} on Loan #{loan_id}...")
     today = get_fineract_today()
 
@@ -293,10 +313,22 @@ def make_loan_repayment(loan_id: int, amount: float, payment_type_id: Optional[i
     }
     if payment_type_id is not None:
         payload["paymentTypeId"] = payment_type_id
-    return fineract_client.execute_post(f"loans/{loan_id}/transactions?command=repayment", payload)
+    return post_money(
+        operation="loan.repayment",
+        resource=f"loan:{loan_id}",
+        # The date Fineract records is derived here, so it is deliberately not part
+        # of the fingerprint: the same client request retried tomorrow must replay.
+        payload={"loan_id": loan_id, "amount": amount, "payment_type_id": payment_type_id},
+        endpoint=f"loans/{loan_id}/transactions?command=repayment",
+        body=payload,
+        idempotency_key=idempotency_key,
+        reconciler=loan_repayment_reconciler(),
+        reconciliation={"loan_id": loan_id, "amount": amount, "date": today},
+    )
 
 @tool
-def apply_late_fee(loan_id: int, fee_amount: float, charge_id: int = 2):
+def apply_late_fee(loan_id: int, fee_amount: float, charge_id: int = 2,
+                   idempotency_key: Optional[str] = None):
     """Answers: 'Apply a late fee to the last missed installment'"""
     print(f"[Tool] Applying late fee of {fee_amount} to Loan #{loan_id}...")
     today = get_fineract_today()
@@ -308,10 +340,20 @@ def apply_late_fee(loan_id: int, fee_amount: float, charge_id: int = 2):
         "dateFormat": "dd MMMM yyyy",
         "locale": "en"
     }
-    return fineract_client.execute_post(f"loans/{loan_id}/charges", payload)
+    return post_money(
+        operation="loan.charge",
+        resource=f"loan:{loan_id}",
+        payload={"loan_id": loan_id, "charge_id": charge_id, "amount": fee_amount},
+        endpoint=f"loans/{loan_id}/charges",
+        body=payload,
+        idempotency_key=idempotency_key,
+        reconciler=loan_charge_reconciler(),
+        reconciliation={"loan_id": loan_id, "charge_id": charge_id, "amount": fee_amount, "date": today},
+    )
 
 @tool
-def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waiver"):
+def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waiver",
+                   idempotency_key: Optional[str] = None):
     """Answers: 'Waive $50 of interest on this loan to help the client'"""
     print(f"[Tool] Waiving interest of {amount} on Loan #{loan_id}...")
     today = get_fineract_today()
@@ -323,7 +365,16 @@ def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waive
         "dateFormat": "dd MMMM yyyy",
         "locale": "en"
     }
-    return fineract_client.execute_post(f"loans/{loan_id}/transactions?command=waiveinterest", payload)
+    return post_money(
+        operation="loan.waive_interest",
+        resource=f"loan:{loan_id}",
+        payload={"loan_id": loan_id, "amount": amount, "note": note},
+        endpoint=f"loans/{loan_id}/transactions?command=waiveinterest",
+        body=payload,
+        idempotency_key=idempotency_key,
+        reconciler=loan_waive_interest_reconciler(),
+        reconciliation={"loan_id": loan_id, "amount": amount, "date": today},
+    )
 
 
 # --- LOAN LIFECYCLE CORRECTION OPERATIONS ---

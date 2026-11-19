@@ -9,6 +9,13 @@ from typing import Optional
 from langchain_core.tools import tool
 
 from tools.domains.products import product_required
+from tools.idempotent_money import (
+    post_money,
+    savings_charge_reconciler,
+    savings_deposit_reconciler,
+    savings_interest_reconciler,
+    savings_withdrawal_reconciler,
+)
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
 
@@ -140,10 +147,12 @@ def _payment_type_required(action: str) -> dict:
 
 
 @tool
-def deposit_savings(account_id: int, amount: float, payment_type_id: Optional[int] = None):
+def deposit_savings(account_id: int, amount: float, payment_type_id: Optional[int] = None,
+                    idempotency_key: Optional[str] = None):
     """Answers: 'Deposit $500 into this savings account'
     Fineract requires a payment type on a deposit, and payment types are tenant-specific, so
-    payment_type_id has to be the id of one this tenant actually has."""
+    payment_type_id has to be the id of one this tenant actually has. Pass idempotency_key so
+    a retry cannot deposit the same money twice."""
     print(f"[Tool] Depositing {amount} into Savings Account #{account_id}...")
     if payment_type_id is None:
         return _payment_type_required("deposit")
@@ -156,10 +165,20 @@ def deposit_savings(account_id: int, amount: float, payment_type_id: Optional[in
         "locale": "en",
         "paymentTypeId": payment_type_id
     }
-    return fineract_client.execute_post(f"savingsaccounts/{account_id}/transactions?command=deposit", payload)
+    return post_money(
+        operation="savings.deposit",
+        resource=f"savings:{account_id}",
+        payload={"account_id": account_id, "amount": amount, "payment_type_id": payment_type_id},
+        endpoint=f"savingsaccounts/{account_id}/transactions?command=deposit",
+        body=payload,
+        idempotency_key=idempotency_key,
+        reconciler=savings_deposit_reconciler(),
+        reconciliation={"account_id": account_id, "amount": amount, "date": today},
+    )
 
 @tool
-def withdraw_savings(account_id: int, amount: float, payment_type_id: Optional[int] = None):
+def withdraw_savings(account_id: int, amount: float, payment_type_id: Optional[int] = None,
+                     idempotency_key: Optional[str] = None):
     """Answers: 'Withdraw $100 from this savings account'
     Fineract requires a payment type on a withdrawal, and payment types are tenant-specific, so
     payment_type_id has to be the id of one this tenant actually has."""
@@ -175,10 +194,20 @@ def withdraw_savings(account_id: int, amount: float, payment_type_id: Optional[i
         "locale": "en",
         "paymentTypeId": payment_type_id
     }
-    return fineract_client.execute_post(f"savingsaccounts/{account_id}/transactions?command=withdrawal", payload)
+    return post_money(
+        operation="savings.withdrawal",
+        resource=f"savings:{account_id}",
+        payload={"account_id": account_id, "amount": amount, "payment_type_id": payment_type_id},
+        endpoint=f"savingsaccounts/{account_id}/transactions?command=withdrawal",
+        body=payload,
+        idempotency_key=idempotency_key,
+        reconciler=savings_withdrawal_reconciler(),
+        reconciliation={"account_id": account_id, "amount": amount, "date": today},
+    )
 
 @tool
-def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1):
+def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1,
+                         idempotency_key: Optional[str] = None):
     """Answers: 'Deduct a $15 account maintenance fee from this savings account'"""
     print(f"[Tool] Applying charge of {amount} to Savings Account #{account_id}...")
     today = get_fineract_today()
@@ -190,11 +219,29 @@ def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1):
         "dateFormat": "dd MMMM yyyy",
         "locale": "en"
     }
-    return fineract_client.execute_post(f"savingsaccounts/{account_id}/charges", payload)
+    return post_money(
+        operation="savings.charge",
+        resource=f"savings:{account_id}",
+        payload={"account_id": account_id, "charge_id": charge_id, "amount": amount},
+        endpoint=f"savingsaccounts/{account_id}/charges",
+        body=payload,
+        idempotency_key=idempotency_key,
+        reconciler=savings_charge_reconciler(),
+        reconciliation={"account_id": account_id, "charge_id": charge_id, "amount": amount},
+    )
 
 @tool
-def calculate_and_post_interest(account_id: int):
+def calculate_and_post_interest(account_id: int, idempotency_key: Optional[str] = None):
     """Answers: 'Calculate and post the accrued interest for this savings account'"""
     print(f"[Tool] Posting interest for Savings Account #{account_id}...")
     # This specific command usually doesn't require a payload in Fineract
-    return fineract_client.execute_post(f"savingsaccounts/{account_id}?command=postInterest", payload={})
+    return post_money(
+        operation="savings.post_interest",
+        resource=f"savings:{account_id}",
+        payload={"account_id": account_id},
+        endpoint=f"savingsaccounts/{account_id}?command=postInterest",
+        body={},
+        idempotency_key=idempotency_key,
+        reconciler=savings_interest_reconciler(),
+        reconciliation={"account_id": account_id},
+    )

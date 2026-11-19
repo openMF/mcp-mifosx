@@ -96,6 +96,25 @@ func GetLoanToolDefs() []BaseToolDef {
 				{Name: "loanId", Type: "number", Required: true, IsPathVar: true},
 				{Name: "transactionAmount", Type: "number", Required: true, IsBodyVar: true, Description: "STRICT: Exact amount from prompt. NEVER adjust to 'amount due'."},
 				{Name: "transactionDate", Type: "string", Required: false, IsBodyVar: true},
+				{Name: "paymentTypeId", Type: "number", Required: false, IsBodyVar: true, Description: "How the money arrived (tenant-specific payment type id)."},
+				idempotencyKeyParam(),
+			},
+			MoneyMove: &MoneyMove{
+				Operation: "loan.repayment",
+				Payload: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"loan_id":         numericPayloadValue(args["loanId"]),
+						"amount":          numericPayloadValue(args["transactionAmount"]),
+						"payment_type_id": numericPayloadValue(args["paymentTypeId"]),
+					}
+				},
+				Reconciliation: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"loan_id": numericPayloadValue(args["loanId"]),
+						"amount":  numericPayloadValue(args["transactionAmount"]),
+					}
+				},
+				Reconcile: loanTransactionsReconciler([]string{"repay"}, []string{".repayment"}, "loan.repayment"),
 			},
 		},
 		{
@@ -107,6 +126,25 @@ func GetLoanToolDefs() []BaseToolDef {
 				{Name: "dueDate", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "dateFormat", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "locale", Type: "string", Required: true, IsBodyVar: true},
+				idempotencyKeyParam(),
+			},
+			MoneyMove: &MoneyMove{
+				Operation: "loan.charge",
+				Payload: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"loan_id":   numericPayloadValue(args["loanId"]),
+						"charge_id": numericPayloadValue(args["chargeId"]),
+						"amount":    numericPayloadValue(args["amount"]),
+					}
+				},
+				Reconciliation: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"loan_id":   numericPayloadValue(args["loanId"]),
+						"charge_id": numericPayloadValue(args["chargeId"]),
+						"amount":    numericPayloadValue(args["amount"]),
+					}
+				},
+				Reconcile: loanChargeReconciler(),
 			},
 		},
 		{
@@ -117,6 +155,27 @@ func GetLoanToolDefs() []BaseToolDef {
 				{Name: "transactionDate", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "dateFormat", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "locale", Type: "string", Required: true, IsBodyVar: true},
+				{Name: "note", Type: "string", Required: false, IsBodyVar: true},
+				idempotencyKeyParam(),
+			},
+			MoneyMove: &MoneyMove{
+				Operation: "loan.waive_interest",
+				Payload: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"loan_id": numericPayloadValue(args["loanId"]),
+						"amount":  numericPayloadValue(args["transactionAmount"]),
+						// Same default as python/tools/domains/loans.py, so a key
+						// claimed by one implementation replays in the other.
+						"note": defaultValue(args["note"], "AI Authorized Waiver"),
+					}
+				},
+				Reconciliation: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"loan_id": numericPayloadValue(args["loanId"]),
+						"amount":  numericPayloadValue(args["transactionAmount"]),
+					}
+				},
+				Reconcile: loanTransactionsReconciler([]string{"waive"}, []string{".waiveinterest"}, "loan.waive_interest"),
 			},
 		},
 	}

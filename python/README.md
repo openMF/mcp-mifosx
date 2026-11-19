@@ -282,6 +282,89 @@ By keeping this server "pure," you gain:
 | `MCP_PROFILES_FILE` | Path to the tool profiles file          | `profiles.toml` |
 | `FASTMCP_TRANSPORT` | `stdio`, or `http` for streamable HTTP at `/mcp` | `stdio` |
 | `FASTMCP_HOST` / `FASTMCP_PORT` | Address the HTTP transport listens on | `127.0.0.1` / `8000` |
+| `MCP_IDEMPOTENCY_DIR` | Directory holding the durable idempotency ledger; the Go server reads the same path | `~/.mcp-mifosx/idempotency` |
+| `MCP_IDEMPOTENCY_REQUIRED` | `true` rejects money moves that arrive without an idempotency key | `false` |
+| `MCP_IDEMPOTENCY_ACTOR` | Actor identity used to scope keys when no caller identity is available | OS user |
+| `MCP_IDEMPOTENCY_LOCK_WAIT_SECONDS` | How long a duplicate waits for the in-flight call before reporting `operation_in_progress` | `5` |
+| `MCP_IDEMPOTENCY_LOCK_TTL_SECONDS` | Lease length written by the heartbeat. It is a liveness check, **not** an age-based stale-lock reclamation mechanism: a live owner renews the lease, and an expired lease makes this process refuse to execute. Ownership itself comes from the OS lock, which is only released when the owner exits or unlocks it. | `900` |
+| `MCP_IDEMPOTENCY_ABSENCE_CONFIRMATIONS` | Consecutive empty reconciliation reads required before an attempt is called absent | `2` |
+| `MCP_IDEMPOTENCY_ABSENCE_SAFETY_WINDOW_SECONDS` | Minimum time between the attempt's end and each empty read, and between consecutive empty reads. It reduces (but does not eliminate) the chance of reading before a delayed write is visible. | `30` |
+| `MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED` | Set to `true` only after the deployment has been independently proven to reject a duplicate money POST. A confirmed absence never authorises an automatic retry without it. | `false` |
+
+---
+
+## Idempotent Money Operations
+
+Every money-moving tool (loan repayments, disbursals, waivers and charges, savings
+deposits, withdrawals and charges, savings interest posting, and manual journal
+entries) accepts an optional `idempotency_key` (`idempotencyKey` in the Go server).
+Send the same key to retry the same logical request safely:
+
+* the first call executes; duplicates replay the stored result without touching
+  Fineract;
+* reusing a key with a different payload is rejected with
+  `idempotency_key_reused`;
+* calls that arrive while the first is still running return
+  `operation_in_progress` instead of executing twice;
+* a call whose outcome was lost (timeout, dropped connection, 5xx) is
+  reconciled against Fineract before anything is retried. If the effect cannot
+  be confirmed, the operation stays `UNKNOWN` and reports
+  `reconciliation_required` — it is never silently repeated.
+
+Keys are scoped to tenant plus actor, and a deterministic hashed
+`Idempotency-Key` header is sent with money POSTs. The header is only useful if
+the deployment in front of Fineract actually validates and deduplicates it;
+stock Fineract does not persist it, and this server does not assume that it
+does.
+
+### What reconciliation can and cannot prove
+
+A reconciliation read looks for a record that did not exist before the attempt
+and *carries this attempt's unique marker* in a supported backend field. The
+marker is stored only in the local ledger; it is never injected into a request
+body, because no money-operation field in the current Fineract API is proven to
+persist and return it.
+
+Consequences:
+
+* on a stock Fineract deployment, marker-based `CONFIRMED` is unreachable. A
+  new record with the same type and amount may have come from another channel,
+  so it is not attributed to this attempt;
+* current Fineract money operations (loan repayment/disbursal, savings
+  deposit/withdrawal, charges, journal entries) have **no verified marker
+  propagation**. Supporting it needs a backend change that stores a
+  caller-supplied unique reference on the transaction and returns it from the
+  corresponding read endpoint;
+* a disbursal is the one exception where a unique effect is observable without
+  a marker: a recognised pre-disbursement loan status that becomes `Active`
+  confirms the attempt. A missing, null, non-string or unrecognised status is
+  `UNKNOWN`, never absence.
+
+An attempt may only be called `ABSENT` after
+`MCP_IDEMPOTENCY_ABSENCE_CONFIRMATIONS` empty reads that are each separated by
+`MCP_IDEMPOTENCY_ABSENCE_SAFETY_WINDOW_SECONDS` and occur after the attempt
+ended. A safety window reduces the chance of reading too early; **it does not
+prove that the backend has finished writing**. A delayed transaction can still
+appear later.
+
+Even a fully confirmed absence does not authorise an automatic retry unless
+`MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED=true` and the deployment genuinely
+deduplicates the POST. Without that proof the outcome is downgraded to
+`UNKNOWN`/`reconciliation_required` for manual reconciliation. Every ambiguous
+outcome that cannot be attributed stays `UNKNOWN`; verify it in Fineract before
+retrying with a new key.
+
+Other limitations worth stating plainly:
+
+* manual journal entries have no queryable read in this codebase's Fineract
+  surface, so an ambiguous journal POST stays `UNKNOWN` for an operator to check;
+* the ledger is a directory on the local filesystem. Several server instances
+  need a shared volume or a transactional store, otherwise each keeps its own
+  ledger;
+* lock files are never deleted or renamed by this implementation, and external
+  deletion or replacement of a lock file is unsupported and outside the threat
+  model. Ownership is proven through the open descriptor and the claim token,
+  not by re-opening the path.
 
 ---
 

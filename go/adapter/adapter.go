@@ -214,8 +214,34 @@ func newConnection() (string, *http.Client, error) {
 	}, nil
 }
 
+// Response is the raw result of one backend call, including a transport
+// failure.
+//
+// DoRequest turns every failure into an error string, which is right for
+// reads but loses the one fact a money move needs: whether Fineract answered
+// at all. A 400 means the request was refused; a dropped connection or a 500
+// means it may already have been applied. StatusCode is 0 when no response was
+// received, and Err is non-nil for both cases.
+type Response struct {
+	Body       []byte
+	StatusCode int
+	Err        error
+}
+
 // DoRequest always uses the configured identity; it never selects caller mode.
 func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, queryParams map[string]string) ([]byte, error) {
+	response := c.DoRequestOutcome(context.Background(), method, endpoint, body, queryParams, nil)
+	if response.Err != nil {
+		return response.Body, response.Err
+	}
+	return response.Body, nil
+}
+
+// DoRequestOutcome is DoRequest with the context, extra headers and the HTTP
+// status preserved, for callers that must classify an unanswered write.
+// Cancelling ctx aborts the request and surfaces as a transport error, so the
+// caller can decide that the outcome is unknown rather than failed.
+func (c *FineractClient) DoRequestOutcome(ctx context.Context, method, endpoint string, body interface{}, queryParams map[string]string, headers map[string]string) Response {
 	isAttachment := strings.Contains(endpoint, "/attachment") || strings.Contains(endpoint, "/download")
 	endpoint = strings.TrimPrefix(endpoint, "/")
 	url := fmt.Sprintf("%s/%s", c.BaseURL, endpoint)
@@ -224,14 +250,14 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
-			return nil, err
+			return Response{Err: err}
 		}
 		reqBody = bytes.NewBuffer(jsonBody)
 	}
 
-	req, err := http.NewRequest(method, url, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
-		return nil, err
+		return Response{Err: err}
 	}
 
 	req.SetBasicAuth(c.Username, c.Password)
@@ -244,6 +270,10 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 		req.Header.Set("Accept", "application/json")
 	}
 
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
 	if queryParams != nil {
 		q := req.URL.Query()
 		for k, v := range queryParams {
@@ -254,26 +284,29 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return Response{Err: err}
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return Response{StatusCode: resp.StatusCode, Err: err}
 	}
 
 	if resp.StatusCode >= 400 {
-		return respBody, fmt.Errorf("API Error %d", resp.StatusCode)
+		return Response{Body: respBody, StatusCode: resp.StatusCode, Err: fmt.Errorf("API Error %d", resp.StatusCode)}
 	}
 
 	// If it's a binary/attachment response, return a descriptive string instead of a huge blob
 	contentType := resp.Header.Get("Content-Type")
 	if isAttachment && !strings.Contains(contentType, "json") {
-		return []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))), nil
+		return Response{
+			Body:       []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))),
+			StatusCode: resp.StatusCode,
+		}
 	}
 
-	return respBody, nil
+	return Response{Body: respBody, StatusCode: resp.StatusCode}
 }
 
 // DoMultipartRequest sends a multipart/form-data request to Fineract.

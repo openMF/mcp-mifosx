@@ -3,6 +3,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import json
 import logging
 from decimal import Decimal
 from typing import Optional
@@ -21,6 +22,7 @@ from functools import wraps
 from inspect import signature
 from typing import Any, Callable, Dict
 
+from core.idempotency import IdempotencyError
 from core.suggestion_engine import generate_suggestions
 from core.tool_profiles import ALL_TOOLS, ProfileError, apply_tool_profile, profile_check_lifespan
 from core.validation_engine import ValidationError, validate_input
@@ -256,6 +258,10 @@ def safe_tool(tool_name: str, list_key: str = "items") -> Callable:
 
             except ValidationError as e:
                 raise ToolError(str(e)) from e
+            except IdempotencyError as e:
+                # Keep the machine-readable code, state and correlation id; MCP
+                # only carries text, so the structured body is serialised.
+                raise ToolError(json.dumps(e.to_dict(), sort_keys=True)) from e
             except ToolError:
                 raise
             except Exception:
@@ -267,8 +273,11 @@ def safe_tool(tool_name: str, list_key: str = "items") -> Callable:
             if isinstance(result, list):
                 return {list_key: result}
 
-            # Adapter sentinel -> a real MCP error (isError: true)
+            # Adapter sentinel -> a real MCP error (isError: true). Structured
+            # idempotency outcomes keep their code/state/correlation id.
             if isinstance(result, dict) and "error" in result:
+                if "error_code" in result:
+                    raise ToolError(json.dumps(result, sort_keys=True))
                 raise ToolError(str(result["error"]))
 
             return result
@@ -528,7 +537,8 @@ def list_client_charges(clientId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("apply_client_fee")
-def apply_client_fee(clientId: int, amount: float, chargeId: int = None) -> dict:
+def apply_client_fee(clientId: int, amount: float, chargeId: int = None,
+                     idempotencyKey: str = None) -> dict:
     """Apply a one-time fee/charge to a client profile, due today. Validates clientId exists before executing.
     chargeId is the charge to apply (a client charge with a specified due date). If it is
     missing, nothing is charged and the error lists the available charges
@@ -538,7 +548,7 @@ def apply_client_fee(clientId: int, amount: float, chargeId: int = None) -> dict
         return _prefetch_failure(check, f"Client ID {clientId} not found.")
     if chargeId is None:
         return _charge_required("Client")
-    return apply_client_charge.func(clientId, chargeId, amount)
+    return apply_client_charge.func(clientId, chargeId, amount, idempotency_key=idempotencyKey)
 
 @mcp.tool()
 @safe_tool("list_client_txns")
@@ -654,22 +664,22 @@ def create_new_loan(clientId: int, principal: float, months: int, productId: int
 
 @mcp.tool()
 @safe_tool("approve_disburse_loan")
-def approve_disburse_loan(loanId: int, amount: float = None) -> dict:
+def approve_disburse_loan(loanId: int, amount: float = None, idempotencyKey: str = None) -> dict:
     """Approve and disburse a pending loan. Validates loanId exists before executing.
     If the loan is already approved (an earlier call's disbursement failed), only the
-    disbursement is done."""
+    disbursement is done. Pass idempotencyKey so retrying cannot disburse twice."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     status = check.get("status", {}).get("value", "")
     if status.lower() == "approved":
-        return approve_and_disburse_loan.func(loanId, amount, already_approved=True)
+        return approve_and_disburse_loan.func(loanId, amount, already_approved=True, idempotency_key=idempotencyKey)
     if "pending" not in status.lower() and "submitted" not in status.lower():
         return {
             "error": f"Loan {loanId} is in status '{status}' and cannot be approved. "
             "Only 'Submitted and pending approval' or 'Approved' loans can be disbursed with this tool."
         }
-    return approve_and_disburse_loan.func(loanId, amount)
+    return approve_and_disburse_loan.func(loanId, amount, idempotency_key=idempotencyKey)
 
 @mcp.tool()
 @safe_tool("reject_loan")
@@ -685,22 +695,25 @@ def reject_loan(loanId: int, note: str = "Rejected via AI Agent due to risk prof
 
 @mcp.tool()
 @safe_tool("make_repayment")
-def make_repayment(loanId: int, amount: float, paymentTypeId: int = None) -> dict:
+def make_repayment(loanId: int, amount: float, paymentTypeId: int = None,
+                   idempotencyKey: str = None) -> dict:
     """Make a repayment on an active loan. Validates loanId and status before executing.
     paymentTypeId is how the money arrived (a Fineract payment type). Leave it out and the
     repayment is recorded without a payment type, which Fineract accepts; a payment type id
-    is tenant-specific, so none is guessed."""
+    is tenant-specific, so none is guessed. Always pass idempotencyKey for money moves: a
+    retry with the same key returns the original result instead of paying twice."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Loan {loanId} is in status '{status}'. Only Active loans can receive repayments."}
-    return make_loan_repayment.func(loanId, amount, paymentTypeId)
+    return make_loan_repayment.func(loanId, amount, paymentTypeId, idempotency_key=idempotencyKey)
 
 @mcp.tool()
 @safe_tool("apply_loan_fee")
-def apply_loan_fee(loanId: int, feeAmount: float, chargeId: int = None) -> dict:
+def apply_loan_fee(loanId: int, feeAmount: float, chargeId: int = None,
+                   idempotencyKey: str = None) -> dict:
     """Apply a fee/charge to a loan, due today. Validates loanId exists before executing.
     chargeId is the charge to apply (a loan charge with a specified due date). If it is
     missing, nothing is charged and the error lists the available charges
@@ -710,7 +723,7 @@ def apply_loan_fee(loanId: int, feeAmount: float, chargeId: int = None) -> dict:
         return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
     if chargeId is None:
         return _charge_required("Loan")
-    return apply_late_fee.func(loanId, feeAmount, chargeId)
+    return apply_late_fee.func(loanId, feeAmount, chargeId, idempotency_key=idempotencyKey)
 
 
 def _charge_required(applies_to: str) -> dict:
@@ -737,12 +750,13 @@ def _charge_required(applies_to: str) -> dict:
 
 @mcp.tool()
 @safe_tool("waive_loan_interest")
-def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized Waiver") -> dict:
+def waive_loan_interest(loanId: int, amount: float, note: str = "AI Authorized Waiver",
+                        idempotencyKey: str = None) -> dict:
     """Waive interest on a loan. Validates loanId exists before executing."""
     check = get_loan_details.func(loanId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Loan ID {loanId} not found. Check get_client_accts to see valid loanIds.")
-    return waive_interest.func(loanId, amount, note)
+    return waive_interest.func(loanId, amount, note, idempotency_key=idempotencyKey)
 
 @mcp.tool()
 @safe_tool("get_overdue_loans_for_client")
@@ -957,22 +971,25 @@ def close_savings(accountId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("deposit")
-def deposit(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
+def deposit(accountId: int, amount: float, paymentTypeId: int = None,
+            idempotencyKey: str = None) -> dict:
     """Deposit money into a savings account. Validates accountId exists before executing.
     Fineract will not take a deposit without a payment type, so paymentTypeId must be one of
     this tenant's payment types. If it is missing, nothing is deposited and the error lists
-    the payment types (id = name) so you can ask the user which applies."""
+    the payment types (id = name) so you can ask the user which applies. Always pass
+    idempotencyKey for money moves: a retry with the same key cannot deposit twice."""
     check = get_savings_account.func(accountId)
     if not isinstance(check, dict) or "error" in check:
         return _prefetch_failure(check, f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.")
     status = check.get("status", {}).get("value", "")
     if "active" not in status.lower():
         return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can accept deposits."}
-    return deposit_savings.func(accountId, amount, paymentTypeId)
+    return deposit_savings.func(accountId, amount, paymentTypeId, idempotency_key=idempotencyKey)
 
 @mcp.tool()
 @safe_tool("withdraw")
-def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
+def withdraw(accountId: int, amount: float, paymentTypeId: int = None,
+             idempotencyKey: str = None) -> dict:
     """Withdraw money from a savings account. Validates accountId and balance before executing.
     Fineract will not take a withdrawal without a payment type, so paymentTypeId must be one of
     this tenant's payment types. If it is missing, nothing is withdrawn and the error lists the
@@ -993,24 +1010,25 @@ def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
         if overdraft:
             funds += f" and the overdraft limit is ${overdraft:.2f}"
         return {"error": f"Insufficient funds: requested ${amount:.2f} but {funds} in account {accountId}."}
-    return withdraw_savings.func(accountId, amount, paymentTypeId)
+    return withdraw_savings.func(accountId, amount, paymentTypeId, idempotency_key=idempotencyKey)
 
 @mcp.tool()
 @safe_tool("apply_savings_fee")
-def apply_savings_fee(accountId: int, amount: float, chargeId: int = None) -> dict:
+def apply_savings_fee(accountId: int, amount: float, chargeId: int = None,
+                      idempotencyKey: str = None) -> dict:
     """Apply a charge/block to a savings account, due today.
     chargeId is the charge to apply (a savings charge with a specified due date). If it is
     missing, nothing is charged and the error lists the available charges
     (id = name (default amount)) so you can ask the user which one applies."""
     if chargeId is None:
         return _charge_required("Savings")
-    return apply_savings_charge.func(accountId, amount, chargeId)
+    return apply_savings_charge.func(accountId, amount, chargeId, idempotency_key=idempotencyKey)
 
 @mcp.tool()
 @safe_tool("calc_post_interest")
-def calc_post_interest(accountId: int) -> dict:
+def calc_post_interest(accountId: int, idempotencyKey: str = None) -> dict:
     """Calculate and post interest to a savings account"""
-    return calculate_and_post_interest.func(accountId)
+    return calculate_and_post_interest.func(accountId, idempotency_key=idempotencyKey)
 
 
 # --- STAFF & OFFICES ---
@@ -1057,10 +1075,14 @@ def list_journal_entries(glAccountId: int = None, transactionId: str = None) -> 
 @mcp.tool()
 @safe_tool("record_journal_entry")
 def record_journal_entry(officeId: StrictInt, date: str, credits: list, debits: list, currencyCode: str,
-                         comment: str = "") -> dict:
+                         comment: str = "", idempotencyKey: str = None) -> dict:
     """Record a manual journal entry. Date format: 'dd MMMM yyyy' e.g. '10 March 2026'
-    currencyCode is the entry's currency (e.g. "USD"); Fineract requires it."""
-    return create_journal_entry.func(officeId, date, credits, debits, currencyCode, comment)
+    currencyCode is the entry's currency (e.g. "USD"); Fineract requires it. Pass
+    idempotencyKey: a manual entry cannot be reconciled by content, so an unanswered
+    attempt stays UNKNOWN instead of being repeated."""
+    return create_journal_entry.func(
+        officeId, date, credits, debits, currencyCode, comment, idempotency_key=idempotencyKey
+    )
 
 
 # --- REPORTS ---

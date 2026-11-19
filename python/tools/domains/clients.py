@@ -7,6 +7,7 @@ from typing import Optional
 
 from langchain_core.tools import tool
 
+from tools.idempotent_money import client_charge_reconciler, post_money
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
 
@@ -184,7 +185,8 @@ def get_client_charges(client_id: int):
     return fineract_client.execute_get(f"clients/{client_id}/charges")
 
 @tool
-def apply_client_charge(client_id: int, charge_id: int, amount: float):
+def apply_client_charge(client_id: int, charge_id: int, amount: float,
+                        idempotency_key: Optional[str] = None):
     """Answers: 'Apply a one-time onboarding fee of $50 to this client'"""
     print(f"[Tool] Applying charge {charge_id} to Client #{client_id}...")
     today = get_fineract_today()
@@ -195,7 +197,21 @@ def apply_client_charge(client_id: int, charge_id: int, amount: float):
         "dateFormat": "dd MMMM yyyy",
         "locale": "en"
     }
-    return fineract_client.execute_post(f"clients/{client_id}/charges", payload)
+    return post_money(
+        operation="client.charge",
+        resource=f"client:{client_id}",
+        payload={"client_id": client_id, "charge_id": charge_id, "amount": amount},
+        endpoint=f"clients/{client_id}/charges",
+        body=payload,
+        idempotency_key=idempotency_key,
+        reconciler=client_charge_reconciler(),
+        reconciliation={
+            "client_id": client_id,
+            "owner_id": client_id,
+            "charge_id": charge_id,
+            "amount": amount,
+        },
+    )
 
 @tool
 def get_client_transactions(client_id: int):

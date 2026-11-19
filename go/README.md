@@ -269,6 +269,79 @@ MIFOSX_PASSWORD=password
 # PORT=8080
 ```
 
+### Idempotent money moves
+
+Money-moving tools (`make_loan_repayment`, `apply_late_fee`, `waive_interest`,
+`deposit_savings`, `withdraw_savings`, `apply_savings_charge`,
+`calculate_and_post_interest`, `create_journal_entry`, and the `bulk_*`
+equivalents) accept an optional `idempotencyKey`. The key is scoped to tenant
+and actor, and the operation is recorded in the durable ledger under
+`MCP_IDEMPOTENCY_DIR` (default `~/.mcp-mifosx/idempotency`). The Python server
+uses the same directory and record schema, so a key claimed by one server is
+recognised by the other.
+
+| Variable | Description | Default |
+| --- | --- | --- |
+| `MCP_IDEMPOTENCY_DIR` | Ledger directory shared by the Python and Go servers | `~/.mcp-mifosx/idempotency` |
+| `MCP_IDEMPOTENCY_REQUIRED` | `true` rejects money moves without a key | `false` |
+| `MCP_IDEMPOTENCY_ACTOR` | Actor used to scope keys when no caller identity exists | OS user |
+| `MCP_IDEMPOTENCY_LOCK_WAIT_SECONDS` | Wait for an in-flight duplicate before `operation_in_progress` | `5` |
+| `MCP_IDEMPOTENCY_LOCK_TTL_SECONDS` | Lease length written by the heartbeat. It is a liveness check, **not** an age-based stale-lock reclamation mechanism: a live owner renews the lease, and an expired lease makes this process refuse to execute. Ownership itself comes from the OS lock, which is only released when the owner exits or unlocks it. | `900` |
+| `MCP_IDEMPOTENCY_ABSENCE_CONFIRMATIONS` | Consecutive empty reconciliation reads before an attempt is called absent | `2` |
+| `MCP_IDEMPOTENCY_ABSENCE_SAFETY_WINDOW_SECONDS` | Minimum time between the attempt's end and each empty read, and between consecutive empty reads. It reduces (but does not eliminate) the chance of reading before a delayed write is visible. | `30` |
+| `MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED` | Set to `true` only after the deployment has been independently proven to reject a duplicate money POST. A confirmed absence never authorises an automatic retry without it. | `false` |
+
+Duplicates replay the stored result, and a reused key with a different payload
+is rejected.
+
+### What reconciliation can and cannot prove
+
+A reconciliation read looks for a record that did not exist before the attempt
+and *carries this attempt's unique marker* in a supported backend field. The
+marker is stored only in the local ledger; it is never injected into a request
+body, because no money-operation field in the current Fineract API is proven to
+persist and return it.
+
+Consequences:
+
+* on a stock Fineract deployment, marker-based `CONFIRMED` is unreachable. A
+  new record with the same type and amount may have come from another channel,
+  so it is not attributed to this attempt;
+* current Fineract money operations (loan repayment/disbursal, savings
+  deposit/withdrawal, charges, journal entries) have **no verified marker
+  propagation**. Supporting it needs a backend change that stores a
+  caller-supplied unique reference on the transaction and returns it from the
+  corresponding read endpoint;
+* a disbursal is the one exception where a unique effect is observable without
+  a marker: a recognised pre-disbursement loan status that becomes `Active`
+  confirms the attempt. A missing, null, non-string or unrecognised status is
+  `UNKNOWN`, never absence.
+
+An attempt may only be called `ABSENT` after
+`MCP_IDEMPOTENCY_ABSENCE_CONFIRMATIONS` empty reads that are each separated by
+`MCP_IDEMPOTENCY_ABSENCE_SAFETY_WINDOW_SECONDS` and occur after the attempt
+ended. A safety window reduces the chance of reading too early; **it does not
+prove that the backend has finished writing**. A delayed transaction can still
+appear later.
+
+Even a fully confirmed absence does not authorise an automatic retry unless
+`MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED=true` and the deployment genuinely
+deduplicates the POST. Without that proof the outcome is downgraded to
+`UNKNOWN`/`reconciliation_required` for manual reconciliation. Every ambiguous
+outcome that cannot be attributed stays `UNKNOWN`; verify it in Fineract before
+retrying with a new key.
+
+Further limitations:
+
+* manual journal entries have no queryable read, so their ambiguous outcomes
+  always stay `UNKNOWN`;
+* the ledger is a local directory: multiple server instances need a shared
+  volume or a transactional store;
+* lock files are never deleted or renamed by this implementation, and external
+  deletion or replacement of a lock file is unsupported and outside the threat
+  model. Ownership is proven through the open descriptor and the claim token,
+  not by re-opening the path.
+
 ### 3. Initialize Server
 
 **Headless Cloud / Microservice (SSE):**

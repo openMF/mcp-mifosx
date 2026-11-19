@@ -54,6 +54,25 @@ func GetSavingsToolDefs() []BaseToolDef {
 				{Name: "transactionDate", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "dateFormat", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "locale", Type: "string", Required: true, IsBodyVar: true},
+				{Name: "paymentTypeId", Type: "number", Required: false, IsBodyVar: true, Description: "How the money arrived (tenant-specific payment type id)."},
+				idempotencyKeyParam(),
+			},
+			MoneyMove: &MoneyMove{
+				Operation: "savings.deposit",
+				Payload: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"account_id":      numericPayloadValue(args["savingsId"]),
+						"amount":          numericPayloadValue(args["transactionAmount"]),
+						"payment_type_id": numericPayloadValue(args["paymentTypeId"]),
+					}
+				},
+				Reconciliation: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"account_id": numericPayloadValue(args["savingsId"]),
+						"amount":     numericPayloadValue(args["transactionAmount"]),
+					}
+				},
+				Reconcile: savingsTransactionsReconciler([]string{"deposit"}, []string{".deposit"}, "savings.deposit"),
 			},
 		},
 		{
@@ -64,6 +83,25 @@ func GetSavingsToolDefs() []BaseToolDef {
 				{Name: "transactionDate", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "dateFormat", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "locale", Type: "string", Required: true, IsBodyVar: true},
+				{Name: "paymentTypeId", Type: "number", Required: false, IsBodyVar: true, Description: "How the money arrived (tenant-specific payment type id)."},
+				idempotencyKeyParam(),
+			},
+			MoneyMove: &MoneyMove{
+				Operation: "savings.withdrawal",
+				Payload: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"account_id":      numericPayloadValue(args["savingsId"]),
+						"amount":          numericPayloadValue(args["transactionAmount"]),
+						"payment_type_id": numericPayloadValue(args["paymentTypeId"]),
+					}
+				},
+				Reconciliation: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"account_id": numericPayloadValue(args["savingsId"]),
+						"amount":     numericPayloadValue(args["transactionAmount"]),
+					}
+				},
+				Reconcile: savingsTransactionsReconciler([]string{"withdraw"}, []string{".withdrawal"}, "savings.withdrawal"),
 			},
 		},
 		{
@@ -75,12 +113,43 @@ func GetSavingsToolDefs() []BaseToolDef {
 				{Name: "dueDate", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "dateFormat", Type: "string", Required: true, IsBodyVar: true},
 				{Name: "locale", Type: "string", Required: true, IsBodyVar: true},
+				idempotencyKeyParam(),
+			},
+			MoneyMove: &MoneyMove{
+				Operation: "savings.charge",
+				Payload: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"account_id": numericPayloadValue(args["savingsId"]),
+						"charge_id":  numericPayloadValue(args["chargeId"]),
+						"amount":     numericPayloadValue(args["amount"]),
+					}
+				},
+				Reconciliation: func(args map[string]any) map[string]any {
+					return map[string]any{
+						"account_id": numericPayloadValue(args["savingsId"]),
+						"charge_id":  numericPayloadValue(args["chargeId"]),
+						"amount":     numericPayloadValue(args["amount"]),
+					}
+				},
+				// No verified read endpoint: an ambiguous outcome stays UNKNOWN.
+				Reconcile: savingsChargeReconciler(),
 			},
 		},
 		{
 			Name: "calculate_and_post_interest", Description: "Post interest to savings",
 			Method: "POST", EndpointURL: "savingsaccounts/%v?command=calculateInterest", Params: []ToolParam{
 				{Name: "savingsId", Type: "number", Required: true, IsPathVar: true},
+				idempotencyKeyParam(),
+			},
+			MoneyMove: &MoneyMove{
+				Operation: "savings.post_interest",
+				Payload: func(args map[string]any) map[string]any {
+					return map[string]any{"account_id": numericPayloadValue(args["savingsId"])}
+				},
+				Reconciliation: func(args map[string]any) map[string]any {
+					return map[string]any{"account_id": numericPayloadValue(args["savingsId"])}
+				},
+				Reconcile: savingsInterestReconciler(),
 			},
 		},
 	}
