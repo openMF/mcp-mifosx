@@ -13,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import mcp_server
-from core import api_server
 from tools.domains.clients import create_client
 from tools.mcp_adapter import fineract_client
 
@@ -40,16 +39,14 @@ def test_domain_function_requires_an_office() -> None:
     assert office.default is inspect.Parameter.empty
 
 
-def test_rest_endpoint_without_an_office_returns_422() -> None:
-    client = TestClient(api_server.app)
+def test_rest_endpoint_without_an_office_returns_422(client: TestClient) -> None:
     with patch.object(fineract_client, "execute_post") as post:
         response = client.post("/api/clients", json={"firstname": "Ada", "lastname": "Lovelace"})
     post.assert_not_called()
     assert response.status_code == 422
 
 
-def test_rest_endpoint_sends_the_given_office() -> None:
-    client = TestClient(api_server.app)
+def test_rest_endpoint_sends_the_given_office(client: TestClient) -> None:
     with patch.object(fineract_client, "execute_post", return_value={"clientId": 9}) as post:
         response = client.post(
             "/api/clients", json={"firstname": "Ada", "lastname": "Lovelace", "office_id": 4}
@@ -59,9 +56,10 @@ def test_rest_endpoint_sends_the_given_office() -> None:
 
 
 @pytest.mark.parametrize("office_id", [True, 0, -3, "4"])
-def test_rest_endpoint_rejects_an_office_that_is_not_a_positive_whole_number(office_id: object) -> None:
+def test_rest_endpoint_rejects_an_office_that_is_not_a_positive_whole_number(
+    client: TestClient, office_id: object
+) -> None:
     # Without strict checking, true would be read as office 1.
-    client = TestClient(api_server.app)
     with patch.object(fineract_client, "execute_post") as post:
         response = client.post(
             "/api/clients", json={"firstname": "Ada", "lastname": "Lovelace", "office_id": office_id}

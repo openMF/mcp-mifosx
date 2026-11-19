@@ -12,7 +12,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import mcp_server
-from core import api_server
 from tools.mcp_adapter import fineract_client
 
 CHARGES = [
@@ -73,9 +72,9 @@ def test_without_a_charge_and_none_available() -> None:
     ("/api/savings/8/charge", {"amount": 15}),
     ("/api/loans/8/late-fee", {"fee_amount": 15}),
 ])
-def test_rest_fee_endpoints_need_a_charge_id(endpoint: str, body: Dict[str, Any]) -> None:
+def test_rest_fee_endpoints_need_a_charge_id(client: TestClient, endpoint: str, body: Dict[str, Any]) -> None:
     with patch.object(fineract_client, "execute_post") as post:
-        response = TestClient(api_server.app).post(endpoint, json=body)
+        response = client.post(endpoint, json=body)
     assert response.status_code == 422
     post.assert_not_called()
 
@@ -84,9 +83,11 @@ def test_rest_fee_endpoints_need_a_charge_id(endpoint: str, body: Dict[str, Any]
     ("/api/savings/8/charge", {"amount": 15, "charge_id": 4}, "savingsaccounts/8/charges"),
     ("/api/loans/8/late-fee", {"fee_amount": 15, "charge_id": 5}, "loans/8/charges"),
 ])
-def test_rest_fee_endpoints_apply_the_requested_charge(endpoint: str, body: Dict[str, Any], posted_to: str) -> None:
+def test_rest_fee_endpoints_apply_the_requested_charge(
+    client: TestClient, endpoint: str, body: Dict[str, Any], posted_to: str
+) -> None:
     with patch.object(fineract_client, "execute_post", return_value={"resourceId": 3}) as post:
-        response = TestClient(api_server.app).post(endpoint, json=body)
+        response = client.post(endpoint, json=body)
     assert response.status_code == 200
     sent_to, payload = post.call_args.args
     assert sent_to == posted_to

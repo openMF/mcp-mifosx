@@ -171,6 +171,31 @@ def test_missing_profiles_file_is_rejected(tmp_path: Path) -> None:
         apply_tool_profile(_server(), env)
 
 
+def test_profiles_path_that_is_a_directory_is_rejected(tmp_path: Path) -> None:
+    env = {"MCP_PROFILES_FILE": str(tmp_path)}
+    with pytest.raises(ProfileError, match="cannot be read"):
+        apply_tool_profile(_server(), env)
+
+
+def test_profiles_file_that_is_not_utf8_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "profiles.toml"
+    path.write_bytes(b"\xff\xfe\x00")
+    env = {"MCP_PROFILES_FILE": str(path)}
+    with pytest.raises(ProfileError, match="not valid UTF-8"):
+        apply_tool_profile(_server(), env)
+
+
+def test_profiles_file_permission_error_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def deny_read(self: Path, encoding: str = "utf-8") -> str:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "read_text", deny_read)
+    with pytest.raises(ProfileError, match="cannot be read"):
+        load_profiles(tmp_path / "profiles.toml")
+
+
 def test_profile_naming_an_unknown_tool_is_rejected() -> None:
     profiles = {"read-only": frozenset({"get_thing"}), "writer": frozenset({"get_thing", "updat_thing"})}
     with pytest.raises(ProfileError, match="writer: updat_thing"):
