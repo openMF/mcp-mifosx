@@ -349,3 +349,73 @@ func (c *FineractClient) DoMultipartRequest(method, endpoint string, fields map[
 
 	return respBody, nil
 }
+
+// DoMultipartUpload sends a multipart/form-data request carrying the caller's
+// real file content. DoMultipartRequest above keeps its minimal placeholder
+// part for the legacy create/update document tools; an upload that passed the
+// capture gate must send the exact bytes the gate assessed, never a stand-in.
+func (c *FineractClient) DoMultipartUpload(method, endpoint string, fields map[string]string, fileContent []byte, fileName string) ([]byte, error) {
+	endpoint = strings.TrimPrefix(endpoint, "/")
+	url := fmt.Sprintf("%s/%s", c.BaseURL, endpoint)
+
+	// The file name lands in a Content-Disposition header: strip the
+	// characters that could break out of it before building the part.
+	fileName = strings.NewReplacer("\r", "", "\n", "", `"`, "'", "\\", "").Replace(fileName)
+	if fileName == "" {
+		fileName = "capture.png"
+	}
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+
+	for key, val := range fields {
+		writer.WriteField(key, val)
+	}
+
+	ext := strings.ToLower(filepath.Ext(fileName))
+	mimeType := mime.TypeByExtension(ext)
+	if mimeType == "" {
+		mimeType = "application/octet-stream"
+	}
+
+	h := make(textproto.MIMEHeader)
+	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, fileName))
+	h.Set("Content-Type", mimeType)
+
+	part, err := writer.CreatePart(h)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file part: %w", err)
+	}
+	if _, err := part.Write(fileContent); err != nil {
+		return nil, fmt.Errorf("failed to write file content: %w", err)
+	}
+
+	writer.Close()
+
+	req, err := http.NewRequest(method, url, &buf)
+	if err != nil {
+		return nil, err
+	}
+
+	req.SetBasicAuth(c.Username, c.Password)
+	req.Header.Set("fineract-platform-tenantid", c.TenantID)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode >= 400 {
+		return respBody, fmt.Errorf("API Error %d", resp.StatusCode)
+	}
+
+	return respBody, nil
+}

@@ -60,6 +60,8 @@ go/mysql-init/
 !mobile-ai/README.md
 !rust/benches/results.md
 !rust/benches/README.md
+# Cross-server contract documentation (see contract/)
+!contract/capture/CAPTURE_GATE.md
 
 # Plugin directory
 /.quarkus/cli/plugins/
