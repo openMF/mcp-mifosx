@@ -227,7 +227,12 @@ func newConnection() (string, *http.Client, error) {
 type Response struct {
 	Body       []byte
 	StatusCode int
-	Err        error
+	// RedirectStatus is the status of the redirect that net/http followed for
+	// this request, or 0 when no redirect was followed. A followed 301/302/303
+	// rewrites a POST to a GET, so StatusCode and Body can then describe a
+	// request that never carried the write.
+	RedirectStatus int
+	Err            error
 }
 
 // DoRequest always uses the configured identity; it never selects caller mode.
@@ -239,15 +244,10 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 	return response.Body, nil
 }
 
-// moneyWriteMustNotBeReplayed reports whether req is a write that carries an
-// idempotency key while the deployment has not proven that Fineract honours
-// it. net/http treats an "Idempotency-Key" or "X-Idempotency-Key" header as a
-// promise that resending the request is harmless, so a response lost after
-// Fineract committed the transaction could otherwise apply a money move twice.
-//
-// Only requests that already carry such a header are affected: reads and
-// writes without an idempotency key keep the transport's normal retry rules.
-func moneyWriteMustNotBeReplayed(req *http.Request) bool {
+// requestCarriesIdempotencyKey reports whether req is a write that carries one
+// of the headers net/http treats as an idempotency promise. Reads and writes
+// without such a header keep the transport's normal retry rules.
+func requestCarriesIdempotencyKey(req *http.Request) bool {
 	switch req.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
 		return false
@@ -256,9 +256,7 @@ func moneyWriteMustNotBeReplayed(req *http.Request) bool {
 	// deployment that moves the key to a custom header stays protected.
 	for _, name := range []string{"Idempotency-Key", "X-Idempotency-Key", idempotency.BackendHeaderName()} {
 		if len(req.Header.Values(name)) > 0 {
-			// Verified backend deduplication makes the transport's retry safe,
-			// so the request is left exactly as it was built.
-			return !idempotency.BackendDedupVerified()
+			return true
 		}
 	}
 	return false
@@ -284,6 +282,30 @@ func blockTransportReplay(req *http.Request) {
 	if req.Body == nil || req.Body == http.NoBody {
 		req.Body = io.NopCloser(bytes.NewReader(nil))
 	}
+}
+
+// followedRedirectStatus reports the status of the redirect that net/http
+// followed for req, or 0 when no redirect was followed.
+//
+// The final response status cannot answer this question: net/http follows
+// 301/302/303 by rewriting a POST to a GET, so a redirected money write can
+// end in HTTP 200. The Client instead links every redirect request to the
+// response that caused it (Request.Response), so that chain is the reliable
+// evidence. The walk goes back to the response that answered the caller's own
+// request and returns its status.
+func followedRedirectStatus(req *http.Request, resp *http.Response) int {
+	if resp == nil || resp.Request == nil || resp.Request.Response == nil {
+		return 0
+	}
+	status := 0
+	for hop := resp.Request; hop != nil && hop.Response != nil; {
+		status = hop.Response.StatusCode
+		if hop.Response.Request == nil || hop.Response.Request == req {
+			break
+		}
+		hop = hop.Response.Request
+	}
+	return status
 }
 
 // DoRequestOutcome is DoRequest with the context, extra headers and the HTTP
@@ -334,7 +356,8 @@ func (c *FineractClient) DoRequestOutcome(ctx context.Context, method, endpoint 
 	// A money move must not be resent automatically by the transport after a
 	// lost response unless the backend is proven to deduplicate on the key:
 	// a retry can pay twice before the ledger records an ambiguous outcome.
-	if moneyWriteMustNotBeReplayed(req) {
+	keyedWrite := requestCarriesIdempotencyKey(req)
+	if keyedWrite && !idempotency.BackendDedupVerified() {
 		blockTransportReplay(req)
 	}
 
@@ -344,25 +367,57 @@ func (c *FineractClient) DoRequestOutcome(ctx context.Context, method, endpoint 
 	}
 	defer resp.Body.Close()
 
+	// Detect followed redirects from the request chain rather than the final
+	// status: a followed 301/302/303 turns the POST into a GET and can end with
+	// HTTP 200, so StatusCode alone cannot reveal that the write was redirected.
+	redirectStatus := followedRedirectStatus(req, resp)
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return Response{StatusCode: resp.StatusCode, Err: err}
+		return Response{StatusCode: resp.StatusCode, RedirectStatus: redirectStatus, Err: err}
+	}
+
+	// A keyed write that was redirected has not been confirmed by its target:
+	// net/http follows 301/302/303 as a GET, returns 307/308 unfollowed when it
+	// cannot rewind the body, and never follows 300/304/305/306. None of these
+	// proves the write itself was applied, so it must not be reported as
+	// success.
+	if keyedWrite && redirectStatus != 0 {
+		return Response{
+			Body:           respBody,
+			StatusCode:     resp.StatusCode,
+			RedirectStatus: redirectStatus,
+			Err:            fmt.Errorf("redirect followed (HTTP %d)", redirectStatus),
+		}
+	}
+	if keyedWrite && resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return Response{
+			Body:       respBody,
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("redirect not followed (HTTP %d)", resp.StatusCode),
+		}
 	}
 
 	if resp.StatusCode >= 400 {
-		return Response{Body: respBody, StatusCode: resp.StatusCode, Err: fmt.Errorf("API Error %d", resp.StatusCode)}
+		return Response{
+			Body:           respBody,
+			StatusCode:     resp.StatusCode,
+			RedirectStatus: redirectStatus,
+			Err:            fmt.Errorf("API Error %d", resp.StatusCode),
+		}
 	}
 
 	// If it's a binary/attachment response, return a descriptive string instead of a huge blob
 	contentType := resp.Header.Get("Content-Type")
 	if isAttachment && !strings.Contains(contentType, "json") {
 		return Response{
-			Body:       []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))),
-			StatusCode: resp.StatusCode,
+			Body:           []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))),
+			StatusCode:     resp.StatusCode,
+			RedirectStatus: redirectStatus,
 		}
 	}
 
-	return Response{Body: respBody, StatusCode: resp.StatusCode}
+	return Response{Body: respBody, StatusCode: resp.StatusCode, RedirectStatus: redirectStatus}
 }
 
 // DoMultipartRequest sends a multipart/form-data request to Fineract.

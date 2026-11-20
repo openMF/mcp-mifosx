@@ -281,3 +281,168 @@ func TestUnverifiedDedupDoesNotReplayMoneyWriteOverHTTP2(t *testing.T) {
 		t.Fatalf("the idempotency key was not preserved: %v", keys)
 	}
 }
+
+// redirectGateways starts a destination and a redirecting gateway so a test can
+// count whether the client followed the Location at all.
+func redirectGateways(t *testing.T, status int) (client *FineractClient, targetHits *atomic.Int32) {
+	t.Helper()
+	hits := &atomic.Int32{}
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"resourceId":99}`)
+	}))
+	t.Cleanup(target.Close)
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", target.URL+"/redirected")
+		w.WriteHeader(status)
+	}))
+	t.Cleanup(gateway.Close)
+	return &FineractClient{
+		BaseURL:  gateway.URL,
+		TenantID: "test-tenant",
+		Username: "tester",
+		Password: "secret",
+		HTTP:     gateway.Client(),
+	}, hits
+}
+
+// TestKeyedWriteUnfollowedRedirectIsAnError proves a keyed write never reports
+// an unfollowed redirect as a successful response. net/http returns 307/308
+// with a nil error when the body cannot be replayed, so the adapter must keep
+// the status but surface the transport-level ambiguity.
+func TestKeyedWriteUnfollowedRedirectIsAnError(t *testing.T) {
+	for _, redirect := range []struct {
+		name   string
+		status int
+	}{
+		{"temporary_307", http.StatusTemporaryRedirect},
+		{"permanent_308", http.StatusPermanentRedirect},
+	} {
+		t.Run(redirect.name, func(t *testing.T) {
+			t.Setenv("MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED", "false")
+			t.Setenv("MIFOSX_IDEMPOTENCY_HEADER", "Idempotency-Key")
+			client, targetHits := redirectGateways(t, redirect.status)
+
+			response := client.DoRequestOutcome(context.Background(), http.MethodPost, "journalentries",
+				map[string]any{"amount": 10}, nil, map[string]string{"Idempotency-Key": "money-key-0004"})
+
+			if response.Err == nil {
+				t.Fatal("an unfollowed redirect must not be reported as success")
+			}
+			if response.StatusCode != redirect.status {
+				t.Fatalf("the redirect status was lost: got %d want %d", response.StatusCode, redirect.status)
+			}
+			if response.RedirectStatus != 0 {
+				t.Fatalf("an unfollowed redirect was reported as followed: %d", response.RedirectStatus)
+			}
+			if len(response.Body) != 0 {
+				t.Fatalf("unexpected redirect body: %s", response.Body)
+			}
+			if got := targetHits.Load(); got != 0 {
+				t.Fatalf("the redirect target received %d requests, want 0", got)
+			}
+		})
+	}
+}
+
+// TestKeyedWriteFollowedRedirectIsAnError proves a keyed write is never
+// reported as success when net/http follows a 301/302/303 by rewriting the POST
+// to a GET. The final 200 belongs to a different request, so the adapter must
+// surface the redirect instead of returning the target's body as a result.
+func TestKeyedWriteFollowedRedirectIsAnError(t *testing.T) {
+	for _, redirect := range []struct {
+		name   string
+		status int
+	}{
+		{"moved_permanently_301", http.StatusMovedPermanently},
+		{"found_302", http.StatusFound},
+		{"see_other_303", http.StatusSeeOther},
+	} {
+		t.Run(redirect.name, func(t *testing.T) {
+			t.Setenv("MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED", "false")
+			t.Setenv("MIFOSX_IDEMPOTENCY_HEADER", "Idempotency-Key")
+
+			var mu sync.Mutex
+			var targetMethods []string
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				targetMethods = append(targetMethods, r.Method)
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"resourceId":99}`)
+			}))
+			t.Cleanup(target.Close)
+
+			var posts atomic.Int32
+			gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				posts.Add(1)
+				w.Header().Set("Location", target.URL+"/redirected")
+				w.WriteHeader(redirect.status)
+			}))
+			t.Cleanup(gateway.Close)
+
+			client := &FineractClient{
+				BaseURL:  gateway.URL,
+				TenantID: "test-tenant",
+				Username: "tester",
+				Password: "secret",
+				HTTP:     gateway.Client(),
+			}
+			response := client.DoRequestOutcome(context.Background(), http.MethodPost, "journalentries",
+				map[string]any{"amount": 10}, nil, map[string]string{"Idempotency-Key": "money-key-0005"})
+
+			if response.Err == nil {
+				t.Fatal("a followed redirect must not be reported as success")
+			}
+			if response.RedirectStatus != redirect.status {
+				t.Fatalf("the followed redirect was not detected: got %d want %d", response.RedirectStatus, redirect.status)
+			}
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("unexpected final status: %d", response.StatusCode)
+			}
+			if got := posts.Load(); got != 1 {
+				t.Fatalf("the original POST was sent %d times, want 1", got)
+			}
+
+			mu.Lock()
+			methods := append([]string(nil), targetMethods...)
+			mu.Unlock()
+			if len(methods) != 1 || methods[0] != http.MethodGet {
+				t.Fatalf("the redirect was not followed as a GET: %v", methods)
+			}
+		})
+	}
+}
+
+// TestReadRedirectIsStillFollowed pins the existing behaviour for reads: the
+// redirect protection is scoped to keyed writes.
+func TestReadRedirectIsStillFollowed(t *testing.T) {
+	t.Setenv("MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED", "false")
+	for _, redirect := range []struct {
+		name   string
+		status int
+	}{
+		{"moved_permanently_301", http.StatusMovedPermanently},
+		{"found_302", http.StatusFound},
+		{"see_other_303", http.StatusSeeOther},
+		{"temporary_307", http.StatusTemporaryRedirect},
+		{"permanent_308", http.StatusPermanentRedirect},
+	} {
+		t.Run(redirect.name, func(t *testing.T) {
+			client, targetHits := redirectGateways(t, redirect.status)
+
+			response := client.DoRequestOutcome(context.Background(), http.MethodGet, "journalentries", nil, nil, nil)
+
+			if response.Err != nil || response.StatusCode != http.StatusOK {
+				t.Fatalf("a read redirect should be followed: status=%d err=%v", response.StatusCode, response.Err)
+			}
+			if response.RedirectStatus != redirect.status {
+				t.Fatalf("the read redirect was not detected: got %d want %d", response.RedirectStatus, redirect.status)
+			}
+			if got := targetHits.Load(); got != 1 {
+				t.Fatalf("the read redirect reached its target %d times, want 1", got)
+			}
+		})
+	}
+}

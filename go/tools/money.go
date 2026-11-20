@@ -61,10 +61,35 @@ func idempotencyKeyParam() ToolParam {
 // classifyMoneyResponse turns one backend response into an attempt outcome.
 //
 // A 4xx (other than the statuses that leave the effect open) proves Fineract
-// refused the request, so a retry is safe. A 5xx, a 408/409/425/429, or a
-// transport failure may have happened after the transaction committed, so the
-// outcome is ambiguous and must be reconciled before anything is repeated.
+// refused the request, so a retry is safe. A 5xx, a 408/409/425/429, any
+// redirect the client followed or left unfollowed, or a transport failure may
+// have happened after the transaction committed, so the outcome is ambiguous
+// and must be reconciled before anything is repeated.
 func classifyMoneyResponse(response adapter.Response) (idempotency.Attempt, error) {
+	// A redirect is not evidence that the write succeeded. net/http follows
+	// 301/302/303 by rewriting the POST to a GET, so a final 200 can belong to a
+	// request that never carried the write; 307/308 are instead returned
+	// unfollowed when the body cannot be replayed. Neither confirms the write.
+	if response.RedirectStatus != 0 {
+		return idempotency.Attempt{
+			Outcome: idempotency.OutcomeAmbiguous,
+			Error:   "Fineract returned a redirect instead of a result.",
+			Detail: fmt.Sprintf(
+				"The HTTP client followed the HTTP %d redirect, so the final response came from a different request.",
+				response.RedirectStatus),
+		}, nil
+	}
+
+	if response.StatusCode >= 300 && response.StatusCode < 400 {
+		return idempotency.Attempt{
+			Outcome: idempotency.OutcomeAmbiguous,
+			Error:   "Fineract returned a redirect instead of a result.",
+			Detail: fmt.Sprintf(
+				"The HTTP client did not follow the HTTP %d redirect, so the write may not have reached its target.",
+				response.StatusCode),
+		}, nil
+	}
+
 	if response.Err == nil {
 		result := map[string]any{}
 		if len(response.Body) > 0 {

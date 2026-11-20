@@ -86,6 +86,9 @@ func newMoneyRegistry(t *testing.T, bank *testBank) *Registry {
 	t.Setenv("MIFOSX_TENANT_ID", "test-tenant")
 	t.Setenv("MCP_IDEMPOTENCY_ACTOR", "test-teller")
 	t.Setenv("MCP_IDEMPOTENCY_LOCK_WAIT_SECONDS", "5")
+	// testBank records the default header name, so pin it: an inherited custom
+	// MIFOSX_IDEMPOTENCY_HEADER would otherwise hide the backend key.
+	t.Setenv("MIFOSX_IDEMPOTENCY_HEADER", "Idempotency-Key")
 	// The default ledger is process-wide; reset it so each test reads its own
 	// temporary directory.
 	idempotency.ResetDefaultLedger()
@@ -526,6 +529,11 @@ func TestJournalEntryWithoutReadEndpointStaysUnknown(t *testing.T) {
 // it while backend deduplication is unverified. The ledger must then record
 // UNKNOWN instead of claiming the entry succeeded.
 func TestJournalEntryLostResponseIsNotReplayedAndStaysUnknown(t *testing.T) {
+	// The scenario depends on the transport guard: verified backend dedup would
+	// deliberately permit the replay this test forbids, and a custom header name
+	// would hide the key from the fixture.
+	t.Setenv("MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED", "false")
+	t.Setenv("MIFOSX_IDEMPOTENCY_HEADER", "Idempotency-Key")
 	var posts int32
 	var mu sync.Mutex
 	var getAddr, postAddr string
@@ -618,6 +626,176 @@ func TestJournalEntryLostResponseIsNotReplayedAndStaysUnknown(t *testing.T) {
 	}
 	if _, succeeded := record.Result["resourceId"]; succeeded {
 		t.Fatalf("the ledger recorded a success result for an unanswered write: %v", record.Result)
+	}
+}
+
+// TestJournalEntryUnfollowedRedirectStaysUnknown proves that a keyed money POST
+// which receives an unfollowed redirect is never treated as success. net/http
+// returns 307/308 with a nil error when it cannot rewind the body, and a
+// redirect target has not confirmed the write, so the ledger must stay UNKNOWN
+// and nothing may be sent to the redirect target.
+func TestJournalEntryUnfollowedRedirectStaysUnknown(t *testing.T) {
+	for _, redirect := range []struct {
+		name   string
+		status int
+	}{
+		{"temporary_307", http.StatusTemporaryRedirect},
+		{"permanent_308", http.StatusPermanentRedirect},
+	} {
+		t.Run(redirect.name, func(t *testing.T) {
+			t.Setenv("MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED", "false")
+			t.Setenv("MIFOSX_IDEMPOTENCY_HEADER", "Idempotency-Key")
+
+			var targetHits int32
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				atomic.AddInt32(&targetHits, 1)
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"resourceId": 77}`)
+			}))
+			t.Cleanup(target.Close)
+
+			bank := &testBank{handle: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Location", target.URL+"/redirected/entries")
+				w.WriteHeader(redirect.status)
+			}}
+			registry := newMoneyRegistry(t, bank)
+			def := toolDef(t, GetAccountingToolDefs(), "create_journal_entry")
+
+			key := "journal-redirect-" + redirect.name
+			args := map[string]any{
+				"officeId": 1, "transactionDate": "2026-11-17", "currencyCode": "USD",
+				"credits": `[{"glAccountId":2,"amount":10}]`, "debits": `[{"glAccountId":3,"amount":10}]`,
+				"idempotencyKey": key,
+			}
+			result, err := registry.executeToolDef(context.Background(), def, args)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("a redirect must not be reported as success: %s", resultText(t, result))
+			}
+			body := resultText(t, result)
+			if !strings.Contains(body, "reconciliation_required") || !strings.Contains(body, `"idempotency_state":"UNKNOWN"`) {
+				t.Fatalf("an unfollowed redirect must stay UNKNOWN: %s", body)
+			}
+			if strings.Contains(body, `"safe_to_retry":true`) {
+				t.Fatalf("a redirect must not be declared safe to retry: %s", body)
+			}
+			if got := bank.postCount(); got != 1 {
+				t.Fatalf("the redirecting POST was sent %d times, want 1", got)
+			}
+			if got := atomic.LoadInt32(&targetHits); got != 0 {
+				t.Fatalf("the redirect target received %d requests, want 0", got)
+			}
+
+			record, err := idempotency.DefaultLedger().Read(
+				idempotency.KeyHash(idempotency.DefaultScope(), "journal.entry", key))
+			if err != nil {
+				t.Fatalf("read ledger record: %v", err)
+			}
+			if record == nil {
+				t.Fatal("the redirect attempt was not recorded in the ledger")
+			}
+			if record.State != idempotency.StateUnknown {
+				t.Fatalf("the ledger marked the redirect %s, want %s", record.State, idempotency.StateUnknown)
+			}
+			if _, succeeded := record.Result["resourceId"]; succeeded {
+				t.Fatalf("the ledger recorded a success result for a redirect: %v", record.Result)
+			}
+		})
+	}
+}
+
+// TestJournalEntryFollowedRedirectStaysUnknown proves a keyed money write is
+// never treated as success when net/http follows a 301/302/303 by rewriting the
+// POST to a GET. The final 200 belongs to a different request, so the ledger
+// must stay UNKNOWN, reconciliation must be requested, and the write must not
+// be retried.
+func TestJournalEntryFollowedRedirectStaysUnknown(t *testing.T) {
+	for _, redirect := range []struct {
+		name   string
+		status int
+	}{
+		{"moved_permanently_301", http.StatusMovedPermanently},
+		{"found_302", http.StatusFound},
+		{"see_other_303", http.StatusSeeOther},
+	} {
+		t.Run(redirect.name, func(t *testing.T) {
+			t.Setenv("MCP_IDEMPOTENCY_BACKEND_DEDUP_VERIFIED", "false")
+			t.Setenv("MIFOSX_IDEMPOTENCY_HEADER", "Idempotency-Key")
+
+			var mu sync.Mutex
+			var targetMethods []string
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				mu.Lock()
+				targetMethods = append(targetMethods, r.Method)
+				mu.Unlock()
+				w.Header().Set("Content-Type", "application/json")
+				fmt.Fprint(w, `{"resourceId": 77}`)
+			}))
+			t.Cleanup(target.Close)
+
+			bank := &testBank{handle: func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					http.NotFound(w, r)
+					return
+				}
+				w.Header().Set("Location", target.URL+"/redirected/entries")
+				w.WriteHeader(redirect.status)
+			}}
+			registry := newMoneyRegistry(t, bank)
+			def := toolDef(t, GetAccountingToolDefs(), "create_journal_entry")
+
+			key := "journal-followed-redirect-" + redirect.name
+			args := map[string]any{
+				"officeId": 1, "transactionDate": "2026-11-17", "currencyCode": "USD",
+				"credits": `[{"glAccountId":2,"amount":10}]`, "debits": `[{"glAccountId":3,"amount":10}]`,
+				"idempotencyKey": key,
+			}
+			result, err := registry.executeToolDef(context.Background(), def, args)
+			if err != nil {
+				t.Fatalf("execute: %v", err)
+			}
+			if !result.IsError {
+				t.Fatalf("a followed redirect must not be reported as success: %s", resultText(t, result))
+			}
+			body := resultText(t, result)
+			if !strings.Contains(body, "reconciliation_required") || !strings.Contains(body, `"idempotency_state":"UNKNOWN"`) {
+				t.Fatalf("a followed redirect must stay UNKNOWN: %s", body)
+			}
+			if strings.Contains(body, `"safe_to_retry":true`) {
+				t.Fatalf("a followed redirect must not be declared safe to retry: %s", body)
+			}
+			if got := bank.postCount(); got != 1 {
+				t.Fatalf("the original POST was sent %d times, want 1", got)
+			}
+
+			mu.Lock()
+			methods := append([]string(nil), targetMethods...)
+			mu.Unlock()
+			if len(methods) != 1 || methods[0] != http.MethodGet {
+				t.Fatalf("the redirect was not followed as a GET: %v", methods)
+			}
+
+			record, err := idempotency.DefaultLedger().Read(
+				idempotency.KeyHash(idempotency.DefaultScope(), "journal.entry", key))
+			if err != nil {
+				t.Fatalf("read ledger record: %v", err)
+			}
+			if record == nil {
+				t.Fatal("the redirected attempt was not recorded in the ledger")
+			}
+			if record.State != idempotency.StateUnknown {
+				t.Fatalf("the ledger marked the redirected write %s, want %s", record.State, idempotency.StateUnknown)
+			}
+			if _, succeeded := record.Result["resourceId"]; succeeded {
+				t.Fatalf("the ledger recorded a success result for a redirected write: %v", record.Result)
+			}
+		})
 	}
 }
 
