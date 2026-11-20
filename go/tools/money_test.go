@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -516,6 +517,107 @@ func TestJournalEntryWithoutReadEndpointStaysUnknown(t *testing.T) {
 	}
 	if bank.postCount() != 1 {
 		t.Fatalf("the entry was reposted: %d POSTs", bank.postCount())
+	}
+}
+
+// TestJournalEntryLostResponseIsNotReplayedAndStaysUnknown exercises the whole
+// path: a money POST carries the backend key over a reused connection, the
+// backend applies it and loses the response, and the transport must not resend
+// it while backend deduplication is unverified. The ledger must then record
+// UNKNOWN instead of claiming the entry succeeded.
+func TestJournalEntryLostResponseIsNotReplayedAndStaysUnknown(t *testing.T) {
+	var posts int32
+	var mu sync.Mutex
+	var getAddr, postAddr string
+	bank := &testBank{handle: func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			mu.Lock()
+			getAddr = r.RemoteAddr
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			fmt.Fprint(w, `{}`)
+			return
+		}
+		mu.Lock()
+		postAddr = r.RemoteAddr
+		mu.Unlock()
+		if _, err := io.ReadAll(r.Body); err != nil {
+			http.Error(w, "unreadable body", http.StatusBadRequest)
+			return
+		}
+		if atomic.AddInt32(&posts, 1) == 1 {
+			// Fineract committed the journal entry, then the connection failed
+			// before a status line reached the client.
+			conn, _, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				panic(err)
+			}
+			_ = conn.Close()
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"resourceId": 31}`)
+	}}
+	registry := newMoneyRegistry(t, bank)
+	def := toolDef(t, GetAccountingToolDefs(), "create_journal_entry")
+
+	// net/http only retries a failed write whose connection has already been
+	// used, so warm the pool and prove the POST reused it.
+	if _, err := registry.Fineract.DoRequest(http.MethodGet, "journalentries", nil, nil); err != nil {
+		t.Fatalf("warm-up read: %v", err)
+	}
+
+	args := map[string]any{
+		"officeId": 1, "transactionDate": "2026-11-17", "currencyCode": "USD",
+		"credits": `[{"glAccountId":2,"amount":10}]`, "debits": `[{"glAccountId":3,"amount":10}]`,
+		"idempotencyKey": "journal-replay-key-0001",
+	}
+	result, err := registry.executeToolDef(context.Background(), def, args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("a lost response must be reported as an error, got: %s", resultText(t, result))
+	}
+	body := resultText(t, result)
+	if !strings.Contains(body, "reconciliation_required") || !strings.Contains(body, `"idempotency_state":"UNKNOWN"`) {
+		t.Fatalf("an unreconcilable outcome must stay UNKNOWN: %s", body)
+	}
+	if strings.Contains(body, `"safe_to_retry":true`) {
+		t.Fatalf("a lost money response must not be declared safe to retry: %s", body)
+	}
+	if got := bank.postCount(); got != 1 {
+		t.Fatalf("the lost money POST was replayed (%d POSTs)", got)
+	}
+
+	mu.Lock()
+	reused := getAddr != "" && postAddr == getAddr
+	mu.Unlock()
+	if !reused {
+		t.Fatalf("the POST did not reuse the warmed connection: get=%q post=%q", getAddr, postAddr)
+	}
+	keys := bank.backendKeys()
+	if len(keys) != 1 || keys[0] == "" {
+		t.Fatalf("the one POST did not carry a backend idempotency key: %v", keys)
+	}
+	want := idempotency.BackendKey(idempotency.DefaultScope(), "journal.entry", "journal-replay-key-0001")
+	if keys[0] != want {
+		t.Fatalf("unexpected backend key: got %q want %q", keys[0], want)
+	}
+
+	record, err := idempotency.DefaultLedger().Read(
+		idempotency.KeyHash(idempotency.DefaultScope(), "journal.entry", "journal-replay-key-0001"))
+	if err != nil {
+		t.Fatalf("read ledger record: %v", err)
+	}
+	if record == nil {
+		t.Fatal("the ambiguous attempt was not recorded in the ledger")
+	}
+	if record.State != idempotency.StateUnknown {
+		t.Fatalf("the ledger marked the ambiguous write %s, want %s", record.State, idempotency.StateUnknown)
+	}
+	if _, succeeded := record.Result["resourceId"]; succeeded {
+		t.Fatalf("the ledger recorded a success result for an unanswered write: %v", record.Result)
 	}
 }
 

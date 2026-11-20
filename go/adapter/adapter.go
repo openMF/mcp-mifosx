@@ -22,6 +22,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/openMF/mcp-mifosx/go/idempotency"
 )
 
 // FineractClient executes as the configured identity in trusted stdio/local mode.
@@ -237,6 +239,53 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 	return response.Body, nil
 }
 
+// moneyWriteMustNotBeReplayed reports whether req is a write that carries an
+// idempotency key while the deployment has not proven that Fineract honours
+// it. net/http treats an "Idempotency-Key" or "X-Idempotency-Key" header as a
+// promise that resending the request is harmless, so a response lost after
+// Fineract committed the transaction could otherwise apply a money move twice.
+//
+// Only requests that already carry such a header are affected: reads and
+// writes without an idempotency key keep the transport's normal retry rules.
+func moneyWriteMustNotBeReplayed(req *http.Request) bool {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return false
+	}
+	// The configured Fineract header is included even when it is renamed, so a
+	// deployment that moves the key to a custom header stays protected.
+	for _, name := range []string{"Idempotency-Key", "X-Idempotency-Key", idempotency.BackendHeaderName()} {
+		if len(req.Header.Values(name)) > 0 {
+			// Verified backend deduplication makes the transport's retry safe,
+			// so the request is left exactly as it was built.
+			return !idempotency.BackendDedupVerified()
+		}
+	}
+	return false
+}
+
+// blockTransportReplay makes req ineligible for net/http's automatic retry.
+//
+// net/http replays a failed request only when its body can be recreated
+// (GetBody) or is empty, so clearing GetBody covers JSON bodies. A nil or
+// http.NoBody request is retried without consulting GetBody, and HTTP/2 also
+// replays a nil body after a GOAWAY; giving an empty body a non-nil reader
+// closes both paths. The payload stays empty (net/http sends a zero-length
+// chunked body) and no header, including the idempotency key, is touched.
+//
+// Giving up the retry also gives up the transport's safe retry when it knows
+// nothing was written (for example a stale idle connection). Such a write now
+// surfaces as an ambiguous outcome instead of an automatic resend. That is
+// deliberate: the transport's replay decision only asks whether the body can be
+// recreated, which is not proof that Fineract deduplicates the key, so this
+// policy never assumes a resend is safe.
+func blockTransportReplay(req *http.Request) {
+	req.GetBody = nil
+	if req.Body == nil || req.Body == http.NoBody {
+		req.Body = io.NopCloser(bytes.NewReader(nil))
+	}
+}
+
 // DoRequestOutcome is DoRequest with the context, extra headers and the HTTP
 // status preserved, for callers that must classify an unanswered write.
 // Cancelling ctx aborts the request and surfaces as a transport error, so the
@@ -280,6 +329,13 @@ func (c *FineractClient) DoRequestOutcome(ctx context.Context, method, endpoint 
 			q.Add(k, v)
 		}
 		req.URL.RawQuery = q.Encode()
+	}
+
+	// A money move must not be resent automatically by the transport after a
+	// lost response unless the backend is proven to deduplicate on the key:
+	// a retry can pay twice before the ledger records an ambiguous outcome.
+	if moneyWriteMustNotBeReplayed(req) {
+		blockTransportReplay(req)
 	}
 
 	resp, err := c.HTTP.Do(req)
