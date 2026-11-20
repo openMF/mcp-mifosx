@@ -144,16 +144,25 @@ class FineractAdapter:
                 }
             return {"error": f"Connection failed: {str(e)}"}
 
-    def execute_post(self, endpoint: str, payload: dict):
-        """Executes a POST request (for creating records)."""
+    def execute_post(self, endpoint: str, payload: dict, extra_headers: dict = None):
+        """Executes a POST request (for creating records).
+
+        ``extra_headers`` is additive and optional; it carries the
+        deterministic ``Idempotency-Key`` when a money-moving call is made
+        through the idempotency engine. It never replaces the tenant or
+        content-type headers.
+        """
         url = f"{self.base_url}/{endpoint}"
         logger.info(f"Executing POST: {url}")
         # Field names only: payloads carry client names, phone numbers and ID
         # document numbers, which must not end up in the server logs
         logger.info("Payload fields: %s", ", ".join(sorted(payload)) if isinstance(payload, dict) else "-")
+        headers = self._get_headers()
+        if extra_headers:
+            headers.update(extra_headers)
         try:
             response = requests.post(
-                url, headers=self._get_headers(), auth=(self.username, self.password),
+                url, headers=headers, auth=(self.username, self.password),
                 json=payload, verify=self.verify_ssl, timeout=self.timeout
             )
             response.raise_for_status()

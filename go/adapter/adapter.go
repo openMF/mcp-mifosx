@@ -22,6 +22,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/openMF/mcp-mifosx/go/idempotency"
 )
 
 // FineractClient executes as the configured identity in trusted stdio/local mode.
@@ -214,8 +216,103 @@ func newConnection() (string, *http.Client, error) {
 	}, nil
 }
 
+// Response is the raw result of one backend call, including a transport
+// failure.
+//
+// DoRequest turns every failure into an error string, which is right for
+// reads but loses the one fact a money move needs: whether Fineract answered
+// at all. A 400 means the request was refused; a dropped connection or a 500
+// means it may already have been applied. StatusCode is 0 when no response was
+// received, and Err is non-nil for both cases.
+type Response struct {
+	Body       []byte
+	StatusCode int
+	// RedirectStatus is the status of the redirect that net/http followed for
+	// this request, or 0 when no redirect was followed. A followed 301/302/303
+	// rewrites a POST to a GET, so StatusCode and Body can then describe a
+	// request that never carried the write.
+	RedirectStatus int
+	Err            error
+}
+
 // DoRequest always uses the configured identity; it never selects caller mode.
 func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, queryParams map[string]string) ([]byte, error) {
+	response := c.DoRequestOutcome(context.Background(), method, endpoint, body, queryParams, nil)
+	if response.Err != nil {
+		return response.Body, response.Err
+	}
+	return response.Body, nil
+}
+
+// requestCarriesIdempotencyKey reports whether req is a write that carries one
+// of the headers net/http treats as an idempotency promise. Reads and writes
+// without such a header keep the transport's normal retry rules.
+func requestCarriesIdempotencyKey(req *http.Request) bool {
+	switch req.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions, http.MethodTrace:
+		return false
+	}
+	// The configured Fineract header is included even when it is renamed, so a
+	// deployment that moves the key to a custom header stays protected.
+	for _, name := range []string{"Idempotency-Key", "X-Idempotency-Key", idempotency.BackendHeaderName()} {
+		if len(req.Header.Values(name)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// blockTransportReplay makes req ineligible for net/http's automatic retry.
+//
+// net/http replays a failed request only when its body can be recreated
+// (GetBody) or is empty, so clearing GetBody covers JSON bodies. A nil or
+// http.NoBody request is retried without consulting GetBody, and HTTP/2 also
+// replays a nil body after a GOAWAY; giving an empty body a non-nil reader
+// closes both paths. The payload stays empty (net/http sends a zero-length
+// chunked body) and no header, including the idempotency key, is touched.
+//
+// Giving up the retry also gives up the transport's safe retry when it knows
+// nothing was written (for example a stale idle connection). Such a write now
+// surfaces as an ambiguous outcome instead of an automatic resend. That is
+// deliberate: the transport's replay decision only asks whether the body can be
+// recreated, which is not proof that Fineract deduplicates the key, so this
+// policy never assumes a resend is safe.
+func blockTransportReplay(req *http.Request) {
+	req.GetBody = nil
+	if req.Body == nil || req.Body == http.NoBody {
+		req.Body = io.NopCloser(bytes.NewReader(nil))
+	}
+}
+
+// followedRedirectStatus reports the status of the redirect that net/http
+// followed for req, or 0 when no redirect was followed.
+//
+// The final response status cannot answer this question: net/http follows
+// 301/302/303 by rewriting a POST to a GET, so a redirected money write can
+// end in HTTP 200. The Client instead links every redirect request to the
+// response that caused it (Request.Response), so that chain is the reliable
+// evidence. The walk goes back to the response that answered the caller's own
+// request and returns its status.
+func followedRedirectStatus(req *http.Request, resp *http.Response) int {
+	if resp == nil || resp.Request == nil || resp.Request.Response == nil {
+		return 0
+	}
+	status := 0
+	for hop := resp.Request; hop != nil && hop.Response != nil; {
+		status = hop.Response.StatusCode
+		if hop.Response.Request == nil || hop.Response.Request == req {
+			break
+		}
+		hop = hop.Response.Request
+	}
+	return status
+}
+
+// DoRequestOutcome is DoRequest with the context, extra headers and the HTTP
+// status preserved, for callers that must classify an unanswered write.
+// Cancelling ctx aborts the request and surfaces as a transport error, so the
+// caller can decide that the outcome is unknown rather than failed.
+func (c *FineractClient) DoRequestOutcome(ctx context.Context, method, endpoint string, body interface{}, queryParams map[string]string, headers map[string]string) Response {
 	isAttachment := strings.Contains(endpoint, "/attachment") || strings.Contains(endpoint, "/download")
 	endpoint = strings.TrimPrefix(endpoint, "/")
 	url := fmt.Sprintf("%s/%s", c.BaseURL, endpoint)
@@ -224,14 +321,14 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 	if body != nil {
 		jsonBody, err := json.Marshal(body)
 		if err != nil {
-			return nil, err
+			return Response{Err: err}
 		}
 		reqBody = bytes.NewBuffer(jsonBody)
 	}
 
-	req, err := http.NewRequest(method, url, reqBody)
+	req, err := http.NewRequestWithContext(ctx, method, url, reqBody)
 	if err != nil {
-		return nil, err
+		return Response{Err: err}
 	}
 
 	req.SetBasicAuth(c.Username, c.Password)
@@ -244,6 +341,10 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 		req.Header.Set("Accept", "application/json")
 	}
 
+	for name, value := range headers {
+		req.Header.Set(name, value)
+	}
+
 	if queryParams != nil {
 		q := req.URL.Query()
 		for k, v := range queryParams {
@@ -252,28 +353,71 @@ func (c *FineractClient) DoRequest(method, endpoint string, body interface{}, qu
 		req.URL.RawQuery = q.Encode()
 	}
 
+	// A money move must not be resent automatically by the transport after a
+	// lost response unless the backend is proven to deduplicate on the key:
+	// a retry can pay twice before the ledger records an ambiguous outcome.
+	keyedWrite := requestCarriesIdempotencyKey(req)
+	if keyedWrite && !idempotency.BackendDedupVerified() {
+		blockTransportReplay(req)
+	}
+
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
-		return nil, err
+		return Response{Err: err}
 	}
 	defer resp.Body.Close()
 
+	// Detect followed redirects from the request chain rather than the final
+	// status: a followed 301/302/303 turns the POST into a GET and can end with
+	// HTTP 200, so StatusCode alone cannot reveal that the write was redirected.
+	redirectStatus := followedRedirectStatus(req, resp)
+
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return Response{StatusCode: resp.StatusCode, RedirectStatus: redirectStatus, Err: err}
+	}
+
+	// A keyed write that was redirected has not been confirmed by its target:
+	// net/http follows 301/302/303 as a GET, returns 307/308 unfollowed when it
+	// cannot rewind the body, and never follows 300/304/305/306. None of these
+	// proves the write itself was applied, so it must not be reported as
+	// success.
+	if keyedWrite && redirectStatus != 0 {
+		return Response{
+			Body:           respBody,
+			StatusCode:     resp.StatusCode,
+			RedirectStatus: redirectStatus,
+			Err:            fmt.Errorf("redirect followed (HTTP %d)", redirectStatus),
+		}
+	}
+	if keyedWrite && resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return Response{
+			Body:       respBody,
+			StatusCode: resp.StatusCode,
+			Err:        fmt.Errorf("redirect not followed (HTTP %d)", resp.StatusCode),
+		}
 	}
 
 	if resp.StatusCode >= 400 {
-		return respBody, fmt.Errorf("API Error %d", resp.StatusCode)
+		return Response{
+			Body:           respBody,
+			StatusCode:     resp.StatusCode,
+			RedirectStatus: redirectStatus,
+			Err:            fmt.Errorf("API Error %d", resp.StatusCode),
+		}
 	}
 
 	// If it's a binary/attachment response, return a descriptive string instead of a huge blob
 	contentType := resp.Header.Get("Content-Type")
 	if isAttachment && !strings.Contains(contentType, "json") {
-		return []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))), nil
+		return Response{
+			Body:           []byte(fmt.Sprintf("[Binary data received: %s, size: %d bytes]", contentType, len(respBody))),
+			StatusCode:     resp.StatusCode,
+			RedirectStatus: redirectStatus,
+		}
 	}
 
-	return respBody, nil
+	return Response{Body: respBody, StatusCode: resp.StatusCode, RedirectStatus: redirectStatus}
 }
 
 // DoMultipartRequest sends a multipart/form-data request to Fineract.

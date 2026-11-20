@@ -6,9 +6,12 @@
 from typing import Annotated, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StringConstraints
+
+from core.idempotency import IdempotencyError
 
 # Import our custom banking domains and AI router
 from tools.domains import accounting, clients, groups, loans, savings, staff
@@ -125,8 +128,19 @@ class JournalEntryCreate(BaseModel):
 # Helper function to handle Fineract errors gracefully
 def handle_response(result):
     if isinstance(result, dict) and "error" in result:
+        # Idempotency outcomes carry a machine-readable code and state; preserve
+        # them instead of flattening the body into a bare message.
+        if "error_code" in result:
+            ambiguous = result.get("idempotency_state") in ("UNKNOWN", "IN_PROGRESS")
+            raise HTTPException(status_code=409 if ambiguous else 400, detail=result)
         raise HTTPException(status_code=400, detail=result["error"])
     return result
+
+
+@app.exception_handler(IdempotencyError)
+async def idempotency_error_handler(request: Request, exc: IdempotencyError):
+    """Typed idempotency failures keep their status, code and correlation id."""
+    return JSONResponse(status_code=exc.http_status, content=exc.to_dict())
 
 
 # --- AI ROUTER ENDPOINT ---
@@ -242,9 +256,11 @@ def get_client_charges(client_id: int):
     return handle_response(clients.get_client_charges.func(client_id=client_id))
 
 @app.post("/api/clients/{client_id}/charges", tags=["Clients"])
-def apply_client_charge(client_id: int, payload: ClientChargeApply):
+def apply_client_charge(client_id: int, payload: ClientChargeApply,
+                        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
     return handle_response(clients.apply_client_charge.func(
-        client_id=client_id, charge_id=payload.charge_id, amount=payload.amount
+        client_id=client_id, charge_id=payload.charge_id, amount=payload.amount,
+        idempotency_key=idempotency_key
     ))
 
 @app.get("/api/clients/{client_id}/transactions", tags=["Clients"])
@@ -317,24 +333,39 @@ def create_loan(payload: LoanCreate):
     ))
 
 @app.post("/api/loans/{loan_id}/approve-disburse", tags=["Loans"])
-def approve_and_disburse_loan(loan_id: int, payload: LoanDisburse):
-    return handle_response(loans.approve_and_disburse_loan.func(loan_id=loan_id, amount=payload.amount))
+def approve_and_disburse_loan(loan_id: int, payload: LoanDisburse,
+                              idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    return handle_response(loans.approve_and_disburse_loan.func(
+        loan_id=loan_id, amount=payload.amount, idempotency_key=idempotency_key
+    ))
 
 @app.post("/api/loans/{loan_id}/reject", tags=["Loans"])
 def reject_loan(loan_id: int, payload: LoanReject):
     return handle_response(loans.reject_loan_application.func(loan_id=loan_id, note=payload.note))
 
 @app.post("/api/loans/{loan_id}/repayment", tags=["Loans"])
-def make_loan_repayment(loan_id: int, payload: Transaction):
-    return handle_response(loans.make_loan_repayment.func(loan_id=loan_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
+def make_loan_repayment(loan_id: int, payload: Transaction,
+                        idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    return handle_response(loans.make_loan_repayment.func(
+        loan_id=loan_id, amount=payload.amount, payment_type_id=payload.paymentTypeId,
+        idempotency_key=idempotency_key
+    ))
 
 @app.post("/api/loans/{loan_id}/late-fee", tags=["Loans"])
-def apply_late_fee(loan_id: int, payload: LateFee):
-    return handle_response(loans.apply_late_fee.func(loan_id=loan_id, fee_amount=payload.fee_amount, charge_id=payload.charge_id))
+def apply_late_fee(loan_id: int, payload: LateFee,
+                   idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    return handle_response(loans.apply_late_fee.func(
+        loan_id=loan_id, fee_amount=payload.fee_amount, charge_id=payload.charge_id,
+        idempotency_key=idempotency_key
+    ))
 
 @app.post("/api/loans/{loan_id}/waive-interest", tags=["Loans"])
-def waive_interest(loan_id: int, payload: WaiveInterest):
-    return handle_response(loans.waive_interest.func(loan_id=loan_id, amount=payload.amount, note=payload.note))
+def waive_interest(loan_id: int, payload: WaiveInterest,
+                   idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    return handle_response(loans.waive_interest.func(
+        loan_id=loan_id, amount=payload.amount, note=payload.note,
+        idempotency_key=idempotency_key
+    ))
 
 @app.get("/api/clients/{client_id}/overdue-loans", tags=["Loans"])
 def get_overdue_loans(client_id: int):
@@ -372,20 +403,35 @@ def close_savings_account(account_id: int):
     return handle_response(savings.close_savings_account.func(account_id=account_id))
 
 @app.post("/api/savings/{account_id}/deposit", tags=["Savings"])
-def deposit_savings(account_id: int, payload: Transaction):
-    return handle_response(savings.deposit_savings.func(account_id=account_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
+def deposit_savings(account_id: int, payload: Transaction,
+                    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    return handle_response(savings.deposit_savings.func(
+        account_id=account_id, amount=payload.amount, payment_type_id=payload.paymentTypeId,
+        idempotency_key=idempotency_key
+    ))
 
 @app.post("/api/savings/{account_id}/withdraw", tags=["Savings"])
-def withdraw_savings(account_id: int, payload: Transaction):
-    return handle_response(savings.withdraw_savings.func(account_id=account_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
+def withdraw_savings(account_id: int, payload: Transaction,
+                     idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    return handle_response(savings.withdraw_savings.func(
+        account_id=account_id, amount=payload.amount, payment_type_id=payload.paymentTypeId,
+        idempotency_key=idempotency_key
+    ))
 
 @app.post("/api/savings/{account_id}/charge", tags=["Savings"])
-def apply_savings_charge(account_id: int, payload: SavingsCharge):
-    return handle_response(savings.apply_savings_charge.func(account_id=account_id, amount=payload.amount, charge_id=payload.charge_id))
+def apply_savings_charge(account_id: int, payload: SavingsCharge,
+                         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    return handle_response(savings.apply_savings_charge.func(
+        account_id=account_id, amount=payload.amount, charge_id=payload.charge_id,
+        idempotency_key=idempotency_key
+    ))
 
 @app.post("/api/savings/{account_id}/post-interest", tags=["Savings"])
-def post_savings_interest(account_id: int):
-    return handle_response(savings.calculate_and_post_interest.func(account_id=account_id))
+def post_savings_interest(account_id: int,
+                          idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
+    return handle_response(savings.calculate_and_post_interest.func(
+        account_id=account_id, idempotency_key=idempotency_key
+    ))
 
 
 # --- STAFF ENDPOINTS ---
@@ -416,13 +462,15 @@ def get_journal_entries(account_id: Optional[int] = None, transaction_id: Option
     return handle_response(accounting.get_journal_entries.func(account_id=account_id, transaction_id=transaction_id))
 
 @app.post("/api/accounting/journal-entries", tags=["Accounting"])
-def create_journal_entry(payload: JournalEntryCreate):
+def create_journal_entry(payload: JournalEntryCreate,
+                         idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key")):
     # Convert Pydantic models to dicts for the tool function
     credits_dict = [item.model_dump() for item in payload.credits]
     debits_dict = [item.model_dump() for item in payload.debits]
     return handle_response(accounting.create_journal_entry.func(
         office_id=payload.office_id, date=payload.date,
-        credits=credits_dict, debits=debits_dict, currency_code=payload.currency_code, comment=payload.comment
+        credits=credits_dict, debits=debits_dict, currency_code=payload.currency_code,
+        comment=payload.comment, idempotency_key=idempotency_key
     ))
 
 

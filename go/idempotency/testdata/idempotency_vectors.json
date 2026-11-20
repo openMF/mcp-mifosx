@@ -1,0 +1,334 @@
+{
+  "version": 1,
+  "comment": "Shared by python/tests/test_idempotency.py and go/idempotency/idempotency_test.go. Every value here is produced by the Python implementation; the Go tests assert the same values, which proves the canonical-JSON, key-hash and record formats agree.",
+  "scope_env": {
+    "MIFOSX_TENANT_ID": "tenant-a",
+    "MCP_IDEMPOTENCY_ACTOR": "teller@example.com"
+  },
+  "scope": "tenant:tenant-a|actor:b2177bbf913ca189",
+  "fingerprints": [
+    {
+      "name": "loan_repayment",
+      "operation": "loan.repayment",
+      "payload": {
+        "loan_id": 8,
+        "amount": 150,
+        "payment_type_id": 4
+      },
+      "canonical": "{\"operation\":\"loan.repayment\",\"payload\":{\"amount\":150,\"loan_id\":8,\"payment_type_id\":4}}",
+      "fingerprint": "70d3a920c3a5cbd12ed5af530efe6ac6dc890c332c030aa9017d84226dc12a1a"
+    },
+    {
+      "name": "loan_repayment_float",
+      "operation": "loan.repayment",
+      "payload": {
+        "loan_id": 8,
+        "amount": 150.0,
+        "payment_type_id": 4
+      },
+      "canonical": "{\"operation\":\"loan.repayment\",\"payload\":{\"amount\":150,\"loan_id\":8,\"payment_type_id\":4}}",
+      "fingerprint": "70d3a920c3a5cbd12ed5af530efe6ac6dc890c332c030aa9017d84226dc12a1a"
+    },
+    {
+      "name": "savings_deposit_optional_payment_type",
+      "operation": "savings.deposit",
+      "payload": {
+        "account_id": 7,
+        "amount": 500.5,
+        "payment_type_id": null
+      },
+      "canonical": "{\"operation\":\"savings.deposit\",\"payload\":{\"account_id\":7,\"amount\":500.5,\"payment_type_id\":null}}",
+      "fingerprint": "8ac2397974c6ae10bfb8616c953352b9a2d35154a49ae758902f9b126fd72082"
+    },
+    {
+      "name": "unicode_note",
+      "operation": "loan.waive_interest",
+      "payload": {
+        "loan_id": 12,
+        "amount": 50,
+        "note": "Café — naïve ☕ / quote \" backslash \\ newline \n tab \t"
+      },
+      "canonical": "{\"operation\":\"loan.waive_interest\",\"payload\":{\"amount\":50,\"loan_id\":12,\"note\":\"Café — naïve ☕ / quote \\\" backslash \\\\ newline \\n tab \\t\"}}",
+      "fingerprint": "9f787717c163fe86275b831f8e0e2b143ff43f8c9df6eb181c87383cf7afade5"
+    },
+    {
+      "name": "control_characters",
+      "operation": "test.control",
+      "payload": {
+        "text": "a\u0001b\u001fc"
+      },
+      "canonical": "{\"operation\":\"test.control\",\"payload\":{\"text\":\"a\\u0001b\\u001fc\"}}",
+      "fingerprint": "3d1a17873c565648c1a5b7ccb78d8ed8fd3e11ce402b596810f2f52dabd0ca0b"
+    },
+    {
+      "name": "nested_journal_entry",
+      "operation": "journal.entry",
+      "payload": {
+        "office_id": 1,
+        "date": "10 March 2026",
+        "currency_code": "USD",
+        "credits": [
+          {
+            "glAccountId": 2,
+            "amount": 10.5
+          }
+        ],
+        "debits": [
+          {
+            "glAccountId": 3,
+            "amount": 10.5
+          }
+        ],
+        "comment": "",
+        "flags": [
+          true,
+          false,
+          null
+        ]
+      },
+      "canonical": "{\"operation\":\"journal.entry\",\"payload\":{\"comment\":\"\",\"credits\":[{\"amount\":10.5,\"glAccountId\":2}],\"currency_code\":\"USD\",\"date\":\"10 March 2026\",\"debits\":[{\"amount\":10.5,\"glAccountId\":3}],\"flags\":[true,false,null],\"office_id\":1}}",
+      "fingerprint": "1db36bf41d2b60b18e1c22b6f58ddbb2bbc308b09f5007b48ad7ba135487bc80"
+    },
+    {
+      "name": "fractional_precision",
+      "operation": "test.numbers",
+      "payload": {
+        "rounded": 0.30000000000000004,
+        "ten_places": 1234567890.1234567,
+        "negative_zero": -0.0,
+        "integer_like": 42.0
+      },
+      "canonical": "{\"operation\":\"test.numbers\",\"payload\":{\"integer_like\":42,\"negative_zero\":0,\"rounded\":0.3,\"ten_places\":1234567890.1234567165}}",
+      "fingerprint": "f8721bb4134f884329ae63606d2347350b59367f253fdcead2cef1c119bd2cce"
+    },
+    {
+      "name": "key_order_independent",
+      "operation": "test.order",
+      "payload": {
+        "b": 2,
+        "a": 1,
+        "c": [
+          3,
+          2,
+          1
+        ]
+      },
+      "canonical": "{\"operation\":\"test.order\",\"payload\":{\"a\":1,\"b\":2,\"c\":[3,2,1]}}",
+      "fingerprint": "1f6e5399eab5e05bbb928ea40ed01ebfba3816da8c7e6a4b4c9fc89126d8c3d2"
+    },
+    {
+      "name": "money_loan_repayment",
+      "operation": "loan.repayment",
+      "payload": {
+        "loan_id": 8,
+        "amount": 150.0,
+        "payment_type_id": 4.0
+      },
+      "canonical": "{\"operation\":\"loan.repayment\",\"payload\":{\"amount\":150,\"loan_id\":8,\"payment_type_id\":4}}",
+      "fingerprint": "70d3a920c3a5cbd12ed5af530efe6ac6dc890c332c030aa9017d84226dc12a1a"
+    },
+    {
+      "name": "money_loan_waive_interest",
+      "operation": "loan.waive_interest",
+      "payload": {
+        "loan_id": 12,
+        "amount": 50.0,
+        "note": "AI Authorized Waiver"
+      },
+      "canonical": "{\"operation\":\"loan.waive_interest\",\"payload\":{\"amount\":50,\"loan_id\":12,\"note\":\"AI Authorized Waiver\"}}",
+      "fingerprint": "70d8e5799fa93658c03f959e3e3e1b6facf0b7fe0b1df1818376a299d9c1edbb"
+    },
+    {
+      "name": "money_savings_deposit",
+      "operation": "savings.deposit",
+      "payload": {
+        "account_id": 7,
+        "amount": 500.5,
+        "payment_type_id": 3.0
+      },
+      "canonical": "{\"operation\":\"savings.deposit\",\"payload\":{\"account_id\":7,\"amount\":500.5,\"payment_type_id\":3}}",
+      "fingerprint": "cfb90c18b3a297c0591bc60e457516558d4ad1bbb7d4d067d73f671ca5983ecd"
+    },
+    {
+      "name": "money_savings_withdrawal",
+      "operation": "savings.withdrawal",
+      "payload": {
+        "account_id": 7,
+        "amount": 100.0,
+        "payment_type_id": 3.0
+      },
+      "canonical": "{\"operation\":\"savings.withdrawal\",\"payload\":{\"account_id\":7,\"amount\":100,\"payment_type_id\":3}}",
+      "fingerprint": "bca437339a86a01e6f65a4d61247f5dcb2ae51e5449a5c2361c9da4f61cf4b2a"
+    },
+    {
+      "name": "money_loan_charge",
+      "operation": "loan.charge",
+      "payload": {
+        "loan_id": 8,
+        "charge_id": 2.0,
+        "amount": 25.0
+      },
+      "canonical": "{\"operation\":\"loan.charge\",\"payload\":{\"amount\":25,\"charge_id\":2,\"loan_id\":8}}",
+      "fingerprint": "b86c1503d2a0a8f3f911311da464225a606a3ef37c23f342bf3bfbbd5fb8e6dc"
+    },
+    {
+      "name": "money_savings_charge",
+      "operation": "savings.charge",
+      "payload": {
+        "account_id": 7,
+        "charge_id": 1.0,
+        "amount": 15.0
+      },
+      "canonical": "{\"operation\":\"savings.charge\",\"payload\":{\"account_id\":7,\"amount\":15,\"charge_id\":1}}",
+      "fingerprint": "8e615ab1679098cefdb144e7b736fcf142490fcc2185355dffaaed1fb3f5c3e9"
+    },
+    {
+      "name": "money_savings_post_interest",
+      "operation": "savings.post_interest",
+      "payload": {
+        "account_id": 7.0
+      },
+      "canonical": "{\"operation\":\"savings.post_interest\",\"payload\":{\"account_id\":7}}",
+      "fingerprint": "ba8ee4dd94e0db38477523acf9929cef3ddfc1b519cb6070029ef4eb3bdf27bc"
+    },
+    {
+      "name": "money_journal_entry",
+      "operation": "journal.entry",
+      "payload": {
+        "office_id": 1.0,
+        "date": "10 March 2026",
+        "currency_code": "USD",
+        "credits": [
+          {
+            "glAccountId": 2.0,
+            "amount": 10.5
+          }
+        ],
+        "debits": [
+          {
+            "glAccountId": 3.0,
+            "amount": 10.5
+          }
+        ],
+        "comment": ""
+      },
+      "canonical": "{\"operation\":\"journal.entry\",\"payload\":{\"comment\":\"\",\"credits\":[{\"amount\":10.5,\"glAccountId\":2}],\"currency_code\":\"USD\",\"date\":\"10 March 2026\",\"debits\":[{\"amount\":10.5,\"glAccountId\":3}],\"office_id\":1}}",
+      "fingerprint": "5c9cf15836a563998813b23af28b0f2520c6176448f1775a9092e3eb5859b63f"
+    }
+  ],
+  "keys": [
+    {
+      "name": "repayment_key",
+      "scope": "tenant:tenant-a|actor:b2177bbf913ca189",
+      "operation": "loan.repayment",
+      "key": "client-key-0001",
+      "key_hash": "51807be9d85919b2b0b143cbff6ebeca5db1c67b99e997f80923db2c501a6ff8",
+      "backend_key": "mcp-78c7d5ba2d24c2311751633f146af4cdf31c6ebf63d504cc"
+    },
+    {
+      "name": "long_key",
+      "scope": "tenant:tenant-a|actor:b2177bbf913ca189",
+      "operation": "savings.deposit",
+      "key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "key_hash": "fc7174b0486cced7e85b7b47310b76a961b75486a82cb7ce759d5f244ef24e39",
+      "backend_key": "mcp-3fbc31863e181a358a7271fbbcbebf8496397a90c9c6ecdf"
+    },
+    {
+      "name": "punctuation_key",
+      "scope": "tenant:tenant-a|actor:b2177bbf913ca189",
+      "operation": "client.charge",
+      "key": "settlement:2026-11-17.batch_01",
+      "key_hash": "5ff31b70e807cc98e86337a57f7e0a3156d03fab7f2aa862e443fc7ccd9e0473",
+      "backend_key": "mcp-0323e21171d5e5bb974de769f86a280abc67549a7da002d5"
+    }
+  ],
+  "records": [
+    {
+      "name": "succeeded",
+      "scope": "tenant:tenant-a|actor:b2177bbf913ca189",
+      "operation": "loan.repayment",
+      "key": "client-key-0001",
+      "payload": {
+        "loan_id": 8,
+        "amount": 150,
+        "payment_type_id": 4
+      },
+      "record": {
+        "version": 1,
+        "key_hash": "51807be9d85919b2b0b143cbff6ebeca5db1c67b99e997f80923db2c501a6ff8",
+        "operation": "loan.repayment",
+        "scope": "tenant:tenant-a|actor:b2177bbf913ca189",
+        "fingerprint": "70d3a920c3a5cbd12ed5af530efe6ac6dc890c332c030aa9017d84226dc12a1a",
+        "state": "SUCCEEDED",
+        "attempt": 1,
+        "created_at": "2026-11-17T10:00:00.000000Z",
+        "updated_at": "2026-11-17T10:00:01.000000Z",
+        "correlation_id": "corr-fixture-success",
+        "attempt_started_at": "2026-11-17T10:00:00.000000Z",
+        "attempt_ended_at": "2026-11-17T10:00:01.000000Z",
+        "owner_pid": 4242,
+        "owner_host": "fixture-host",
+        "request": {
+          "resource": "loans/8/transactions?command=repayment"
+        },
+        "result": {
+          "resourceId": 21,
+          "transactionId": 21
+        },
+        "backend_ref": {
+          "record_id": "id:21"
+        },
+        "reconcile": {
+          "loan_id": 8,
+          "amount": 150,
+          "date": "17 November 2026"
+        },
+        "error": null
+      }
+    },
+    {
+      "name": "failed_with_snapshot",
+      "scope": "tenant:tenant-a|actor:b2177bbf913ca189",
+      "operation": "client.charge",
+      "key": "settlement:2026-11-17.batch_01",
+      "payload": {
+        "client_id": 5,
+        "charge_id": 3,
+        "amount": 25
+      },
+      "record": {
+        "version": 1,
+        "key_hash": "5ff31b70e807cc98e86337a57f7e0a3156d03fab7f2aa862e443fc7ccd9e0473",
+        "operation": "client.charge",
+        "scope": "tenant:tenant-a|actor:b2177bbf913ca189",
+        "fingerprint": "56292a3517dbe7b31e4a290d8216c30f25938dce7cd583b60a827d066717991a",
+        "state": "FAILED",
+        "attempt": 2,
+        "created_at": "2026-11-17T11:00:00.000000Z",
+        "updated_at": "2026-11-17T11:00:02.000000Z",
+        "correlation_id": "corr-fixture-failed",
+        "attempt_started_at": "2026-11-17T11:00:00.000000Z",
+        "attempt_ended_at": "2026-11-17T11:00:02.000000Z",
+        "owner_pid": 4242,
+        "owner_host": "fixture-host",
+        "request": {
+          "resource": "clients/5/charges"
+        },
+        "result": null,
+        "backend_ref": null,
+        "reconcile": {
+          "snapshot": [
+            "id:1",
+            "id:2"
+          ],
+          "absence_reads": 2
+        },
+        "error": {
+          "code": "safe_retry_permitted",
+          "message": "The backend has no record of this operation; it is safe to retry with the same idempotency key.",
+          "retryable": true
+        }
+      }
+    }
+  ]
+}

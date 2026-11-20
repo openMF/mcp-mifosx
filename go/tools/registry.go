@@ -34,6 +34,9 @@ type BaseToolDef struct {
 	EndpointURL string
 	Params      []ToolParam
 	Handler     func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error)
+	// MoneyMove, when set, routes the call through the durable idempotency
+	// ledger. See money.go.
+	MoneyMove *MoneyMove
 }
 
 type ToolParam struct {
@@ -92,92 +95,102 @@ func (r *Registry) registerTools(defs []BaseToolDef) {
 				return d.Handler(ctx, req)
 			}
 
-			endpoint := d.EndpointURL
-			body := make(map[string]interface{})
-			queryParams := make(map[string]string)
-
 			args, ok := req.Params.Arguments.(map[string]interface{})
 			if !ok {
 				return mcp.NewToolResultError("Arguments must be a JSON object"), nil
 			}
-
-			for _, p := range d.Params {
-				val, ok := args[p.Name]
-				if !ok {
-					if p.Name == "transactionDate" {
-						val = time.Now().Format("2006-01-02")
-					} else if p.Name == "dateFormat" {
-						val = "yyyy-MM-dd"
-					} else if p.Name == "locale" {
-						val = "en"
-					} else {
-						continue
-					}
-				}
-
-				if p.Name == "transactionAmount" || p.Name == "amount" {
-					hardened, err := FormatAmount(val)
-					if err == nil {
-						val = hardened
-					}
-				}
-
-				if p.IsPathVar {
-					endpoint = strings.Replace(endpoint, "%v", fmt.Sprintf("%v", val), 1)
-				}
-				if p.IsQueryVar {
-					queryParams[p.Name] = fmt.Sprintf("%v", val)
-				}
-				if p.IsBodyVar {
-					body[p.Name] = val
-				}
-			}
-
-			hasDate := false
-			dateFields := []string{"transactionDate", "submittedOnDate", "approvedOnDate", "activationDate", "disbursementDate", "dueDate", "closedOnDate"}
-			for _, df := range dateFields {
-				if _, ok := body[df]; ok {
-					hasDate = true
-					break
-				}
-			}
-
-			if hasDate {
-				if _, ok := body["dateFormat"]; !ok {
-					body["dateFormat"] = "yyyy-MM-dd"
-				}
-				if _, ok := body["locale"]; !ok {
-					body["locale"] = "en"
-				}
-			}
-
-			respData, err := r.Fineract.DoRequest(d.Method, endpoint, body, queryParams)
-			if err != nil {
-				return mcp.NewToolResultError(fmt.Sprintf("%v\nDetails: %s", err, string(respData))), nil
-			}
-
-			msgPrefix := fmt.Sprintf("SUCCESS: Executed %s.", d.Name)
-			if lId, ok := body["loanId"]; ok {
-				msgPrefix += fmt.Sprintf(" Loan ID: %v.", lId)
-			} else if lId, ok := args["loanId"]; ok {
-				msgPrefix += fmt.Sprintf(" Loan ID: %v.", lId)
-			}
-			if cId, ok := body["clientId"]; ok {
-				msgPrefix += fmt.Sprintf(" Client ID: %v.", cId)
-			} else if cId, ok := args["clientId"]; ok {
-				msgPrefix += fmt.Sprintf(" Client ID: %v.", cId)
-			}
-			if sId, ok := body["savingsId"]; ok {
-				msgPrefix += fmt.Sprintf(" Savings ID: %v.", sId)
-			} else if sId, ok := args["savingsId"]; ok {
-				msgPrefix += fmt.Sprintf(" Savings ID: %v.", sId)
-			}
-
-			return mcp.NewToolResultText(fmt.Sprintf("%s Result: %s", msgPrefix, string(respData))), nil
+			return r.executeToolDef(ctx, d, args)
 		}
 
 		r.Server.AddTool(tool, handler)
 	}
+}
+
+// executeToolDef builds the Fineract request for one catalogue entry from the
+// caller's arguments and runs it, either through the idempotency ledger (money
+// moves) or directly.
+func (r *Registry) executeToolDef(ctx context.Context, d BaseToolDef, args map[string]any) (*mcp.CallToolResult, error) {
+	endpoint := d.EndpointURL
+	body := make(map[string]interface{})
+	queryParams := make(map[string]string)
+
+	for _, p := range d.Params {
+		val, ok := args[p.Name]
+		if !ok {
+			if p.Name == "transactionDate" {
+				val = time.Now().Format("2006-01-02")
+			} else if p.Name == "dateFormat" {
+				val = "yyyy-MM-dd"
+			} else if p.Name == "locale" {
+				val = "en"
+			} else {
+				continue
+			}
+		}
+
+		if p.Name == "transactionAmount" || p.Name == "amount" {
+			hardened, err := FormatAmount(val)
+			if err == nil {
+				val = hardened
+			}
+		}
+
+		if p.IsPathVar {
+			endpoint = strings.Replace(endpoint, "%v", fmt.Sprintf("%v", val), 1)
+		}
+		if p.IsQueryVar {
+			queryParams[p.Name] = fmt.Sprintf("%v", val)
+		}
+		if p.IsBodyVar {
+			body[p.Name] = val
+		}
+	}
+
+	hasDate := false
+	dateFields := []string{"transactionDate", "submittedOnDate", "approvedOnDate", "activationDate", "disbursementDate", "dueDate", "closedOnDate"}
+	for _, df := range dateFields {
+		if _, ok := body[df]; ok {
+			hasDate = true
+			break
+		}
+	}
+
+	if hasDate {
+		if _, ok := body["dateFormat"]; !ok {
+			body["dateFormat"] = "yyyy-MM-dd"
+		}
+		if _, ok := body["locale"]; !ok {
+			body["locale"] = "en"
+		}
+	}
+
+	if d.MoneyMove != nil {
+		return r.runMoneyTool(ctx, d, args, endpoint, body, queryParams)
+	}
+
+	respData, err := r.Fineract.DoRequest(d.Method, endpoint, body, queryParams)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("%v\nDetails: %s", err, string(respData))), nil
+	}
+
+	msgPrefix := fmt.Sprintf("SUCCESS: Executed %s.", d.Name)
+	if lId, ok := body["loanId"]; ok {
+		msgPrefix += fmt.Sprintf(" Loan ID: %v.", lId)
+	} else if lId, ok := args["loanId"]; ok {
+		msgPrefix += fmt.Sprintf(" Loan ID: %v.", lId)
+	}
+	if cId, ok := body["clientId"]; ok {
+		msgPrefix += fmt.Sprintf(" Client ID: %v.", cId)
+	} else if cId, ok := args["clientId"]; ok {
+		msgPrefix += fmt.Sprintf(" Client ID: %v.", cId)
+	}
+	if sId, ok := body["savingsId"]; ok {
+		msgPrefix += fmt.Sprintf(" Savings ID: %v.", sId)
+	} else if sId, ok := args["savingsId"]; ok {
+		msgPrefix += fmt.Sprintf(" Savings ID: %v.", sId)
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("%s Result: %s", msgPrefix, string(respData))), nil
 }
 
 func (r *Registry) RegisterAllTools() {

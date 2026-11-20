@@ -232,6 +232,10 @@ def _fineract_methods_by_tool() -> Dict[str, Set[str]]:
         if name not in domain or name in seen:
             return set()
         own = {c.removeprefix("execute_").upper() for c in domain[name] if c.startswith("execute_")}
+        # Money-moving domain functions go through tools.idempotent_money.post_money,
+        # which performs the POST after the ledger claim.
+        if "post_money" in domain[name]:
+            own.add("POST")
         return own.union(*(methods(c, seen | {name}) for c in domain[name]))
 
     server = ast.parse((PYTHON_DIR / "mcp_server.py").read_text(encoding="utf-8"))
