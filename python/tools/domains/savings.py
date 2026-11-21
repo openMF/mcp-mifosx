@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
+import logging
 from typing import Optional
 
 from langchain_core.tools import tool
@@ -12,18 +13,20 @@ from tools.domains.products import product_required
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
 
+logger = logging.getLogger(__name__)
+
 # --- SAVINGS READ & SEARCH OPERATIONS ---
 
 @tool
 def get_savings_account(account_id: int):
     """Answers: 'What is the balance of savings account #123?'"""
-    print(f"[Tool] Fetching details for Savings Account #{account_id}...")
+    logger.info(f"[Tool] Fetching details for Savings Account #{account_id}...")
     return fineract_client.execute_get(f"savingsaccounts/{account_id}")
 
 @tool
 def get_savings_transactions(account_id: int):
     """Answers: 'Show me the transaction history for savings account #123'"""
-    print(f"[Tool] Fetching transaction history for Savings Account #{account_id}...")
+    logger.info(f"[Tool] Fetching transaction history for Savings Account #{account_id}...")
     # Fineract returns transactions in the associations parameter
     response = fineract_client.execute_get(f"savingsaccounts/{account_id}?associations=transactions")
     if "error" in response: return response
@@ -37,7 +40,7 @@ def create_savings_account(client_id: int, product_id: Optional[int] = None):
     """Answers: 'Open a new savings account for this client'
     product_id has to be one of this tenant's savings products; without it nothing is created
     and the error lists them."""
-    print(f"[Tool] Opening Savings Account for Client #{client_id}...")
+    logger.info(f"[Tool] Opening Savings Account for Client #{client_id}...")
     if product_id is None:
         return product_required("savings")
     today = get_fineract_today()
@@ -63,7 +66,7 @@ def approve_and_activate_savings(account_id: int, already_approved: bool = False
     """Answers: 'Approve and activate this pending savings account'
     With already_approved=True only the activation is done (finishing an earlier
     call whose approval succeeded but whose activation failed)."""
-    print(f"[Tool] Approving & Activating Savings Account #{account_id}...")
+    logger.info(f"[Tool] Approving & Activating Savings Account #{account_id}...")
     today = get_fineract_today()
     base_payload = {"dateFormat": "dd MMMM yyyy", "locale": "en"}
 
@@ -102,7 +105,7 @@ def approve_and_activate_savings(account_id: int, already_approved: bool = False
 @tool
 def close_savings_account(account_id: int):
     """Answers: 'Close this savings account'"""
-    print(f"[Tool] Closing Savings Account #{account_id}...")
+    logger.info(f"[Tool] Closing Savings Account #{account_id}...")
     today = get_fineract_today()
 
     payload = {
@@ -144,7 +147,8 @@ def deposit_savings(account_id: int, amount: float, payment_type_id: Optional[in
     """Answers: 'Deposit $500 into this savings account'
     Fineract requires a payment type on a deposit, and payment types are tenant-specific, so
     payment_type_id has to be the id of one this tenant actually has."""
-    print(f"[Tool] Depositing {amount} into Savings Account #{account_id}...")
+    # The amount is financial data; log the action, never the value.
+    logger.info(f"[Tool] Depositing into Savings Account #{account_id}...")
     if payment_type_id is None:
         return _payment_type_required("deposit")
     today = get_fineract_today()
@@ -163,7 +167,8 @@ def withdraw_savings(account_id: int, amount: float, payment_type_id: Optional[i
     """Answers: 'Withdraw $100 from this savings account'
     Fineract requires a payment type on a withdrawal, and payment types are tenant-specific, so
     payment_type_id has to be the id of one this tenant actually has."""
-    print(f"[Tool] Withdrawing {amount} from Savings Account #{account_id}...")
+    # The amount is financial data; log the action, never the value.
+    logger.info(f"[Tool] Withdrawing from Savings Account #{account_id}...")
     if payment_type_id is None:
         return _payment_type_required("withdrawal")
     today = get_fineract_today()
@@ -180,7 +185,8 @@ def withdraw_savings(account_id: int, amount: float, payment_type_id: Optional[i
 @tool
 def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1):
     """Answers: 'Deduct a $15 account maintenance fee from this savings account'"""
-    print(f"[Tool] Applying charge of {amount} to Savings Account #{account_id}...")
+    # The amount is financial data; log the action, never the value.
+    logger.info(f"[Tool] Applying a charge to Savings Account #{account_id}...")
     today = get_fineract_today()
 
     payload = {
@@ -195,6 +201,6 @@ def apply_savings_charge(account_id: int, amount: float, charge_id: int = 1):
 @tool
 def calculate_and_post_interest(account_id: int):
     """Answers: 'Calculate and post the accrued interest for this savings account'"""
-    print(f"[Tool] Posting interest for Savings Account #{account_id}...")
+    logger.info(f"[Tool] Posting interest for Savings Account #{account_id}...")
     # This specific command usually doesn't require a payload in Fineract
     return fineract_client.execute_post(f"savingsaccounts/{account_id}?command=postInterest", payload={})

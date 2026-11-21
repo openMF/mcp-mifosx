@@ -3,9 +3,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import logging
+
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
+
+logger = logging.getLogger(__name__)
 
 # --- CHARGE READ OPERATIONS ---
 
@@ -13,13 +17,13 @@ from tools.mcp_adapter import fineract_client
 def list_charges():
     """Answers: 'Show me all available charges' or 'What fees are configured?'
     Returns all charge definitions (fees and penalties) in the system."""
-    print("[Tool] Fetching all charges...")
+    logger.info("[Tool] Fetching all charges...")
     return fineract_client.execute_get("charges")
 
 @tool
 def get_charge(charge_id: int):
     """Answers: 'Show me details for charge ID 5' or 'What is the Late Payment Fee charge?'"""
-    print(f"[Tool] Fetching charge #{charge_id}...")
+    logger.info(f"[Tool] Fetching charge #{charge_id}...")
     return fineract_client.execute_get(f"charges/{charge_id}")
 
 # --- CHARGE WRITE OPERATIONS ---
@@ -34,7 +38,7 @@ def create_charge(name: str, amount: float, currency_code: str = "USD",
     charge_time_type: 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee
     charge_calculation_type: 1=Flat, 2=% of Amount
     """
-    print(f"[Tool] Creating charge: {name}...")
+    logger.info(f"[Tool] Creating charge: {name}...")
     payload = {
         "name": name,
         "amount": amount,
@@ -57,7 +61,7 @@ def create_charge(name: str, amount: float, currency_code: str = "USD",
 def update_charge(charge_id: int, name: str = None, amount: float = None,
                   is_active: bool = None):
     """Answers: 'Update charge 5 to $75' or 'Deactivate charge ID 3'"""
-    print(f"[Tool] Updating charge #{charge_id}...")
+    logger.info(f"[Tool] Updating charge #{charge_id}...")
     payload = {"locale": "en"}
     if name is not None:
         payload["name"] = name
