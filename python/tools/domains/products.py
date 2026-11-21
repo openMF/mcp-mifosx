@@ -3,9 +3,13 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import logging
+
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
+
+logger = logging.getLogger(__name__)
 
 # --- LOAN PRODUCT OPERATIONS ---
 
@@ -13,7 +17,7 @@ from tools.mcp_adapter import fineract_client
 def list_loan_products():
     """Answers: 'What loan products are available?' or 'Show me all loan product types'.
     Use this before create_loan to find a valid productId."""
-    print("[Tool] Fetching all loan products...")
+    logger.info("[Tool] Fetching all loan products...")
     response = fineract_client.execute_get("loanproducts")
     if "error" in response:
         return response
@@ -43,7 +47,7 @@ def list_loan_products():
 @tool
 def get_loan_product(product_id: int):
     """Answers: 'Show me the full details for loan product #3' or 'What are the interest and fee rules for this product?'"""
-    print(f"[Tool] Fetching loan product #{product_id}...")
+    logger.info(f"[Tool] Fetching loan product #{product_id}...")
     data = fineract_client.execute_get(f"loanproducts/{product_id}")
     if "error" in data or not isinstance(data, dict):
         return data
@@ -77,7 +81,7 @@ def get_loan_product(product_id: int):
 def list_savings_products():
     """Answers: 'What savings products are offered?' or 'List all savings account types'.
     Use this before create_savings_account to find a valid productId."""
-    print("[Tool] Fetching all savings products...")
+    logger.info("[Tool] Fetching all savings products...")
     response = fineract_client.execute_get("savingsproducts")
     if "error" in response:
         return response
@@ -101,7 +105,7 @@ def list_savings_products():
 @tool
 def get_savings_product(product_id: int):
     """Answers: 'Show me the full details for savings product #2' or 'What are the interest rules for this savings account type?'"""
-    print(f"[Tool] Fetching savings product #{product_id}...")
+    logger.info(f"[Tool] Fetching savings product #{product_id}...")
     data = fineract_client.execute_get(f"savingsproducts/{product_id}")
     if "error" in data or not isinstance(data, dict):
         return data

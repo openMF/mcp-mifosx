@@ -3,6 +3,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import logging
 from typing import Optional
 
 from langchain_core.tools import tool
@@ -10,12 +11,15 @@ from langchain_core.tools import tool
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
 
+logger = logging.getLogger(__name__)
+
 # --- CLIENT SEARCH & READ OPERATIONS ---
 
 @tool
 def search_clients_by_name(name_query: str):
     """Answers: 'Find the client ID for John Doe' or 'Search for clients named Maria'"""
-    print(f"[Tool] Searching for clients matching: '{name_query}'...")
+    # The name query is personal data; log the action, never the value.
+    logger.info("[Tool] Searching for clients by name (query value not logged)...")
     # Fineract's global search endpoint, filtered strictly to clients
     return fineract_client.execute_get(
         "search", params={"query": name_query, "resource": "clients", "exactMatch": "false"}
@@ -24,13 +28,13 @@ def search_clients_by_name(name_query: str):
 @tool
 def get_client_details(client_id: int):
     """Answers: 'Who is this client?' or 'Show me details for client ID 844'"""
-    print(f"[Tool] Fetching details for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching details for Client #{client_id}...")
     return fineract_client.execute_get(f"clients/{client_id}")
 
 @tool
 def get_client_accounts(client_id: int):
     """Answers: 'Show me all loans and savings accounts for this client'"""
-    print(f"[Tool] Fetching all accounts for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching all accounts for Client #{client_id}...")
     return fineract_client.execute_get(f"clients/{client_id}/accounts")
 
 
@@ -39,7 +43,8 @@ def get_client_accounts(client_id: int):
 @tool
 def create_client(firstname: str, lastname: str, office_id: int, mobile_no: str = None, is_active: bool = True):
     """Answers: 'Create a new client named John Doe'"""
-    print(f"[Tool] Creating client: {firstname} {lastname}...")
+    # Client names are personal data; log the action, never the names.
+    logger.info("[Tool] Creating a new client (name not logged)...")
     today = get_fineract_today()
 
     payload = {
@@ -64,7 +69,7 @@ def create_client(firstname: str, lastname: str, office_id: int, mobile_no: str 
 @tool
 def activate_client(client_id: int):
     """Answers: 'Activate this pending client profile'"""
-    print(f"[Tool] Activating Client #{client_id}...")
+    logger.info(f"[Tool] Activating Client #{client_id}...")
     today = get_fineract_today()
 
     payload = {
@@ -77,7 +82,7 @@ def activate_client(client_id: int):
 @tool
 def update_client_mobile(client_id: int, new_mobile_no: str):
     """Answers: 'Update this client's phone number to 555-0199'"""
-    print(f"[Tool] Updating mobile number for Client #{client_id}...")
+    logger.info(f"[Tool] Updating mobile number for Client #{client_id}...")
     payload = {
         "mobileNo": new_mobile_no
     }
@@ -109,7 +114,7 @@ def close_client(client_id: int, closure_reason_id: Optional[int] = None):
     returned so the user can pick one."""
     if closure_reason_id is None:
         return _closure_reason_required()
-    print(f"[Tool] Closing Client #{client_id}...")
+    logger.info(f"[Tool] Closing Client #{client_id}...")
     today = get_fineract_today()
 
     payload = {
@@ -126,7 +131,7 @@ def close_client(client_id: int, closure_reason_id: Optional[int] = None):
 @tool
 def create_group(name: str, office_id: int, client_members: list = None):
     """Answers: 'Create a new lending group called The Innovators'"""
-    print(f"[Tool] Creating Group: {name}...")
+    logger.info(f"[Tool] Creating Group: {name}...")
     today = get_fineract_today()
 
     payload = {
@@ -147,7 +152,7 @@ def create_group(name: str, office_id: int, client_members: list = None):
 @tool
 def get_group_details(group_id: int):
     """Answers: 'Show me details and members of group ID 5'"""
-    print(f"[Tool] Fetching details for Group #{group_id}...")
+    logger.info(f"[Tool] Fetching details for Group #{group_id}...")
     # Using associations=clientMembers to fetch all the people inside the group
     return fineract_client.execute_get(f"groups/{group_id}?associations=clientMembers")
 
@@ -157,13 +162,13 @@ def get_group_details(group_id: int):
 @tool
 def get_client_identifiers(client_id: int):
     """Answers: 'What ID documents does this client have on file?' or 'Show me the passport number for client 844'"""
-    print(f"[Tool] Fetching identifiers for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching identifiers for Client #{client_id}...")
     return fineract_client.execute_get(f"clients/{client_id}/identifiers")
 
 @tool
 def create_client_identifier(client_id: int, document_type_id: int, document_key: str):
     """Answers: 'Add a new social security number for this client'"""
-    print(f"[Tool] Creating identifier for Client #{client_id}...")
+    logger.info(f"[Tool] Creating identifier for Client #{client_id}...")
     payload = {
         "documentTypeId": document_type_id,
         "documentKey": document_key,
@@ -174,19 +179,19 @@ def create_client_identifier(client_id: int, document_type_id: int, document_key
 @tool
 def get_client_documents(client_id: int):
     """Answers: 'Show me all files uploaded for this client'"""
-    print(f"[Tool] Fetching documents/files for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching documents/files for Client #{client_id}...")
     return fineract_client.execute_get(f"clients/{client_id}/documents")
 
 @tool
 def get_client_charges(client_id: int):
     """Answers: 'Are there any penalties or fees on this client's profile?'"""
-    print(f"[Tool] Fetching charges for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching charges for Client #{client_id}...")
     return fineract_client.execute_get(f"clients/{client_id}/charges")
 
 @tool
 def apply_client_charge(client_id: int, charge_id: int, amount: float):
     """Answers: 'Apply a one-time onboarding fee of $50 to this client'"""
-    print(f"[Tool] Applying charge {charge_id} to Client #{client_id}...")
+    logger.info(f"[Tool] Applying charge {charge_id} to Client #{client_id}...")
     today = get_fineract_today()
     payload = {
         "chargeId": charge_id,
@@ -200,13 +205,13 @@ def apply_client_charge(client_id: int, charge_id: int, amount: float):
 @tool
 def get_client_transactions(client_id: int):
     """Answers: 'Show me all financial transactions linked to this client'"""
-    print(f"[Tool] Fetching financial transactions for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching financial transactions for Client #{client_id}...")
     return fineract_client.execute_get(f"clients/{client_id}/transactions")
 
 @tool
 def get_client_addresses(client_id: int):
     """Answers: 'Where does this client live?' or 'Show me the home address for client 844'"""
-    print(f"[Tool] Fetching addresses for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching addresses for Client #{client_id}...")
     return fineract_client.execute_get(f"clients/{client_id}/addresses")
 
 @tool
@@ -218,7 +223,7 @@ def update_client(
     external_id: Optional[str] = None,
 ):
     """Answers: 'Update client #5 firstname to John' or 'Change mobile number for client 123'"""
-    print(f"[Tool] Updating Client #{client_id}...")
+    logger.info(f"[Tool] Updating Client #{client_id}...")
 
     # Validate client_id
     if not isinstance(client_id, int) or client_id <= 0:
