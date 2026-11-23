@@ -952,7 +952,13 @@ def approve_activate_savings(accountId: int) -> dict:
 @mcp.tool()
 @safe_tool("close_savings")
 def close_savings(accountId: int) -> dict:
-    """Close a savings account"""
+    """Close a savings account. Validates accountId exists and is in Active status before executing."""
+    check = get_savings_account.func(accountId)
+    if not isinstance(check, dict) or "error" in check:
+        return _prefetch_failure(check, f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.")
+    status = check.get("status", {}).get("value", "")
+    if "active" not in status.lower():
+        return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can be closed."}
     return close_savings_account.func(accountId)
 
 @mcp.tool()
