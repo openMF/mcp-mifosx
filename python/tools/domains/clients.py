@@ -41,7 +41,14 @@ def get_client_accounts(client_id: int):
 # --- CLIENT LIFECYCLE OPERATIONS (WRITE) ---
 
 @tool
-def create_client(firstname: str, lastname: str, office_id: int, mobile_no: str = None, is_active: bool = True):
+def create_client(
+    firstname: str,
+    lastname: str,
+    office_id: int,
+    mobile_no: str = None,
+    is_active: bool = True,
+    external_id: Optional[str] = None,
+):
     """Answers: 'Create a new client named John Doe'"""
     # Client names are personal data; log the action, never the names.
     logger.info("[Tool] Creating a new client (name not logged)...")
@@ -63,6 +70,8 @@ def create_client(firstname: str, lastname: str, office_id: int, mobile_no: str 
         payload["active"] = False
     if mobile_no:
         payload["mobileNo"] = mobile_no
+    if external_id:
+        payload["externalId"] = external_id
 
     return fineract_client.execute_post("clients", payload)
 

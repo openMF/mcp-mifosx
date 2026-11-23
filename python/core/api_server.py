@@ -43,6 +43,7 @@ class ClientCreate(BaseModel):
     # strict, so true is not taken as office 1
     office_id: Annotated[int, Field(strict=True, gt=0)]
     is_active: bool = True
+    external_id: Optional[str] = None
 
 class ClientMobileUpdate(BaseModel):
     new_mobile_no: str
@@ -208,7 +209,8 @@ def get_client_accounts(client_id: int):
 def create_client(payload: ClientCreate):
     return handle_response(clients.create_client.func(
         firstname=payload.firstname, lastname=payload.lastname,
-        mobile_no=payload.mobile_no, office_id=payload.office_id, is_active=payload.is_active
+        mobile_no=payload.mobile_no, office_id=payload.office_id, is_active=payload.is_active,
+        external_id=payload.external_id,
     ))
 
 @app.post("/api/clients/{client_id}/activate", tags=["Clients"])
