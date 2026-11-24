@@ -17,9 +17,10 @@ found'"), which pinned the pre-fetch lookups in test_prefetch_failure.
 No test here touches the network — the search is replaced with a stub.
 """
 
-from typing import Any, Callable, Dict
+from typing import Any
 
 import pytest
+from fastmcp.exceptions import ToolError
 
 import mcp_server
 
@@ -40,18 +41,6 @@ class _Stub:
         self.func = lambda *args, **kwargs: payload
 
 
-def _outcome(fn: Callable[..., Any], **kwargs: Any) -> Dict[str, Any]:
-    """Call a tool and return its error payload, whichever way it arrives.
-
-    ``safe_tool`` reports a failed search by raising ``ToolError`` (FastMCP
-    turns it into ``isError: true``); a genuine miss is a plain return.
-    The message is identical either way, so the tests read it from
-    whichever mechanism the current tree has.
-    """
-    try:
-        return fn(**kwargs)
-    except Exception as exc:
-        return {"error": str(exc)}
 
 
 # ── _resolve_client_id: the sentinel must survive resolution ──────────
@@ -84,12 +73,17 @@ def test_resolve_client_id_still_reports_a_genuine_miss(
 
 
 def test_outage_is_not_an_empty_match(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The #710 headline symptom: a failed search reporting zero clients."""
-    monkeypatch.setattr(mcp_server, "search_clients_by_name", _Stub({"error": _CONNECTION_DOWN}))
-    result = _outcome(mcp_server.search_clients, nameQuery="Maria")
+    """The #710 headline symptom: a failed search reporting zero clients.
 
-    assert "Connection failed" in result["error"]
-    assert result != {"clients": []}
+    ``safe_tool`` turns the propagated sentinel into a ``ToolError`` (FastMCP
+    reports ``isError: true``) instead of the old successful empty list.
+    """
+    monkeypatch.setattr(mcp_server, "search_clients_by_name", _Stub({"error": _CONNECTION_DOWN}))
+
+    with pytest.raises(ToolError) as exc_info:
+        mcp_server.search_clients(nameQuery="Maria")
+
+    assert "Connection failed" in str(exc_info.value)
 
 
 def test_timeout_and_service_outage_surface_too(
@@ -97,9 +91,11 @@ def test_timeout_and_service_outage_surface_too(
 ) -> None:
     for payload in ({"error": _TIMEOUT}, _SERVICE_OUT):
         monkeypatch.setattr(mcp_server, "search_clients_by_name", _Stub(payload))
-        result = _outcome(mcp_server.search_clients, nameQuery="Maria")
 
-        assert result["error"] == payload["error"]
+        with pytest.raises(ToolError) as exc_info:
+            mcp_server.search_clients(nameQuery="Maria")
+
+        assert str(exc_info.value) == payload["error"]
 
 
 def test_genuine_miss_still_returns_no_clients(
@@ -145,21 +141,23 @@ def test_name_lookup_outage_is_not_a_missing_client(
 ) -> None:
     """An outage mid-resolution must not answer 'No client found'."""
     monkeypatch.setattr(mcp_server, "search_clients_by_name", _Stub({"error": _CONNECTION_DOWN}))
-    result = _outcome(mcp_server.get_client_accts, nameQuery="Maria")
 
-    assert "Connection failed" in result["error"]
-    assert "No client found" not in result["error"]
+    with pytest.raises(ToolError) as exc_info:
+        mcp_server.get_client_accts(nameQuery="Maria")
+
+    assert "Connection failed" in str(exc_info.value)
+    assert "No client found" not in str(exc_info.value)
 
 
 def test_name_lookup_genuine_miss_keeps_the_friendly_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """A genuine miss keeps its friendly wording — ``safe_tool`` delivers it
+    as a ``ToolError`` too, because the tool reports it as an error dict."""
     monkeypatch.setattr(mcp_server, "search_clients_by_name", _Stub(_EMPTY_PAGE))
-    result = _outcome(mcp_server.get_client_accts, nameQuery="Maria")
 
-    assert result == {
-        "error": "No client found for name 'Maria'. Please verify the name and try again."
-    }
+    with pytest.raises(ToolError, match="No client found for name 'Maria'"):
+        mcp_server.get_client_accts(nameQuery="Maria")
 
 
 def test_name_lookup_resolves_and_fetches_accounts(
