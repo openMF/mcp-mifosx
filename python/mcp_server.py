@@ -86,6 +86,7 @@ from tools.domains.loans import (
 )
 from tools.domains.products import get_loan_product, get_savings_product, list_loan_products, list_savings_products
 from tools.domains.reports import create_report, get_report, list_reports, run_report, update_report
+from tools.domains.reports import search_reports_by_name as search_reports_by_name_domain
 from tools.domains.savings import (
     apply_savings_charge,
     approve_and_activate_savings,
@@ -1070,6 +1071,13 @@ def record_journal_entry(officeId: StrictInt, date: str, credits: list, debits: 
 def list_all_reports(reportType: str = None) -> dict:
     """List all Fineract report definitions. Optionally filter by type: 'Table', 'Chart', 'SMS', 'Text', 'Pentaho'."""
     return list_reports.func(reportType)
+
+@mcp.tool()
+@safe_tool("search_report_by_name", list_key="reports")
+def search_report_by_name(reportName: str) -> dict:
+    """Search for a report by name. Fetches all reports server-side and returns only matches.
+    Use this instead of get_reports when looking for a specific report."""
+    return search_reports_by_name_domain.func(reportName)
 
 @mcp.tool()
 @safe_tool("get_report_definition")
