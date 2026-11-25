@@ -92,6 +92,9 @@ def _assess_capture(image_path: str) -> Tuple[dict, Optional[bytes]]:
     if resolved is None:
         return {"error": "capture directory not allowed"}, None
     try:
+        if os.path.isdir(resolved):
+            # Windows raises PermissionError, not IsADirectoryError, when opening a folder
+            raise IsADirectoryError(resolved)
         with open(resolved, "rb") as fh:
             image_bytes = fh.read()
         if not image_bytes:
