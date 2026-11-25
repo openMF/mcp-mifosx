@@ -6,10 +6,11 @@
 """Tests for get_client_holistic_view MCP composite tool."""
 
 import threading
-from typing import Any, Dict
+from typing import Any, Dict, List, NoReturn, Set, Union
 from unittest.mock import patch
 
 import pytest
+import requests
 from fastmcp.exceptions import ToolError
 
 import mcp_server
@@ -20,7 +21,7 @@ from tools.domains.clients import (
     get_client_identifiers,
 )
 
-MOCK_DETAILS = {
+MOCK_DETAILS: Dict[str, Any] = {
     "id": 1,
     "displayName": "Octavio Paz",
     "firstname": "Octavio",
@@ -29,16 +30,16 @@ MOCK_DETAILS = {
     "officeName": "Head Office",
 }
 
-MOCK_ACCOUNTS = {
+MOCK_ACCOUNTS: Dict[str, List[Dict[str, Any]]] = {
     "loanAccounts": [{"id": 101, "productName": "Individual Loan"}],
     "savingsAccounts": [{"id": 201, "productName": "Savings"}],
 }
 
-MOCK_CHARGES = [
+MOCK_CHARGES: List[Dict[str, Any]] = [
     {"id": 10, "name": "Maintenance Fee", "amount": 25.0}
 ]
 
-MOCK_IDENTIFIERS = [
+MOCK_IDENTIFIERS: List[Dict[str, Any]] = [
     {"id": 5, "documentKey": "ABC12345", "documentType": {"name": "National ID"}}
 ]
 
@@ -125,8 +126,8 @@ def test_get_client_holistic_view_multiple_endpoint_failures() -> None:
 
 def test_get_client_holistic_view_subrequest_exception_isolation() -> None:
     """Unexpected exception in one sub-request is safely isolated to that key."""
-    def _exploding_accounts(client_id: int):
-        raise RuntimeError("Unexpected adapter crash")
+    def _exploding_accounts(client_id: int) -> NoReturn:
+        raise requests.RequestException("Unexpected adapter crash")
 
     with patch.object(get_client_details, "func", return_value=MOCK_DETAILS), \
          patch.object(get_client_accounts, "func", side_effect=_exploding_accounts), \
@@ -148,10 +149,12 @@ def test_get_client_holistic_view_executes_concurrently() -> None:
     # A barrier of 4 requires all 4 threads to be actively executing simultaneously.
     # If calls were executed sequentially, a barrier of 4 would hang or timeout.
     barrier = threading.Barrier(4, timeout=3.0)
-    thread_ids = set()
+    thread_ids: Set[int] = set()
     lock = threading.Lock()
 
-    def _concurrent_worker(client_id: int, payload: Any):
+    def _concurrent_worker(
+        client_id: int, payload: Union[Dict[str, Any], List[Dict[str, Any]]]
+    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
         with lock:
             thread_ids.add(threading.get_ident())
         # All 4 workers must reach this barrier concurrently to pass
