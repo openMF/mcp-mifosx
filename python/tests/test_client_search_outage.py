@@ -17,6 +17,7 @@ found'"), which pinned the pre-fetch lookups in test_prefetch_failure.
 No test here touches the network — the search is replaced with a stub.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -36,6 +37,8 @@ _SERVICE_OUT = {"error": "Fineract Error: Service not available.", "status_code"
 
 class _Stub:
     """Stand-in for a fastmcp StructuredTool — wrappers only read `.func`."""
+
+    func: Callable[..., Any]
 
     def __init__(self, payload: Any) -> None:
         self.func = lambda *args, **kwargs: payload
@@ -167,9 +170,14 @@ def test_name_lookup_resolves_and_fetches_accounts(
     monkeypatch.setattr(
         mcp_server, "search_clients_by_name", _Stub([{"entityId": 42}])
     )
-    fetched = []
+    fetched: list[int] = []
+
+    def _record(client_id: int) -> dict[str, Any]:
+        fetched.append(client_id)
+        return {"loanAccounts": [], "savingsAccounts": []}
+
     accounts = _Stub(None)
-    accounts.func = lambda client_id: (fetched.append(client_id) or {"loanAccounts": [], "savingsAccounts": []})  # type: ignore[assignment]
+    accounts.func = _record
     monkeypatch.setattr(mcp_server, "get_client_accounts", accounts)
 
     result = mcp_server.get_client_accts(nameQuery="Maria")
