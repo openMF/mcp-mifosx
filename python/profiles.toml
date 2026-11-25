@@ -91,7 +91,6 @@ tools = [
 tools = [
     "search_clients",
     "get_client",
-    "get_client_holistic_view",
     "get_client_accts",
     "list_client_txns",
     "get_loan",

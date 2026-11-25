@@ -7,7 +7,7 @@
 
 import threading
 from typing import Any, Dict, List, NoReturn, Set, Union
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import requests
@@ -20,6 +20,7 @@ from tools.domains.clients import (
     get_client_details,
     get_client_identifiers,
 )
+from tools.mcp_adapter import fineract_client
 
 MOCK_DETAILS: Dict[str, Any] = {
     "id": 1,
@@ -172,3 +173,47 @@ def test_get_client_holistic_view_executes_concurrently() -> None:
         # Verify execution spanned multiple concurrent worker threads
         assert len(thread_ids) > 1
         assert barrier.broken is False
+
+
+# ── Regression: Malformed Adapter Error Handling ─────────────────────────────
+
+def test_adapter_parse_fineract_error_numeric_developer_message() -> None:
+    """The adapter normalizes non-string error details instead of raising TypeError."""
+    mock_response = MagicMock(spec=requests.Response)
+    mock_response.status_code = 500
+    mock_response.text = '{"errors": [{"developerMessage": 500}]}'
+    mock_response.json.return_value = {
+        "errors": [{"developerMessage": 500}]
+    }
+
+    error_msg = fineract_client._parse_fineract_error(mock_response)
+    assert error_msg == "Validation Error: 500"
+
+    http_error = requests.exceptions.HTTPError(response=mock_response)
+    with patch("tools.mcp_adapter.requests.get", side_effect=http_error):
+        result = fineract_client.execute_get("clients/1/accounts")
+        assert result == {"error": "Validation Error: 500", "status_code": 500}
+
+
+def test_get_client_holistic_view_preserves_results_on_malformed_adapter_error() -> None:
+    """Holistic view preserves successful resource results when accounts endpoint returns a malformed error."""
+    mock_response = MagicMock(spec=requests.Response)
+    mock_response.status_code = 500
+    mock_response.text = '{"errors": [{"developerMessage": 500}]}'
+    mock_response.json.return_value = {
+        "errors": [{"developerMessage": 500}]
+    }
+    http_error = requests.exceptions.HTTPError(response=mock_response)
+
+    with patch.object(get_client_details, "func", return_value=MOCK_DETAILS), \
+         patch("tools.mcp_adapter.requests.get", side_effect=http_error), \
+         patch.object(get_client_charges, "func", return_value=MOCK_CHARGES), \
+         patch.object(get_client_identifiers, "func", return_value=MOCK_IDENTIFIERS):
+
+        result = _call_tool(1)
+
+        assert set(result.keys()) == {"details", "accounts", "charges", "identifiers"}
+        assert result["details"] == MOCK_DETAILS
+        assert result["charges"] == MOCK_CHARGES
+        assert result["identifiers"] == MOCK_IDENTIFIERS
+        assert result["accounts"] == {"error": "Validation Error: 500", "status_code": 500}
