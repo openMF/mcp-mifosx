@@ -4,6 +4,7 @@
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 use crate::adapter::FineractAdapter;
+use crate::domains::savings;
 use rmcp::schemars;
 use rmcp::{ErrorData as McpError, model::{CallToolResult, ContentBlock}};
 use serde_json::json;
@@ -55,7 +56,12 @@ pub struct BulkCreateSavingsReq { pub accounts: Vec<CreateSavingsItem> }
 pub struct BulkApproveActivateSavingsReq { pub savings_ids: Vec<i64> }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct DepositItem { pub savings_id: i64, pub amount_exactly_from_user_prompt: f64 }
+pub struct DepositItem {
+    pub savings_id: i64,
+    pub amount_exactly_from_user_prompt: f64,
+    #[schemars(description = "Id of the Fineract payment type for this deposit. Required by Fineract and different on every server. If any deposit leaves it out, nothing in the batch is posted and the error lists the configured payment types.")]
+    pub payment_type_id: Option<i64>,
+}
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct BulkDepositSavingsReq { pub deposits: Vec<DepositItem> }
 
@@ -202,16 +208,66 @@ pub async fn bulk_approve_and_activate_savings(adapter: &FineractAdapter, req: B
 }
 
 
+/// Deposits into several savings accounts in parallel.
+///
+/// Every deposit needs its own payment type. The batch is checked before anything is
+/// sent: if any deposit has no `payment_type_id`, no deposit is posted and the error
+/// lists the configured payment types, so a batch is never half-posted.
 pub async fn bulk_deposit_savings(adapter: &FineractAdapter, req: BulkDepositSavingsReq) -> Result<CallToolResult, McpError> {
+    let Some(deposits) = req
+        .deposits
+        .into_iter()
+        .map(|item| item.payment_type_id.map(|payment_type_id| (item, payment_type_id)))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return savings::payment_type_required(adapter, "deposit").await;
+    };
     let date = today();
-    let futures = req.deposits.into_iter().map(|item| {
+    let futures = deposits.into_iter().map(|(item, payment_type_id)| {
         let adapter_ref = adapter.clone();
         let date_ref = date.clone();
         async move {
-            let payload = json!({"transactionDate": date_ref, "transactionAmount": item.amount_exactly_from_user_prompt, "dateFormat": "dd MMMM yyyy", "locale": "en", "paymentTypeId": 1});
+            let payload = savings::savings_transaction_payload(&date_ref, item.amount_exactly_from_user_prompt, payment_type_id);
             let res = adapter_ref.execute_post(&format!("savingsaccounts/{}/transactions?command=deposit", item.savings_id), &payload).await;
             json!({"savingsId": item.savings_id, "result": res.unwrap_or_else(|e| json!({"error": e.to_string()}))})
         }
     });
     to_result(json!(join_all(futures).await))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::stub;
+
+    fn item(savings_id: i64, payment_type_id: Option<i64>) -> DepositItem {
+        DepositItem { savings_id, amount_exactly_from_user_prompt: 100.0, payment_type_id }
+    }
+
+    #[tokio::test]
+    async fn bulk_deposit_posts_each_deposit_with_its_own_payment_type() {
+        let stub = stub::start(Some(json!([]))).await;
+        let req = BulkDepositSavingsReq { deposits: vec![item(3, Some(4)), item(5, Some(1))] };
+        bulk_deposit_savings(&stub.adapter, req).await.unwrap();
+
+        let mut sent: Vec<(String, serde_json::Value)> =
+            stub.requests_with("POST").into_iter().map(|r| (r.path, r.body["paymentTypeId"].clone())).collect();
+        sent.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(sent, vec![
+            ("/savingsaccounts/3/transactions?command=deposit".to_string(), json!(4)),
+            ("/savingsaccounts/5/transactions?command=deposit".to_string(), json!(1)),
+        ]);
+    }
+
+    #[tokio::test]
+    async fn bulk_deposit_with_one_missing_payment_type_posts_nothing() {
+        let stub = stub::start(Some(json!([{"id": 4, "name": "Cash"}]))).await;
+        let req = BulkDepositSavingsReq { deposits: vec![item(3, Some(4)), item(5, None)] };
+        let result = bulk_deposit_savings(&stub.adapter, req).await.unwrap();
+
+        let (text, is_error) = stub::result_text(&result);
+        assert!(is_error);
+        assert!(text.contains("4 = Cash"), "{text}");
+        assert!(stub.requests_with("POST").is_empty());
+    }
 }
