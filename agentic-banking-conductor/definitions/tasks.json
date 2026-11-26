@@ -1,0 +1,11 @@
+[
+  {
+    "name": "intake_opportunity",
+    "description": "Check the lead and record it in the LOS (OpenFn job intake-opportunity)",
+    "retryCount": 0,
+    "timeoutSeconds": 60,
+    "responseTimeoutSeconds": 60,
+    "pollTimeoutSeconds": 60,
+    "timeoutPolicy": "TIME_OUT_WF"
+  }
+]
