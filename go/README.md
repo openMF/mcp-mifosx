@@ -1,6 +1,6 @@
 # Mifos X MCP Server — Go Implementation
 
-The **Mifos MCP Server (Go)** is a high-performance integration and automation tier for the **Apache Fineract** banking suite. It exposes **102 typed tools** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), enabling AI agents and automated workflows to interact directly with Fineract's core modules.
+The **Mifos MCP Server (Go)** is a high-performance integration and automation tier for the **Apache Fineract** banking suite. It exposes **104 typed tools** via the [Model Context Protocol (MCP)](https://modelcontextprotocol.io), enabling AI agents and automated workflows to interact directly with Fineract's core modules.
 
 This implementation focuses on low-latency execution, native cloud observability, and high-concurrency bulk operations using Go's runtime.
 
@@ -17,7 +17,7 @@ Unlike standard scripting-based agents, this is a dedicated **MCP Protocol Serve
                        │ REST API (Hardened)
 ┌──────────────────────▼──────────────────────┐
 │         mcp-go-mifosx  (This Repo)           │
-│    High-Perf MCP Server — 102 Typed Tools    │
+│    High-Perf MCP Server — 104 Typed Tools    │
 │    (Go Routines + MCP SDK + SSE Transport)   │
 └──────────────────────┬──────────────────────┘
                        │ MCP Protocol (stdio/SSE)
@@ -61,6 +61,15 @@ Caller-scoped `update_client` requires exact `UPDATE_CLIENT` (or `ALL_FUNCTIONS`
 
 Client constructors return a client and an error. The optional `.env` file is loaded before mode selection and client construction. A missing file is allowed; unreadable or malformed files stop initialization with a diagnostic that omits file contents.
 
+### Document capture quality gate
+`validate_capture_quality` gates a document photo **before** it is uploaded, so an unreadable capture never becomes a permanent client document. It measures five signals on a fixed 512px analysis grid — `sharpness`, `contrast`, `ink_ratio`, `brightness`, `exposure` — and returns `RETAKE | REVIEW | PASS` with the exact gates that tripped. The gate is deterministic and offline: fixed arithmetic, no LLM or CV/ML library, and no network call.
+
+The capture is passed as `image_base64` (raw base64, no `data:` prefix), so there is no path to confine and no file to race. The input is length-checked against the 40 MB capture limit before decoding, and the tool accepts JPEG/PNG/WEBP/TIFF.
+
+`upload_client_document` is the second half: it uploads the same bytes that were assessed, never a re-encode between gate and Fineract. The gate around the upload is **opt-in** — set `MIFOSX_CAPTURE_GATE_ON_UPLOAD=true` and a `RETAKE` capture is refused with the verdict and the gates that tripped (an officer can override with `force=true`); `REVIEW`/`PASS` captures upload with the verdict attached as `capture_gate` in the response. With the variable unset, uploads proceed ungated and the standalone validation tool is unaffected.
+
+Its Java/Rust/Python counterparts must return the same verdict for the same capture; the shared fixtures live in [`contract/capture/golden_vectors.json`](../contract/capture/golden_vectors.json) and are explained in [`contract/capture/CAPTURE_GATE.md`](../contract/capture/CAPTURE_GATE.md).
+
 ### Telemetry & Monitoring (Prometheus)
 The server exposes structured metrics via a native **Prometheus** `/metrics` endpoint. 
 - The server exposes a dedicated `/metrics` endpoint built natively with the **Prometheus Golang Client**. 
@@ -72,7 +81,7 @@ The server exposes structured metrics via a native **Prometheus** `/metrics` end
 
 ---
 
-## Available Tools (102)
+## Available Tools (104)
 
 All tools are registered in the `tools/` package and are discoverable by any MCP client.
 
@@ -102,7 +111,7 @@ All tools are registered in the `tools/` package and are discoverable by any MCP
 | `update_client_identifier` | Update an existing identifier (read-modify-write) — Go-native |
 | `delete_client_identifier` | Delete an identifier from a client |
 
-### 📄 Documents (18 tools)
+### 📄 Documents (20 tools)
 
 | Tool | Description |
 |---|---|
@@ -124,6 +133,8 @@ All tools are registered in the `tools/` package and are discoverable by any MCP
 | `get_savings_document_attachment` | Download the binary file for a savings document |
 | `create_savings_document` | Upload a new document for a savings account — Go-native multipart |
 | `update_savings_document` | Update an existing savings document — Go-native multipart |
+| `validate_capture_quality` | Gate a document photo before upload: RETAKE \| REVIEW \| PASS (deterministic, offline) |
+| `upload_client_document` | Upload a photo to a client's documents — gated when `MIFOSX_CAPTURE_GATE_ON_UPLOAD=true` |
 
 ### 📊 Reports (8 tools)
 

@@ -189,6 +189,7 @@ func (r *Registry) RegisterAllTools() {
 	r.RegisterAccountingTools()
 	r.RegisterDocumentTools()
 	r.RegisterNativeDocumentTools()
+	r.RegisterNativeCaptureTools()
 	r.RegisterReportTools()
 	r.RegisterNativeReportTools()
 	r.RegisterIdentityTools()
