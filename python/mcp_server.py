@@ -207,8 +207,16 @@ def _fmt_date(d) -> str:
     return d
 
 def _resolve_client_id(name: str):
-    """Search for a client by name and return their numeric ID, or None."""
+    """Search for a client by name and return their numeric ID, or None.
+
+    Returns the adapter's ``{"error": ...}`` sentinel when the search
+    itself failed, so the caller can tell an outage from a genuine miss.
+    """
     result = search_clients_by_name.func(name)
+    if isinstance(result, dict) and "error" in result:
+        # A search that could not run says nothing about whether the
+        # client exists; hand the failure back instead of "no match".
+        return result
     clients = result if isinstance(result, list) else result.get("pageItems", [])
     if not clients:
         return None
@@ -285,6 +293,10 @@ def safe_tool(tool_name: str, list_key: str = "items") -> Callable:
 def search_clients(nameQuery: str) -> dict:
     """Find the client ID for a given name. Returns clientId — use this for all subsequent tool calls."""
     result = search_clients_by_name.func(nameQuery)
+    if isinstance(result, dict) and "error" in result:
+        # An unreachable backend is not "no clients": a search that could
+        # not run must surface its error (issue #710), not an empty match.
+        return result
     clients = result if isinstance(result, list) else result.get("pageItems", [])
     return {
         "clients": [
@@ -329,6 +341,10 @@ def get_client_accts(clientId: int = None, clientIds: list = None, id: int = Non
         search_name = nameQuery or name
         if search_name:
             actual_id = _resolve_client_id(search_name)
+            if isinstance(actual_id, dict):
+                # The name search could not run; report why instead of
+                # reading an outage as "no such client" (issue #710).
+                return actual_id
             if not actual_id:
                 return {"error": f"No client found for name '{search_name}'. Please verify the name and try again."}
         else:
