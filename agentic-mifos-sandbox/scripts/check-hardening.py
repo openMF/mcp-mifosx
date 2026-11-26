@@ -6,7 +6,7 @@
 Reads the rendered compose configuration on stdin (run from agentic-mifos-sandbox,
 with a .env from scripts/gen-secrets.sh):
 
-    docker compose --profile ollama --profile agents config --format json \\
+    docker compose --profile ollama --profile agents --profile conductor config --format json \\
       | python3 scripts/check-hardening.py
 
 Prints one line per problem and exits 1 if there is any.
@@ -39,7 +39,13 @@ INTERNAL_NETWORKS = {
     "agents-llm": {"ollama", "agent-*"},
     "openfn-agents": {"lightning-worker", "agent-*"},
     "los": {"los-db", "los"},
-    "los-api": {"los", "lightning-worker"},
+    "los-api": {"los", "lightning-worker", "conductor-intake"},
+    # Conductor (--profile conductor): the server reaches only its database
+    # and the services on `conductor`; every call to the LOS, Fineract, Ollama
+    # or an agent goes through a worker, which joins only the networks of the
+    # services its workflow calls (each listed by name, not by pattern).
+    "conductor-db": {"conductor-db", "conductor"},
+    "conductor": {"conductor", "conductor-setup", "conductor-entry", "conductor-intake"},
 }
 
 # The only networks with a route outside Docker, and the services allowed on
@@ -49,6 +55,7 @@ OUTER_NETWORKS = {
     "lightning-edge": {"lightning", "lightning-setup"},
     "gateway-edge": {"gateway"},
     "los-edge": {"los"},
+    "conductor-edge": {"conductor"},
     "llm-egress": {"ollama"},
     # Only with docker-compose.host-ollama.yml: an Ollama server on the host.
     "host-ollama": {"lightning-worker"},

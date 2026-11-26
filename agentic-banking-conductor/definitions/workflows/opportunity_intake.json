@@ -1,0 +1,23 @@
+{
+  "name": "opportunity_intake",
+  "version": 1,
+  "schemaVersion": 2,
+  "description": "A lead from a channel, checked by rules and recorded in the LOS (OpenFn workflow opportunity-intake)",
+  "timeoutSeconds": 900,
+  "timeoutPolicy": "TIME_OUT_WF",
+  "tasks": [
+    {
+      "name": "intake_opportunity",
+      "taskReferenceName": "intake_opportunity",
+      "type": "SIMPLE",
+      "inputParameters": {
+        "state": {
+          "data": "${workflow.input}"
+        }
+      }
+    }
+  ],
+  "outputParameters": {
+    "data": "${intake_opportunity.output}"
+  }
+}
