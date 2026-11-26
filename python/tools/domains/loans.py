@@ -30,6 +30,16 @@ def get_repayment_schedule(loan_id: int):
     if "error" in response: return response
     return response.get("repaymentSchedule", {})
 
+
+def _normalize_history_date(value: str | list[int] | None) -> str:
+    """Preserve date strings and use the existing empty string for absent dates."""
+    if isinstance(value, list):
+        return "-".join(str(part) for part in value)
+    if isinstance(value, str):
+        return value
+    return ""
+
+
 @tool
 def get_loan_history(loan_id: int):
     """Answers: 'Show me the full transaction history for Loan #12345', 'What was the last repayment?',
@@ -55,7 +65,7 @@ def get_loan_history(loan_id: int):
         transactions.append({
             "id":           t.get("id"),
             "type":         t.get("type", {}).get("value"),          # e.g. "Repayment", "Disbursement"
-            "date":         "-".join(str(d) for d in t.get("date", [])),
+            "date":         _normalize_history_date(t.get("date")),
             "amount":       t.get("amount"),
             "principalPortion":  t.get("principalPortion"),
             "interestPortion":   t.get("interestPortion"),
@@ -70,7 +80,7 @@ def get_loan_history(loan_id: int):
             "name":       c.get("name"),
             "amount":     c.get("amount"),
             "amountPaid": c.get("amountPaid"),
-            "dueDate":    "-".join(str(d) for d in c.get("dueDate", [])),
+            "dueDate":    _normalize_history_date(c.get("dueDate")),
             "paid":       c.get("paid"),
             "waived":     c.get("waived"),
         }
@@ -86,7 +96,7 @@ def get_loan_history(loan_id: int):
         "interestRate":       response.get("interestRatePerPeriod"),
         "termMonths":         response.get("termFrequency"),
         "product":            response.get("loanProductName"),
-        "disbursedOn":        "-".join(str(d) for d in timeline.get("actualDisbursementDate", [])),
+        "disbursedOn":        _normalize_history_date(timeline.get("actualDisbursementDate")),
         "totalRepaid":        summary.get("totalRepaymentTransaction"),
         "totalOutstanding":   summary.get("totalOutstanding"),
         "totalOverdue":       summary.get("totalOverdue", 0),
