@@ -12,7 +12,6 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 import mcp_server
-from core import api_server
 from tools.domains.loans import create_group_loan, create_loan
 from tools.domains.savings import create_savings_account
 from tools.mcp_adapter import fineract_client
@@ -97,8 +96,7 @@ def test_mcp_tools_pass_the_product_list_on() -> None:
     assert "3 = Small business loan" in group["error"]
 
 
-def test_rest_endpoint_without_a_product_returns_400() -> None:
-    client = TestClient(api_server.app)
+def test_rest_endpoint_without_a_product_returns_400(client: TestClient) -> None:
     with patch.object(fineract_client, "execute_get", return_value=SAVINGS_PRODUCTS), patch.object(
         fineract_client, "execute_post"
     ) as post:

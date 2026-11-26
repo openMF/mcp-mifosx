@@ -3,30 +3,50 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import logging
 from typing import Annotated, Optional
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, StringConstraints
+
+from core.rest_security import (
+    API_KEY_HEADER,
+    active_profile_tools,
+    configured_cors_origins,
+    require_api_key,
+    require_tool,
+)
+from core.tool_names import DOMAIN_TOOL_TO_MCP_TOOL
 
 # Import our custom banking domains and AI router
 from tools.domains import accounting, clients, groups, loans, savings, staff
 from tools.registry import router
 
+logger = logging.getLogger(__name__)
+
 # --- SERVER INITIALIZATION ---
+# Every /api route is authenticated. Per-route dependencies below additionally
+# check that the MCP tool behind the route is in the active tool profile, so
+# the REST bridge cannot widen access beyond the MCP server's allowlist.
 app = FastAPI(
     title="Mifos Headless MCP Server",
     description="Enterprise API bridge for AI Agents and Go CLI to access Apache Fineract.",
-    version="1.0.0"
+    version="1.0.0",
+    dependencies=[Depends(require_api_key)],
 )
 
+# Browser origins are opt-in: with no configured origin, the bridge emits no
+# cross-origin permission at all. Credentials are disabled because callers
+# authenticate with an API key header, not cookies, and a wildcard origin must
+# never be combined with credentialed requests.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=configured_cors_origins(),
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", API_KEY_HEADER, "Authorization"],
 )
 
 # --- PYDANTIC DATA MODELS ---
@@ -134,8 +154,18 @@ def handle_response(result):
 def route_intent(query: IntentQuery):
     """Dynamically returns the list of tools the AI should load based on the prompt."""
     active_tools = router.route_intent(query.prompt)
-    # FIX: Extract just the tool names so FastAPI can serialize it to JSON
-    tool_names = [tool.name for tool in active_tools]
+    # The registry knows every tool, including the ones the active profile
+    # hides, and speaks domain function names. Translate to the public MCP
+    # names before filtering: a profile can only match those names.
+    allowed = active_profile_tools()
+    tool_names = []
+    for tool in active_tools:
+        name = DOMAIN_TOOL_TO_MCP_TOOL.get(tool.name)
+        if name is None or name in tool_names:
+            continue
+        if allowed is not None and name not in allowed:
+            continue
+        tool_names.append(name)
     return {"status": "success", "tools_loaded": tool_names}
 
 # Global agent instance
@@ -163,7 +193,7 @@ async def chat_with_agent(req: ChatRequest):
     if banking_agent is None:
         raise HTTPException(status_code=503, detail="Agent not initialized")
 
-    print(f"\n[API] Received chat request: '{req.message}'")
+    logger.info("Received chat request")
 
     # In a real app, thread_id should come from the request/session
     thread_id = "default-web-session"
@@ -186,109 +216,112 @@ async def chat_with_agent(req: ChatRequest):
             return {"reply": final_msg.content or "Finished tool execution."}
 
         return {"reply": "Failed to get AI response"}
-    except Exception as e:
-        print(f"Error in chat_with_agent: {e}")
-        return {"reply": f"Error thinking: {str(e)}"}
+    except Exception:
+        # The optional agent package is external and has no declared exception
+        # contract. Every agent failure becomes a generic reply, and is logged
+        # server-side, rather than surfacing backend details to the caller.
+        logger.exception("Agent chat failed")
+        return {"reply": "The agent could not complete the request."}
 
 
 # --- CLIENT ENDPOINTS ---
-@app.get("/api/clients/search", tags=["Clients"])
+@app.get("/api/clients/search", tags=["Clients"], dependencies=[Depends(require_tool("search_clients"))])
 def search_clients(name: str):
     return handle_response(clients.search_clients_by_name.func(name_query=name))
 
-@app.get("/api/clients/{client_id}", tags=["Clients"])
+@app.get("/api/clients/{client_id}", tags=["Clients"], dependencies=[Depends(require_tool("get_client"))])
 def get_client(client_id: int):
     return handle_response(clients.get_client_details.func(client_id=client_id))
 
-@app.get("/api/clients/{client_id}/accounts", tags=["Clients"])
+@app.get("/api/clients/{client_id}/accounts", tags=["Clients"], dependencies=[Depends(require_tool("get_client_accts"))])
 def get_client_accounts(client_id: int):
     return handle_response(clients.get_client_accounts.func(client_id=client_id))
 
-@app.post("/api/clients", tags=["Clients"])
+@app.post("/api/clients", tags=["Clients"], dependencies=[Depends(require_tool("create_new_client"))])
 def create_client(payload: ClientCreate):
     return handle_response(clients.create_client.func(
         firstname=payload.firstname, lastname=payload.lastname,
         mobile_no=payload.mobile_no, office_id=payload.office_id, is_active=payload.is_active
     ))
 
-@app.post("/api/clients/{client_id}/activate", tags=["Clients"])
+@app.post("/api/clients/{client_id}/activate", tags=["Clients"], dependencies=[Depends(require_tool("activate_pending_client"))])
 def activate_client(client_id: int):
     return handle_response(clients.activate_client.func(client_id=client_id))
 
-@app.put("/api/clients/{client_id}/mobile", tags=["Clients"])
+@app.put("/api/clients/{client_id}/mobile", tags=["Clients"], dependencies=[Depends(require_tool("update_mobile"))])
 def update_client_mobile(client_id: int, payload: ClientMobileUpdate):
     return handle_response(clients.update_client_mobile.func(client_id=client_id, new_mobile_no=payload.new_mobile_no))
 
-@app.post("/api/clients/{client_id}/close", tags=["Clients"])
+@app.post("/api/clients/{client_id}/close", tags=["Clients"], dependencies=[Depends(require_tool("close_client_profile"))])
 def close_client(client_id: int, payload: ClientClose):
     return handle_response(clients.close_client.func(client_id=client_id, closure_reason_id=payload.closure_reason_id))
 
-@app.get("/api/clients/{client_id}/identifiers", tags=["Clients"])
+@app.get("/api/clients/{client_id}/identifiers", tags=["Clients"], dependencies=[Depends(require_tool("get_identifiers"))])
 def get_client_identifiers(client_id: int):
     return handle_response(clients.get_client_identifiers.func(client_id=client_id))
 
-@app.post("/api/clients/{client_id}/identifiers", tags=["Clients"])
+@app.post("/api/clients/{client_id}/identifiers", tags=["Clients"], dependencies=[Depends(require_tool("add_identifier"))])
 def create_client_identifier(client_id: int, payload: ClientIdentifierCreate):
     return handle_response(clients.create_client_identifier.func(
         client_id=client_id, document_type_id=payload.document_type_id, document_key=payload.document_key
     ))
 
-@app.get("/api/clients/{client_id}/documents", tags=["Clients"])
+@app.get("/api/clients/{client_id}/documents", tags=["Clients"], dependencies=[Depends(require_tool("list_documents"))])
 def get_client_documents(client_id: int):
     return handle_response(clients.get_client_documents.func(client_id=client_id))
 
-@app.get("/api/clients/{client_id}/charges", tags=["Clients"])
+@app.get("/api/clients/{client_id}/charges", tags=["Clients"], dependencies=[Depends(require_tool("list_client_charges"))])
 def get_client_charges(client_id: int):
     return handle_response(clients.get_client_charges.func(client_id=client_id))
 
-@app.post("/api/clients/{client_id}/charges", tags=["Clients"])
+@app.post("/api/clients/{client_id}/charges", tags=["Clients"], dependencies=[Depends(require_tool("apply_client_fee"))])
 def apply_client_charge(client_id: int, payload: ClientChargeApply):
     return handle_response(clients.apply_client_charge.func(
         client_id=client_id, charge_id=payload.charge_id, amount=payload.amount
     ))
 
-@app.get("/api/clients/{client_id}/transactions", tags=["Clients"])
+@app.get("/api/clients/{client_id}/transactions", tags=["Clients"], dependencies=[Depends(require_tool("list_client_txns"))])
 def get_client_transactions(client_id: int):
     return handle_response(clients.get_client_transactions.func(client_id=client_id))
 
-@app.get("/api/clients/{client_id}/addresses", tags=["Clients"])
+@app.get("/api/clients/{client_id}/addresses", tags=["Clients"], dependencies=[Depends(require_tool("get_addresses"))])
 def get_client_addresses(client_id: int):
     return handle_response(clients.get_client_addresses.func(client_id=client_id))
 
 
 # --- GROUP ENDPOINTS ---
-@app.post("/api/groups", tags=["Groups"])
+@app.post("/api/groups", tags=["Groups"], dependencies=[Depends(require_tool("create_lending_group"))])
 def create_group(payload: GroupCreate):
     return handle_response(clients.create_group.func(
         name=payload.name, office_id=payload.office_id, client_members=payload.client_members
     ))
 
-@app.get("/api/groups/{group_id}", tags=["Groups"])
+@app.get("/api/groups/{group_id}", tags=["Groups"], dependencies=[Depends(require_tool("get_group"))])
 def get_group(group_id: int):
     return handle_response(clients.get_group_details.func(group_id=group_id))
 
-@app.get("/api/groups", tags=["Groups"])
+@app.get("/api/groups", tags=["Groups"], dependencies=[Depends(require_tool("list_all_groups"))])
 def list_groups(office_id: Optional[int] = None):
     return handle_response(groups.list_groups.func(office_id=office_id))
 
-@app.post("/api/groups/{group_id}/activate", tags=["Groups"])
+@app.post("/api/groups/{group_id}/activate", tags=["Groups"], dependencies=[Depends(require_tool("activate_pending_group"))])
 def activate_group(group_id: int):
     return handle_response(groups.activate_group.func(group_id=group_id))
 
-@app.post("/api/groups/{group_id}/members/{client_id}", tags=["Groups"])
+@app.post("/api/groups/{group_id}/members/{client_id}", tags=["Groups"], dependencies=[Depends(require_tool("add_member_to_group"))])
 def add_group_member(group_id: int, client_id: int):
     return handle_response(groups.add_group_member.func(group_id=group_id, client_id=client_id))
 
 # --- CENTER ENDPOINTS ---
-@app.get("/api/centers", tags=["Centers"])
+@app.get("/api/centers", tags=["Centers"], dependencies=[Depends(require_tool("list_all_centers"))])
 def list_centers(office_id: Optional[int] = None):
     return handle_response(groups.list_centers.func(office_id=office_id))
 
-@app.get("/api/centers/{center_id}", tags=["Centers"])
+@app.get("/api/centers/{center_id}", tags=["Centers"], dependencies=[Depends(require_tool("get_center"))])
 def get_center(center_id: int):
     return handle_response(groups.get_center.func(center_id=center_id))
 
-@app.post("/api/centers", tags=["Centers"])
+@app.post("/api/centers", tags=["Centers"], dependencies=[Depends(require_tool("create_new_center"))])
 def create_center(payload: CenterCreate):
     return handle_response(groups.create_center.func(
         name=payload.name, office_id=payload.office_id, external_id=payload.external_id
@@ -296,52 +329,52 @@ def create_center(payload: CenterCreate):
 
 
 # --- LOAN ENDPOINTS ---
-@app.get("/api/loans/{loan_id}", tags=["Loans"])
+@app.get("/api/loans/{loan_id}", tags=["Loans"], dependencies=[Depends(require_tool("get_loan"))])
 def get_loan(loan_id: int):
     return handle_response(loans.get_loan_details.func(loan_id=loan_id))
 
-@app.get("/api/loans/{loan_id}/schedule", tags=["Loans"])
+@app.get("/api/loans/{loan_id}/schedule", tags=["Loans"], dependencies=[Depends(require_tool("get_repayment_sched"))])
 def get_repayment_schedule(loan_id: int):
     return handle_response(loans.get_repayment_schedule.func(loan_id=loan_id))
 
-@app.get("/api/loans/{loan_id}/history", tags=["Loans"])
+@app.get("/api/loans/{loan_id}/history", tags=["Loans"], dependencies=[Depends(require_tool("get_loan_hist"))])
 def get_loan_history(loan_id: int):
     """Full transaction history for a loan: repayments, disbursements, charges, outstanding balance"""
     return handle_response(loans.get_loan_history.func(loan_id=loan_id))
 
-@app.post("/api/loans", tags=["Loans"])
+@app.post("/api/loans", tags=["Loans"], dependencies=[Depends(require_tool("create_new_loan"))])
 def create_loan(payload: LoanCreate):
     return handle_response(loans.create_loan.func(
         client_id=payload.client_id, principal=payload.principal,
         months=payload.months, product_id=payload.product_id
     ))
 
-@app.post("/api/loans/{loan_id}/approve-disburse", tags=["Loans"])
+@app.post("/api/loans/{loan_id}/approve-disburse", tags=["Loans"], dependencies=[Depends(require_tool("approve_disburse_loan"))])
 def approve_and_disburse_loan(loan_id: int, payload: LoanDisburse):
     return handle_response(loans.approve_and_disburse_loan.func(loan_id=loan_id, amount=payload.amount))
 
-@app.post("/api/loans/{loan_id}/reject", tags=["Loans"])
+@app.post("/api/loans/{loan_id}/reject", tags=["Loans"], dependencies=[Depends(require_tool("reject_loan"))])
 def reject_loan(loan_id: int, payload: LoanReject):
     return handle_response(loans.reject_loan_application.func(loan_id=loan_id, note=payload.note))
 
-@app.post("/api/loans/{loan_id}/repayment", tags=["Loans"])
+@app.post("/api/loans/{loan_id}/repayment", tags=["Loans"], dependencies=[Depends(require_tool("make_repayment"))])
 def make_loan_repayment(loan_id: int, payload: Transaction):
     return handle_response(loans.make_loan_repayment.func(loan_id=loan_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
 
-@app.post("/api/loans/{loan_id}/late-fee", tags=["Loans"])
+@app.post("/api/loans/{loan_id}/late-fee", tags=["Loans"], dependencies=[Depends(require_tool("apply_loan_fee"))])
 def apply_late_fee(loan_id: int, payload: LateFee):
     return handle_response(loans.apply_late_fee.func(loan_id=loan_id, fee_amount=payload.fee_amount, charge_id=payload.charge_id))
 
-@app.post("/api/loans/{loan_id}/waive-interest", tags=["Loans"])
+@app.post("/api/loans/{loan_id}/waive-interest", tags=["Loans"], dependencies=[Depends(require_tool("waive_loan_interest"))])
 def waive_interest(loan_id: int, payload: WaiveInterest):
     return handle_response(loans.waive_interest.func(loan_id=loan_id, amount=payload.amount, note=payload.note))
 
-@app.get("/api/clients/{client_id}/overdue-loans", tags=["Loans"])
+@app.get("/api/clients/{client_id}/overdue-loans", tags=["Loans"], dependencies=[Depends(require_tool("get_overdue_loans_for_client"))])
 def get_overdue_loans(client_id: int):
     """Get all overdue/in-arrears loans for a specific client"""
     return handle_response(loans.get_overdue_loans.func(client_id=client_id))
 
-@app.post("/api/groups/{group_id}/loans", tags=["Loans"])
+@app.post("/api/groups/{group_id}/loans", tags=["Loans"], dependencies=[Depends(require_tool("create_group_loan_app"))])
 def create_group_loan(group_id: int, payload: GroupLoanCreate):
     """Create a new group loan application"""
     return handle_response(loans.create_group_loan.func(
@@ -351,71 +384,71 @@ def create_group_loan(group_id: int, payload: GroupLoanCreate):
 
 
 # --- SAVINGS ENDPOINTS ---
-@app.get("/api/savings/{account_id}", tags=["Savings"])
+@app.get("/api/savings/{account_id}", tags=["Savings"], dependencies=[Depends(require_tool("get_savings"))])
 def get_savings(account_id: int):
     return handle_response(savings.get_savings_account.func(account_id=account_id))
 
-@app.get("/api/savings/{account_id}/transactions", tags=["Savings"])
+@app.get("/api/savings/{account_id}/transactions", tags=["Savings"], dependencies=[Depends(require_tool("get_savings_txns"))])
 def get_savings_transactions(account_id: int):
     return handle_response(savings.get_savings_transactions.func(account_id=account_id))
 
-@app.post("/api/savings", tags=["Savings"])
+@app.post("/api/savings", tags=["Savings"], dependencies=[Depends(require_tool("create_savings"))])
 def create_savings_account(payload: SavingsCreate):
     return handle_response(savings.create_savings_account.func(client_id=payload.client_id, product_id=payload.product_id))
 
-@app.post("/api/savings/{account_id}/approve-activate", tags=["Savings"])
+@app.post("/api/savings/{account_id}/approve-activate", tags=["Savings"], dependencies=[Depends(require_tool("approve_activate_savings"))])
 def approve_and_activate_savings(account_id: int):
     return handle_response(savings.approve_and_activate_savings.func(account_id=account_id))
 
-@app.post("/api/savings/{account_id}/close", tags=["Savings"])
+@app.post("/api/savings/{account_id}/close", tags=["Savings"], dependencies=[Depends(require_tool("close_savings"))])
 def close_savings_account(account_id: int):
     return handle_response(savings.close_savings_account.func(account_id=account_id))
 
-@app.post("/api/savings/{account_id}/deposit", tags=["Savings"])
+@app.post("/api/savings/{account_id}/deposit", tags=["Savings"], dependencies=[Depends(require_tool("deposit"))])
 def deposit_savings(account_id: int, payload: Transaction):
     return handle_response(savings.deposit_savings.func(account_id=account_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
 
-@app.post("/api/savings/{account_id}/withdraw", tags=["Savings"])
+@app.post("/api/savings/{account_id}/withdraw", tags=["Savings"], dependencies=[Depends(require_tool("withdraw"))])
 def withdraw_savings(account_id: int, payload: Transaction):
     return handle_response(savings.withdraw_savings.func(account_id=account_id, amount=payload.amount, payment_type_id=payload.paymentTypeId))
 
-@app.post("/api/savings/{account_id}/charge", tags=["Savings"])
+@app.post("/api/savings/{account_id}/charge", tags=["Savings"], dependencies=[Depends(require_tool("apply_savings_fee"))])
 def apply_savings_charge(account_id: int, payload: SavingsCharge):
     return handle_response(savings.apply_savings_charge.func(account_id=account_id, amount=payload.amount, charge_id=payload.charge_id))
 
-@app.post("/api/savings/{account_id}/post-interest", tags=["Savings"])
+@app.post("/api/savings/{account_id}/post-interest", tags=["Savings"], dependencies=[Depends(require_tool("calc_post_interest"))])
 def post_savings_interest(account_id: int):
     return handle_response(savings.calculate_and_post_interest.func(account_id=account_id))
 
 
 # --- STAFF ENDPOINTS ---
-@app.get("/api/staff", tags=["Staff"])
+@app.get("/api/staff", tags=["Staff"], dependencies=[Depends(require_tool("list_all_staff"))])
 def list_staff(office_id: Optional[int] = None, status: str = "all"):
     return handle_response(staff.list_staff.func(office_id=office_id, status=status))
 
-@app.get("/api/staff/{staff_id}", tags=["Staff"])
+@app.get("/api/staff/{staff_id}", tags=["Staff"], dependencies=[Depends(require_tool("get_staff"))])
 def get_staff(staff_id: int):
     return handle_response(staff.get_staff_details.func(staff_id=staff_id))
 
-@app.get("/api/offices", tags=["Staff"])
+@app.get("/api/offices", tags=["Staff"], dependencies=[Depends(require_tool("list_all_offices"))])
 def list_offices():
     return handle_response(staff.list_offices.func())
 
-@app.get("/api/offices/{office_id}", tags=["Staff"])
+@app.get("/api/offices/{office_id}", tags=["Staff"], dependencies=[Depends(require_tool("get_office"))])
 def get_office(office_id: int):
     return handle_response(staff.get_office_details.func(office_id=office_id))
 
 
 # --- ACCOUNTING ENDPOINTS ---
-@app.get("/api/accounting/gl-accounts", tags=["Accounting"])
+@app.get("/api/accounting/gl-accounts", tags=["Accounting"], dependencies=[Depends(require_tool("list_accounts"))])
 def list_gl_accounts(type: Optional[int] = None):
     return handle_response(accounting.list_gl_accounts.func(type=type))
 
-@app.get("/api/accounting/journal-entries", tags=["Accounting"])
+@app.get("/api/accounting/journal-entries", tags=["Accounting"], dependencies=[Depends(require_tool("list_journal_entries"))])
 def get_journal_entries(account_id: Optional[int] = None, transaction_id: Optional[str] = None):
     return handle_response(accounting.get_journal_entries.func(account_id=account_id, transaction_id=transaction_id))
 
-@app.post("/api/accounting/journal-entries", tags=["Accounting"])
+@app.post("/api/accounting/journal-entries", tags=["Accounting"], dependencies=[Depends(require_tool("record_journal_entry"))])
 def create_journal_entry(payload: JournalEntryCreate):
     # Convert Pydantic models to dicts for the tool function
     credits_dict = [item.model_dump() for item in payload.credits]

@@ -61,14 +61,22 @@ def load_profiles(path: Union[str, os.PathLike]) -> Dict[str, FrozenSet[str]]:
     Raises
     ------
     ProfileError
-        The file is missing or not valid TOML, a profile has no tool list,
-        the default profile is missing, or the file redefines ``all``.
+        The file is missing, cannot be read, is not valid UTF-8, is not
+        valid TOML, a profile has no tool list, the default profile is
+        missing, or the file redefines ``all``.
     """
     path = Path(path)
     try:
-        data = tomllib.loads(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
         raise ProfileError(f"Tool profiles file not found: {path}") from None
+    except OSError as e:
+        raise ProfileError(f"Tool profiles file {path} cannot be read: {e}") from None
+    except UnicodeDecodeError as e:
+        raise ProfileError(f"Tool profiles file {path} is not valid UTF-8: {e}") from None
+
+    try:
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
         raise ProfileError(f"Tool profiles file {path} is not valid TOML: {e}") from None
 
@@ -102,6 +110,43 @@ def check_profile_tools(profiles: Mapping[str, FrozenSet[str]], registered: Froz
         raise ProfileError(f"Tool profiles name tools the server does not have ({details})")
 
 
+def resolve_tool_profile(env: Optional[Mapping[str, str]] = None) -> ToolProfile:
+    """Resolve the profile in force without touching a server.
+
+    This is the single place the profile selection rules live, so the MCP
+    server and the REST bridge (``core/api_server.py``) cannot disagree about
+    which tools an agent may use.
+
+    Parameters
+    ----------
+    env : Mapping[str, str], optional
+        Where to read ``MCP_AGENT_PROFILE`` and ``MCP_PROFILES_FILE`` from,
+        by default ``os.environ``.
+
+    Returns
+    -------
+    ToolProfile
+        The profile now in force.
+
+    Raises
+    ------
+    ProfileError
+        The profiles file is unusable or the profile does not exist.
+    """
+    env = os.environ if env is None else env
+    profiles = load_profiles(env.get(PROFILES_FILE_ENV) or DEFAULT_PROFILES_FILE)
+
+    requested = (env.get(PROFILE_ENV) or "").strip()
+    name = requested or DEFAULT_PROFILE
+    if name == ALL_TOOLS:
+        return ToolProfile(name, None, defaulted=False)
+    if name not in profiles:
+        choices = ", ".join(sorted([*profiles, ALL_TOOLS]))
+        raise ProfileError(f"Unknown {PROFILE_ENV} '{name}'. Choose one of: {choices}")
+
+    return ToolProfile(name, profiles[name], defaulted=not requested)
+
+
 def apply_tool_profile(mcp: FastMCP, env: Optional[Mapping[str, str]] = None) -> ToolProfile:
     """Expose only the tools of the selected profile on ``mcp``.
 
@@ -124,21 +169,11 @@ def apply_tool_profile(mcp: FastMCP, env: Optional[Mapping[str, str]] = None) ->
         The profiles file is unusable or the profile does not exist. The
         server is left untouched; the caller must not start it.
     """
-    env = os.environ if env is None else env
-    profiles = load_profiles(env.get(PROFILES_FILE_ENV) or DEFAULT_PROFILES_FILE)
-
-    requested = (env.get(PROFILE_ENV) or "").strip()
-    name = requested or DEFAULT_PROFILE
-    if name == ALL_TOOLS:
-        return ToolProfile(name, None, defaulted=False)
-    if name not in profiles:
-        choices = ", ".join(sorted([*profiles, ALL_TOOLS]))
-        raise ProfileError(f"Unknown {PROFILE_ENV} '{name}'. Choose one of: {choices}")
-
-    tools = profiles[name]
-    mcp.disable(components={"tool"})
-    mcp.enable(names=set(tools))
-    return ToolProfile(name, tools, defaulted=not requested)
+    profile = resolve_tool_profile(env)
+    if profile.tools is not None:
+        mcp.disable(components={"tool"})
+        mcp.enable(names=set(profile.tools))
+    return profile
 
 
 async def registered_tool_names(mcp: FastMCP) -> FrozenSet[str]:
