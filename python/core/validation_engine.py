@@ -117,3 +117,6 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
     if tool_name == "create_new_center":
         _require_non_blank_str(params, "name")
         _require_positive_int(params, "officeId")
+
+    if tool_name == "search_report_by_name":
+        _require_non_blank_str(params, "reportName")

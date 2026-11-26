@@ -52,6 +52,7 @@ tools = [
     "list_journal_entries",
     # Reports
     "list_all_reports",
+    "search_report_by_name",
     "get_report_definition",
     "run_fineract_report",
     # Products

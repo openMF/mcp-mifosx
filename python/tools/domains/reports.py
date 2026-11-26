@@ -4,6 +4,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
+from typing import Any, Dict, List, Union
 from urllib.parse import quote
 
 from langchain_core.tools import tool
@@ -32,6 +33,40 @@ def get_report(report_id: int):
     """Answers: 'Show me the definition for report #5' or 'What parameters does this report need?'"""
     logger.info(f"[Tool] Fetching report definition #{report_id}...")
     return fineract_client.execute_get(f"reports/{report_id}")
+
+
+@tool
+def search_reports_by_name(report_name: str) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
+    """Answers: 'Find reports matching Client' or 'Search report by name'.
+    Search for a report by name. Fetches all reports server-side and returns only matches."""
+    logger.info("[Tool] Searching reports by name (query value not logged)...")
+    if not isinstance(report_name, str) or not report_name.strip():
+        return {"error": "reportName is required and cannot be blank"}
+
+    reports = fineract_client.execute_get("reports")
+    if isinstance(reports, dict) and "error" in reports:
+        return reports
+    if not isinstance(reports, list):
+        return {"error": "Unexpected response format from Fineract reports endpoint"}
+
+    search_name: str = report_name.strip().lower()
+    matches: List[Dict[str, Any]] = []
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        raw_name = report.get("reportName")
+        name = raw_name if isinstance(raw_name, str) else ""
+        if search_name in name.lower():
+            matches.append(
+                {
+                    "id": report.get("id"),
+                    "reportName": report.get("reportName"),
+                    "reportType": report.get("reportType"),
+                    "reportCategory": report.get("reportCategory"),
+                    "coreReport": report.get("coreReport"),
+                }
+            )
+    return matches
 
 
 @tool
