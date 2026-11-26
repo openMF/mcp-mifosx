@@ -54,6 +54,7 @@ go/mysql-init/
 !go/README.md
 !gateway/README.md
 !agentic-banking-openfn/README.md
+!agentic-banking-conductor/README.md
 # The sandbox's Markdown files are part of it: the agents' system prompt and
 # skills are built into their image.
 !agentic-mifos-sandbox/**/*.md
@@ -96,3 +97,6 @@ agent-skill/*.egg-info/
 !agent-skill/mifos-x-ai-agent-*/references/*.md
 
 /agentic-loan-doc-classifier/target/
+
+# Node dependencies (the sandbox's images install them from their lockfiles)
+node_modules/

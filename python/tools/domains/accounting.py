@@ -3,11 +3,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import logging
 import math
 
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
+
+logger = logging.getLogger(__name__)
 
 
 @tool
@@ -17,7 +20,7 @@ def list_gl_accounts(type: int = None):
     """
     endpoint = "glaccounts"
     if type: endpoint += f"?type={type}"
-    print("[Tool] Fetching GL Accounts...")
+    logger.info("[Tool] Fetching GL Accounts...")
     return fineract_client.execute_get(endpoint)
 
 @tool
@@ -29,7 +32,7 @@ def get_journal_entries(account_id: int = None, transaction_id: str = None):
     if transaction_id: params.append(f"transactionId={transaction_id}")
     if params: endpoint += "?" + "&".join(params)
 
-    print("[Tool] Fetching Journal Entries...")
+    logger.info("[Tool] Fetching Journal Entries...")
     return fineract_client.execute_get(endpoint)
 
 def _validate_journal_items(items: list, label: str) -> dict | None:
@@ -72,7 +75,7 @@ def create_journal_entry(office_id: int, date: str, credits: list, debits: list,
     debits_err = _validate_journal_items(debits, "debit")
     if debits_err:
         return debits_err
-    print("[Tool] Creating Journal Entry...")
+    logger.info("[Tool] Creating Journal Entry...")
     payload = {
         "officeId": office_id,
         "currencyCode": currency_code.strip(),

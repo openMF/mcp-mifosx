@@ -3,11 +3,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import logging
 from urllib.parse import quote
 
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
+
+logger = logging.getLogger(__name__)
 
 # --- REPORT READ OPERATIONS ---
 
@@ -15,7 +18,7 @@ from tools.mcp_adapter import fineract_client
 def list_reports(report_type: str = None):
     """Answers: 'What reports are available in Fineract?' or 'Show me all loan reports'.
     report_type options: 'Table', 'Chart', 'SMS', 'Text', 'Pentaho' (or None for all)."""
-    print("[Tool] Fetching all report definitions...")
+    logger.info("[Tool] Fetching all report definitions...")
     # Fineract's GET /reports has no type filter (it ignores ?type=), so filter here.
     reports = fineract_client.execute_get("reports")
     if not report_type or not isinstance(reports, list):
@@ -27,7 +30,7 @@ def list_reports(report_type: str = None):
 @tool
 def get_report(report_id: int):
     """Answers: 'Show me the definition for report #5' or 'What parameters does this report need?'"""
-    print(f"[Tool] Fetching report definition #{report_id}...")
+    logger.info(f"[Tool] Fetching report definition #{report_id}...")
     return fineract_client.execute_get(f"reports/{report_id}")
 
 
@@ -37,7 +40,7 @@ def run_report(report_name: str, params: dict = None):
     Pass report_name exactly as it appears in Fineract (e.g. 'Active Loans - Summary').
     Pass any required parameters as a dict, e.g. {'officeId': '1', 'currencyId': 'USD'};
     the R_ prefix Fineract expects is added for you."""
-    print(f"[Tool] Running report: '{report_name}'...")
+    logger.info(f"[Tool] Running report: '{report_name}'...")
     # Fineract only reads report parameters whose names start with R_ (for example
     # R_officeId) and ignores the rest, so add the prefix where it is missing.
     query_params = {
@@ -61,7 +64,7 @@ def create_report(
 ):
     """Answers: 'Register this report template in Fineract' or 'Create a new SQL report definition'.
     report_type: 'Table' | 'Chart' | 'SMS' | 'Text' | 'Pentaho'."""
-    print(f"[Tool] Creating report: '{report_name}'...")
+    logger.info(f"[Tool] Creating report: '{report_name}'...")
     payload = {
         "reportName": report_name,
         "reportType": report_type,
@@ -82,7 +85,7 @@ def update_report(
 ):
     """Answers: 'Update the SQL for report #5' or 'Rename this report'.
     Only the fields you pass will be changed."""
-    print(f"[Tool] Updating report #{report_id}...")
+    logger.info(f"[Tool] Updating report #{report_id}...")
     payload = {}
     if report_name is not None:
         payload["reportName"] = report_name
