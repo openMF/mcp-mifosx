@@ -27,12 +27,14 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import io.quarkiverse.mcp.server.Tool;
 import io.quarkiverse.mcp.server.ToolArg;
+import io.quarkiverse.mcp.server.ToolCallException;
 
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import org.jboss.logging.Logger;
@@ -436,29 +438,31 @@ public class MifosXServer {
 
         SavingsTransaction savingsTransaction = new SavingsTransaction();
 
-
-        try {
-            PaymentType matchingPaymentType = template.getPaymentTypeOptions().stream()
-                    .filter(pt -> pt.getName().equalsIgnoreCase(paymentType))
-                    .findFirst()
-                    .orElse(null);
-
-            if (matchingPaymentType != null) {
-                savingsTransaction.setPaymentTypeId(matchingPaymentType.getId());
-            }
-        } catch (NullPointerException e) {
-            log.error("The provided payment type does not match any of the available options", e);
+        List<PaymentType> paymentOptions = template != null ? template.getPaymentTypeOptions() : null;
+        if (paymentOptions == null || paymentOptions.isEmpty()) {
+            throw new ToolCallException("No payment types returned by Fineract savings transaction template");
         }
+        PaymentType matchingPaymentType = paymentOptions.stream()
+                .filter(pt -> pt.getName() != null && pt.getName().equalsIgnoreCase(paymentType))
+                .findFirst()
+                .orElseThrow(() -> new ToolCallException(
+                        "Invalid paymentType '" + paymentType + "'. Available options: "
+                                + paymentOptions.stream().map(PaymentType::getName).toList()));
+        savingsTransaction.setPaymentTypeId(matchingPaymentType.getId());
 
         savingsTransaction.setDateFormat("dd MMMM yyyy");
         savingsTransaction.setLocale("en");
         savingsTransaction.setNote(Optional.ofNullable(note).orElse(""));
 
         savingsTransaction.setTransactionAmount(transactionAmount);
-        savingsTransaction.setTransactionDate(Optional.ofNullable(transactionDate).orElse(template.getDate()));
+        String resolvedDate = transactionDate != null && !transactionDate.isBlank()
+                ? transactionDate
+                : (template.getDate() != null && !template.getDate().isBlank()
+                        ? template.getDate()
+                        : LocalDate.now().format(DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.ENGLISH)));
+        savingsTransaction.setTransactionDate(resolvedDate);
 
         String jsonSavingsTransaction = ow.writeValueAsString(savingsTransaction);
-        jsonSavingsTransaction = jsonSavingsTransaction.replace(":null", ":\"\"");
 
         return mifosXClient.newSavingsTransaction(accountId, transaction.toLowerCase(), jsonSavingsTransaction);
     }
@@ -788,18 +792,20 @@ public class MifosXServer {
         return mifosXClient.getChargeById(chargeId);
     }
 
-    @Tool(description = "Create a new charge definition. chargeAppliesTo: 1=Loan, 2=Savings, 3=Client. " +
-            "chargeTimeType: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee. " +
+    @Tool(description = "Create a new charge definition. chargeAppliesTo: 1=Loan, 2=Savings, 3=Client, 4=Shares. " +
+            "chargeTimeType: 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee, " +
+            "8=Installment Fee, 9=Overdue Installment Fee. " +
             "chargeCalculationType: 1=Flat, 2=% of Amount")
     JsonNode createCharge(
             @ToolArg(description = "Name of the charge (e.g. \"Late Payment Fee\")", required = true) String name,
             @ToolArg(description = "Amount of the charge (e.g. \"100\")", required = true) String amount,
             @ToolArg(description = "Currency code (e.g. \"USD\")", required = true) String currencyCode,
-            @ToolArg(description = "What the charge applies to: 1=Loan, 2=Savings, 3=Client", required = true) Integer chargeAppliesTo,
-            @ToolArg(description = "When the charge is applied: 1=Disbursement, 2=Specified Due Date, 8=Savings Activation, 9=Withdrawal Fee", required = true) Integer chargeTimeType,
+            @ToolArg(description = "What the charge applies to: 1=Loan, 2=Savings, 3=Client, 4=Shares", required = true) Integer chargeAppliesTo,
+            @ToolArg(description = "When the charge is applied (e.g. 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee, 8=Installment Fee)", required = true) Integer chargeTimeType,
             @ToolArg(description = "How the charge is calculated: 1=Flat, 2=% of Amount", required = true) Integer chargeCalculationType,
             @ToolArg(description = "Whether the charge is a penalty (true/false)", required = false) String penalty,
-            @ToolArg(description = "Whether the charge is active (true/false)", required = false) String active
+            @ToolArg(description = "Whether the charge is active (true/false)", required = false) String active,
+            @ToolArg(description = "How the charge is paid (required for Loan charges: 0=Regular, 1=Account Transfer)", required = false) Integer chargePaymentMode
     ) throws JsonProcessingException {
         Charge charge = new Charge();
         charge.setName(name);
@@ -808,10 +814,19 @@ public class MifosXServer {
         charge.setChargeAppliesTo(chargeAppliesTo);
         charge.setChargeTimeType(chargeTimeType);
         charge.setChargeCalculationType(chargeCalculationType);
+        if (chargePaymentMode != null) {
+            if (chargePaymentMode != 0 && chargePaymentMode != 1) {
+                throw new ToolCallException(
+                        "Invalid chargePaymentMode '" + chargePaymentMode
+                                + "'. Supported values: 0 (Regular), 1 (Account Transfer)");
+            }
+            charge.setChargePaymentMode(chargePaymentMode);
+        } else if (Integer.valueOf(1).equals(chargeAppliesTo)) {
+            charge.setChargePaymentMode(0);
+        }
         charge.setPenalty(Optional.ofNullable(penalty).orElse("false"));
         charge.setActive(Optional.ofNullable(active).orElse("true"));
         charge.setLocale("en");
-        charge.setMonthDayFormat("dd MMM");
 
         ObjectWriter ow = new ObjectMapper().writer().withDefaultPrettyPrinter();
         String jsonCharge = ow.writeValueAsString(charge);
