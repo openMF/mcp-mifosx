@@ -903,7 +903,7 @@ def get_savings(accountId: int) -> dict:
 @mcp.tool()
 @safe_tool("get_savings_txns")
 def get_savings_txns(accountId: int) -> dict:
-    """Get transactions for a savings account."""
+    """Get transactions for a savings account. Reversed (undone) transactions are left out."""
     txns = get_savings_transactions.func(accountId)
     # The list of transactions, or the adapter's {"error": ...}.
     if not isinstance(txns, list):
@@ -920,7 +920,7 @@ def get_savings_txns(accountId: int) -> dict:
                 "amount":          t.get("amount"),
                 "runningBalance":  t.get("runningBalance"),
             }
-            for t in txns
+            for t in txns if not t.get("reversed", False)  # skip reversed transactions
         ],
     }
 
