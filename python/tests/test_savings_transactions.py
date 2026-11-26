@@ -83,6 +83,16 @@ def test_account_without_transactions() -> None:
     assert _call({"id": 7, "accountNo": "000000007"}) == {"savingsId": 7, "currency": None, "transactions": []}
 
 
+def test_reversed_transactions_are_left_out() -> None:
+    # An undone deposit is still in Fineract's list with reversed: true.
+    reversed_deposit = {**ACCOUNT["transactions"][1], "id": 13, "amount": 500.0, "runningBalance": 0.0,
+                        "reversed": True}
+    account = {**ACCOUNT, "transactions": [reversed_deposit, *ACCOUNT["transactions"]]}
+
+    ids = [t["transactionId"] for t in _call(account)["transactions"]]
+    assert ids == [12, 11]
+
+
 def test_unknown_account_is_an_error() -> None:
     result = _call({"error": "Savings account with identifier 7 does not exist", "status_code": 404})
     assert result == {"error": "Savings account with identifier 7 does not exist"}
