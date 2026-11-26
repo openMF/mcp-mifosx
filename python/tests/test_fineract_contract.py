@@ -55,9 +55,11 @@ class Scenario:
 
 
 SCENARIOS: List[Scenario] = [
-    Scenario("create_new_charge-loan", "create_new_charge", "charge.create", {"name": "Late payment fee", "amount": 15}),
+    Scenario("create_new_charge-loan", "create_new_charge", "charge.create",
+             {"name": "Late payment fee", "amount": 15, "currencyCode": "USD"}),
     Scenario("create_new_charge-savings", "create_new_charge", "charge.create",
-             {"name": "Withdrawal fee", "amount": 2, "chargeAppliesTo": 2, "chargeTimeType": 5}),
+             {"name": "Withdrawal fee", "amount": 2, "currencyCode": "USD", "chargeAppliesTo": 2,
+              "chargeTimeType": 5}),
     Scenario("close_client_profile", "close_client_profile", "client.close",
              {"clientId": 5, "closureReasonId": 41}, {"closureReasonId": "closureReasonId"}),
     Scenario("deposit", "deposit", "savings.deposit",

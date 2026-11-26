@@ -1145,14 +1145,16 @@ def get_charge(chargeId: int) -> dict:
 
 @mcp.tool()
 @safe_tool("create_new_charge")
-def create_new_charge(name: str, amount: float, currencyCode: str = "USD",
+def create_new_charge(name: str, amount: float, currencyCode: str,
                       chargeAppliesTo: int = 1, chargeTimeType: int = 2,
                       chargeCalculationType: int = 1, isPenalty: bool = False,
                       isActive: bool = True) -> dict:
     """Create a new charge definition.
     chargeAppliesTo: 1=Loan, 2=Savings, 3=Client
     chargeTimeType: 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee
-    chargeCalculationType: 1=Flat, 2=% of Amount"""
+    chargeCalculationType: 1=Flat, 2=% of Amount
+    currencyCode is the charge's currency (e.g. "USD"); a charge can only be applied to an account
+    in the same currency, so use the currency of the loans or savings it is meant for."""
     return create_charge_domain.func(name, amount, currencyCode, chargeAppliesTo,
                                      chargeTimeType, chargeCalculationType, isPenalty, isActive)
 

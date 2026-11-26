@@ -94,6 +94,9 @@ def validate_input(tool_name: str, params: Dict[str, Any]) -> None:
         _require_journal_entry_items(params, "credits")
         _require_journal_entry_items(params, "debits")
 
+    if tool_name == "create_new_charge":
+        _require_non_blank_str(params, "currencyCode")
+
     if tool_name == "deposit":
         _require_positive_number(params, "amount")
 
