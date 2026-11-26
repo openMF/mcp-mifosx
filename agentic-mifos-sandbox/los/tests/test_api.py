@@ -613,6 +613,50 @@ def test_the_same_check_again_changes_nothing(client):
     assert events(client, opportunity) == trail
 
 
+def test_the_same_result_with_other_values_read_is_a_new_check(client):
+    opportunity, document = in_documents(client)
+    reasons = [{"code": "expired", "detail": "issued 45 days ago (at most 30)"}]
+    first = check(client, opportunity, document, {"result": "request_document", "reasons": reasons, "extracted": {"issueDate": "2026-09-01"}})
+    again = check(client, opportunity, document, {"result": "request_document", "reasons": reasons, "extracted": {"issueDate": "2026-09-02"}})
+    assert (first.status_code, again.status_code) == (200, 200)
+    assert again.json()["document"]["extracted"] == {"issueDate": "2026-09-02"}
+    assert len([e for e in events(client, opportunity) if e["action"] == "document_checked"]) == 2
+
+
+def test_values_read_are_compared_as_json(client):
+    """true is not 1 (Python's == says it is); key order does not matter."""
+    opportunity, document = in_documents(client)
+    reasons = [{"code": "not_certified", "detail": "no certification by the civil registry"}]
+    body = {"result": "request_document", "reasons": reasons}
+    assert check(client, opportunity, document, {**body, "extracted": {"civilRegistryVerified": True, "fullName": "ANA"}}).status_code == 200
+    changed = check(client, opportunity, document, {**body, "extracted": {"civilRegistryVerified": 1, "fullName": "ANA"}})
+    assert (changed.status_code, changed.json()["document"]["extracted"]["civilRegistryVerified"]) == (200, 1)
+    assert len([e for e in events(client, opportunity) if e["action"] == "document_checked"]) == 2
+    reordered = check(client, opportunity, document, {**body, "extracted": {"fullName": "ANA", "civilRegistryVerified": 1}})
+    assert reordered.status_code == 200
+    assert len([e for e in events(client, opportunity) if e["action"] == "document_checked"]) == 2
+
+
+def test_the_same_check_after_the_curp_or_name_changed_is_refused(client):
+    opportunity, document = in_documents(client)
+    body = {"result": "request_document", "reasons": [{"code": "unreadable", "detail": "blurred"}]}
+    assert check(client, opportunity, document, body).status_code == 200
+    assert client.patch(f"/opportunities/{opportunity['id']}", json={"full_name": "Ana María López"}).status_code == 200
+    trail = events(client, opportunity)
+    again = check(client, opportunity, document, body)
+    assert again.status_code == 409
+    assert "changed since the check compared them" in again.json()["detail"]
+    assert events(client, opportunity) == trail
+
+
+def test_a_retry_after_the_opportunity_moved_on_and_changed_is_refused(client):
+    opportunity, document = in_documents(client)
+    assert check(client, opportunity, document, {"result": "valid"}).status_code == 200
+    assert client.patch(f"/opportunities/{opportunity['id']}", json={"full_name": "Ana María López"}).status_code == 200
+    assert check(client, opportunity, document, {"result": "valid"}).status_code == 409
+    assert (documents(client, opportunity)[0]["check_result"], opportunity_of(client, opportunity)["stage"]) == ("valid", "assessing")
+
+
 @pytest.mark.parametrize("body", [
     {"result": "approved"},
     {"result": "valid", "reasons": [{"code": "Not A Code", "detail": "x"}]},
@@ -809,10 +853,14 @@ def test_a_reject_pauses_the_opportunity_with_its_reasons(client, assessment):
 def test_the_event_names_the_recommendation_and_codes_but_not_the_bureau(client, assessment):
     opportunity = in_assessing(client)
     assess(client, opportunity, "reject", LOW, headers=assessment)
-    assessed = next(e for e in events(client, opportunity) if e["action"] == "assessed")
+    trail = events(client, opportunity)
+    assessed = next(e for e in trail if e["action"] == "assessed")
     assert (assessed["actor"], assessed["detail"]["recommendation"], assessed["detail"]["reasons"]) == (
         "assessment", "reject", ["bureau_score_low", "high_amount"])
-    assert "520" not in json.dumps(events(client, opportunity))
+    # Exact details, not a search for the score's digits: ids could hold "520" by chance
+    assert set(assessed["detail"]) == {"assessment_id", "recommendation", "reasons"}
+    assert trail[-1]["detail"] == {"reason_code": "bureau_score_low"}
+    assert "simulated-bureau" not in json.dumps(trail)
 
 
 def test_consent_missing_is_recorded_without_a_bureau_result(client, assessment):
@@ -821,6 +869,30 @@ def test_consent_missing_is_recorded_without_a_bureau_result(client, assessment)
     response = assess(client, opportunity, "consent_missing", reasons, headers=assessment)
     assert response.status_code == 200, response.text
     assert (response.json()["assessment"]["bureau"], response.json()["opportunity"]["stage"]) == (None, "assessing")
+
+
+def test_consent_missing_is_refused_once_the_consent_is_recorded(client, assessment):
+    opportunity = in_assessing(client, consent=False)
+    client.post(f"/opportunities/{opportunity['id']}/consents/bureau")  # recorded while the assessment ran
+    trail = events(client, opportunity)
+    reasons = [{"code": "consent_missing", "detail": "no bureau consent recorded"}]
+    response = assess(client, opportunity, "consent_missing", reasons, headers=assessment)
+    assert response.status_code == 409
+    assert "bureau consent is recorded now" in response.json()["detail"]
+    assert client.get(f"/opportunities/{opportunity['id']}/assessments").json()["assessments"] == []
+    assert events(client, opportunity) == trail
+
+
+def test_consent_missing_sent_again_with_its_id_after_the_consent_changes_nothing(client, assessment):
+    opportunity = in_assessing(client, consent=False)
+    same = str(uuid.uuid4())
+    reasons = [{"code": "consent_missing", "detail": "no bureau consent recorded"}]
+    assert assess(client, opportunity, "consent_missing", reasons, headers=assessment, id=same).status_code == 200
+    client.post(f"/opportunities/{opportunity['id']}/consents/bureau")
+    trail = events(client, opportunity)
+    assert assess(client, opportunity, "consent_missing", reasons, headers=assessment, id=same).status_code == 200
+    assert len(client.get(f"/opportunities/{opportunity['id']}/assessments").json()["assessments"]) == 1
+    assert events(client, opportunity) == trail
 
 
 def test_a_bureau_based_assessment_without_consent_is_refused(client, assessment):
@@ -851,6 +923,14 @@ def test_the_same_assessment_again_with_its_id_changes_nothing(client, assessmen
     again = assess(client, opportunity, "reject", LOW, headers=assessment, id=same)
     assert (again.status_code, again.json()["opportunity"]["stage"]) == (200, "paused")
     assert events(client, opportunity) == trail
+
+
+def test_an_id_already_recorded_with_true_sent_as_1_is_other_content(client, assessment):
+    opportunity = in_assessing(client)
+    same = str(uuid.uuid4())
+    assert assess(client, opportunity, "approve", headers=assessment, id=same).status_code == 200
+    other = assess(client, opportunity, "approve", headers=assessment, id=same, bureau={**BUREAU, "simulated": 1})
+    assert other.status_code == 409
 
 
 def test_an_id_already_recorded_with_other_content_is_refused(client, assessment):
