@@ -196,12 +196,20 @@ def _fmt_date(d) -> str:
     months = ["","January","February","March","April","May","June",
               "July","August","September","October","November","December"]
     if isinstance(d, list) and len(d) >= 3:
-        return f"{d[2]} {months[d[1]]} {d[0]}"
+        try:
+            month_idx = int(d[1])
+            if 1 <= month_idx <= 12:
+                return f"{d[2]} {months[month_idx]} {d[0]}"
+        except (TypeError, ValueError):
+            pass
+        return d
     if isinstance(d, str) and "-" in d:
         parts = d.split("-")
         if len(parts) == 3:
             try:
-                return f"{int(parts[2])} {months[int(parts[1])]} {parts[0]}"
+                month_idx = int(parts[1])
+                if 1 <= month_idx <= 12:
+                    return f"{int(parts[2])} {months[month_idx]} {parts[0]}"
             except (ValueError, IndexError):
                 pass
     return d
