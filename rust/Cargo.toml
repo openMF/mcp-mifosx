@@ -32,7 +32,9 @@ candle-transformers = "0.11"
 tokenizers = "0.23"
 # hf-hub 1.0 is a rewrite: it has no `tokio` feature and no `api::tokio::Api`, which
 # embeddings.rs uses. Stay on 0.5 (the version Cargo.lock has) until that code is ported.
-hf-hub = { version = "0.5", default-features = false, features = ["tokio"] }
+# `rustls-tls` gives hf-hub's own reqwest (0.12, separate from ours) a TLS backend;
+# without it the model download over HTTPS fails and semantic routing never loads.
+hf-hub = { version = "0.5", default-features = false, features = ["tokio", "rustls-tls"] }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
