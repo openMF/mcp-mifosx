@@ -6,6 +6,7 @@ on:
     paths:
       - 'agentic-mifos-sandbox/**'
       - 'agentic-banking-openfn/openfn/project.yaml'
+      - 'agentic-banking-conductor/**'
       - '.github/workflows/sandbox-ci.yml'
       # The demo draws its constancia with Pillow in the MCP server's image.
       - 'python/requirements.txt'
@@ -15,6 +16,7 @@ on:
     paths:
       - 'agentic-mifos-sandbox/**'
       - 'agentic-banking-openfn/openfn/project.yaml'
+      - 'agentic-banking-conductor/**'
       - '.github/workflows/sandbox-ci.yml'
       # The demo draws its constancia with Pillow in the MCP server's image.
       - 'python/requirements.txt'
@@ -41,13 +43,13 @@ jobs:
 
       - name: Check the hardening baseline
         run: |
-          docker compose --profile ollama --profile agents config --format json > "$RUNNER_TEMP/compose.json"
+          docker compose --profile ollama --profile agents --profile conductor config --format json > "$RUNNER_TEMP/compose.json"
           python3 scripts/check-hardening.py < "$RUNNER_TEMP/compose.json"
 
       # The only route out the OpenFn worker can be given: an Ollama on the host.
       - name: Check the hardening baseline with docker-compose.host-ollama.yml
         run: |
-          docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml --profile ollama --profile agents \
+          docker compose -f docker-compose.yml -f docker-compose.host-ollama.yml --profile ollama --profile agents --profile conductor \
             config --format json > "$RUNNER_TEMP/compose-host-ollama.json"
           python3 scripts/check-hardening.py < "$RUNNER_TEMP/compose-host-ollama.json"
 
@@ -144,6 +146,50 @@ jobs:
           push: false
           cache-from: type=gha,scope=sandbox-worker
           cache-to: type=gha,mode=max,scope=sandbox-worker
+
+  conductor-tests:
+    name: Conductor worker tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agentic-banking-conductor
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      # npm ci fails when package-lock.json no longer matches package.json.
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      # The jobs' rules against a stand-in LOS, the entry against a stand-in
+      # Conductor, and the definitions against the workers and the entry.
+      - name: Test the workers, the entry and the definitions
+        run: node --test tests/*.test.mjs
+
+  conductor-image:
+    name: Build Conductor image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Build Docker image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        with:
+          context: agentic-banking-conductor
+          push: false
+          cache-from: type=gha,scope=sandbox-conductor
+          cache-to: type=gha,mode=max,scope=sandbox-conductor
 
   demo:
     name: Demo script
