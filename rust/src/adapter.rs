@@ -116,11 +116,98 @@ impl FineractAdapter {
         Self::handle_response(res).await
     }
 
+    /// Adapter pointed at `base_url` with the default tenant, without reading the
+    /// environment. Used by tests that run the tools against a local stub server.
+    #[cfg(test)]
+    pub fn with_base_url(base_url: &str) -> Self {
+        Self { base_url: base_url.to_string(), tenant_id: "default".to_string(), client: Client::new() }
+    }
+
     #[allow(dead_code)]
     pub async fn execute_delete(&self, endpoint: &str) -> Result<Value> {
         tracing::info!("Executing DELETE: {}/{}", self.base_url, endpoint);
         let req = self.prepare_request(Method::DELETE, endpoint);
         let res = req.send().await?;
         Self::handle_response(res).await
+    }
+}
+
+/// A local stand-in for Fineract, for offline tests of the tools.
+///
+/// It records every request it receives (method, path with query, JSON body) so a
+/// test can check exactly what a tool sent, or that it sent nothing. `GET paymenttypes`
+/// answers with the configured payment types, or HTTP 500 when there are none
+/// configured (`None`); every other request answers `{"resourceId": 1}`.
+#[cfg(test)]
+pub mod stub {
+    use super::FineractAdapter;
+    use axum::{
+        body::Bytes,
+        http::{Method, StatusCode, Uri},
+        Json, Router,
+    };
+    use serde_json::{json, Value};
+    use std::sync::{Arc, Mutex};
+
+    /// One request the stub received.
+    #[derive(Debug, Clone)]
+    pub struct Recorded {
+        pub method: String,
+        /// Path and query, e.g. `/savingsaccounts/3/transactions?command=deposit`.
+        pub path: String,
+        /// JSON body, or `Value::Null` when there was none.
+        pub body: Value,
+    }
+
+    /// A running stub: an adapter pointed at it, and the requests it has received.
+    pub struct Stub {
+        pub adapter: FineractAdapter,
+        pub requests: Arc<Mutex<Vec<Recorded>>>,
+    }
+
+    impl Stub {
+        /// Requests received so far, in order.
+        pub fn requests(&self) -> Vec<Recorded> {
+            self.requests.lock().unwrap().clone()
+        }
+
+        /// Requests received so far with the given method.
+        pub fn requests_with(&self, method: &str) -> Vec<Recorded> {
+            self.requests().into_iter().filter(|r| r.method == method).collect()
+        }
+    }
+
+    /// Starts a stub on a free local port. `payment_types` is what `GET paymenttypes`
+    /// returns; `None` makes that request fail with HTTP 500.
+    pub async fn start(payment_types: Option<Value>) -> Stub {
+        let requests: Arc<Mutex<Vec<Recorded>>> = Arc::default();
+        let log = requests.clone();
+        let app = Router::new().fallback(move |method: Method, uri: Uri, body: Bytes| {
+            let log = log.clone();
+            let payment_types = payment_types.clone();
+            async move {
+                let path = uri.path_and_query().map(|p| p.to_string()).unwrap_or_default();
+                let body = serde_json::from_slice(&body).unwrap_or(Value::Null);
+                log.lock().unwrap().push(Recorded { method: method.to_string(), path: path.clone(), body });
+                if method == Method::GET && uri.path() == "/paymenttypes" {
+                    return match payment_types {
+                        Some(types) => (StatusCode::OK, Json(types)),
+                        None => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"developerMessage": "database unavailable"}))),
+                    };
+                }
+                (StatusCode::OK, Json(json!({"resourceId": 1})))
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        Stub { adapter: FineractAdapter::with_base_url(&format!("http://{addr}")), requests }
+    }
+
+    /// The text and `isError` flag of a tool result, read from its JSON form.
+    pub fn result_text(result: &rmcp::model::CallToolResult) -> (String, bool) {
+        let value = serde_json::to_value(result).unwrap();
+        let text = value["content"][0]["text"].as_str().unwrap_or_default().to_string();
+        (text, value["isError"].as_bool().unwrap_or(false))
     }
 }

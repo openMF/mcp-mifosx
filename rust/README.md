@@ -166,7 +166,7 @@ The Rust server categorizes tools into domains for easier discovery.
 | `create_group_loan` | Create a group loan application |
 | `approve_and_disburse_loan` | Approve and disburse a pending loan |
 | `reject_loan_application` | Reject a pending loan application |
-| `make_loan_repayment` | Make a repayment on an active loan |
+| `make_loan_repayment` | Make a repayment on an active loan (optional `payment_type_id`) |
 | `apply_late_fee` | Apply a fee/charge to a loan |
 | `waive_interest` | Waive interest on a loan |
 | `update_loan` | **Robust** update (handles mandatory financial baseline) |
@@ -187,8 +187,8 @@ The Rust server categorizes tools into domains for easier discovery.
 | `create_savings_account` | Create a new savings account |
 | `approve_and_activate_savings` | Approve and activate a savings account |
 | `close_savings_account` | Close a savings account |
-| `deposit_savings` | Deposit money into a savings account |
-| `withdraw_savings` | Withdraw money from a savings account |
+| `deposit_savings` | Deposit money into a savings account (needs `payment_type_id`; without it, lists the payment types) |
+| `withdraw_savings` | Withdraw money from a savings account (needs `payment_type_id`; without it, lists the payment types) |
 | `apply_savings_charge` | Apply a charge to a savings account |
 | `calculate_and_post_interest` | Post accrued interest to a savings account |
 | `list_savings_products` | List all available savings products |
@@ -235,7 +235,7 @@ High-performance tools that process multiple IDs in parallel.
 | `bulk_close_accounts` | Close multiple accounts in parallel |
 | `bulk_create_savings_accounts` | Create multiple savings accounts concurrently |
 | `bulk_approve_and_activate_savings` | Batch activate savings accounts |
-| `bulk_deposit_savings` | Parallel deposit into multiple accounts |
+| `bulk_deposit_savings` | Parallel deposit into multiple accounts (each needs `payment_type_id`; if one is missing, nothing is posted) |
 
 ### 🔍 System & Pruning (1 tool)
 

@@ -33,7 +33,12 @@ pub struct ApproveLoanReq { pub loan_id: i64, pub amount_exactly_from_user_promp
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RejectLoanReq { pub loan_id: i64, pub note: Option<String> }
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RepaymentReq { pub loan_id: i64, pub amount_exactly_from_user_prompt: f64 }
+pub struct RepaymentReq {
+    pub loan_id: i64,
+    pub amount_exactly_from_user_prompt: f64,
+    #[schemars(description = "Id of the Fineract payment type (how the money arrived), if the user said. Ids are different on every server. Leave it out when unknown; the repayment is then recorded without one.")]
+    pub payment_type_id: Option<i64>,
+}
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ApplyLateFeeReq { pub loan_id: i64, pub amount_exactly_from_user_prompt: f64, pub charge_id: Option<i64> }
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -173,8 +178,21 @@ pub async fn reject_loan_application(adapter: &FineractAdapter, req: RejectLoanR
     to_result(res)
 }
 
+/// Body of a loan repayment, posted to `loans/{id}/transactions?command=repayment`.
+///
+/// Fineract does not require a payment type on a loan repayment, so `paymentTypeId` is
+/// sent only when the caller gave one. Ids are tenant-specific; guessing one would
+/// record the repayment under whatever type happens to have that id.
+pub fn repayment_payload(date: &str, amount: f64, payment_type_id: Option<i64>) -> serde_json::Value {
+    let mut payload = json!({"transactionDate": date, "transactionAmount": amount, "dateFormat": "dd MMMM yyyy", "locale": "en"});
+    if let Some(id) = payment_type_id {
+        payload["paymentTypeId"] = json!(id);
+    }
+    payload
+}
+
 pub async fn make_loan_repayment(adapter: &FineractAdapter, req: RepaymentReq) -> Result<CallToolResult, McpError> {
-    let payload = json!({"transactionDate": today(), "transactionAmount": req.amount_exactly_from_user_prompt, "dateFormat": "dd MMMM yyyy", "locale": "en", "paymentTypeId": 1});
+    let payload = repayment_payload(&today(), req.amount_exactly_from_user_prompt, req.payment_type_id);
     let res = adapter.execute_post(&format!("loans/{}/transactions?command=repayment", req.loan_id), &payload).await.map_err(to_err)?;
     to_result(res)
 }
@@ -189,4 +207,44 @@ pub async fn waive_interest(adapter: &FineractAdapter, req: WaiveInterestReq) ->
     let payload = json!({"transactionDate": today(), "transactionAmount": req.amount_exactly_from_user_prompt, "note": req.note.unwrap_or("AI Authorized Waiver".into()), "dateFormat": "dd MMMM yyyy", "locale": "en"});
     let res = adapter.execute_post(&format!("loans/{}/transactions?command=waiveinterest", req.loan_id), &payload).await.map_err(to_err)?;
     to_result(res)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapter::stub;
+
+    #[test]
+    fn repayment_payload_sends_the_given_payment_type() {
+        let payload = repayment_payload("26 November 2026", 250.0, Some(4));
+        assert_eq!(payload["paymentTypeId"], 4);
+    }
+
+    #[test]
+    fn repayment_payload_leaves_out_a_missing_payment_type() {
+        let payload = repayment_payload("26 November 2026", 250.0, None);
+        assert!(payload.get("paymentTypeId").is_none());
+        assert_eq!(payload["transactionAmount"], 250.0);
+    }
+
+    #[tokio::test]
+    async fn repayment_without_a_payment_type_is_posted_without_one() {
+        let stub = stub::start(Some(json!([]))).await;
+        let req = RepaymentReq { loan_id: 7, amount_exactly_from_user_prompt: 250.0, payment_type_id: None };
+        make_loan_repayment(&stub.adapter, req).await.unwrap();
+
+        let posts = stub.requests_with("POST");
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].path, "/loans/7/transactions?command=repayment");
+        assert!(posts[0].body.get("paymentTypeId").is_none());
+    }
+
+    #[tokio::test]
+    async fn repayment_posts_the_payment_type_it_was_given() {
+        let stub = stub::start(Some(json!([]))).await;
+        let req = RepaymentReq { loan_id: 7, amount_exactly_from_user_prompt: 250.0, payment_type_id: Some(4) };
+        make_loan_repayment(&stub.adapter, req).await.unwrap();
+
+        assert_eq!(stub.requests_with("POST")[0].body["paymentTypeId"], 4);
+    }
 }
