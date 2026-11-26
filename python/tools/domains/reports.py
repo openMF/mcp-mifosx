@@ -52,6 +52,16 @@ def run_report(report_name: str, params: dict = None):
     return fineract_client.execute_get(f"runreports/{quote(report_name, safe='')}", params=query_params)
 
 
+VALID_REPORT_TYPES = ("Table", "Chart", "SMS", "Text", "Pentaho")
+_REPORT_TYPES_BY_LOWER = {rt.lower(): rt for rt in VALID_REPORT_TYPES}
+
+
+def _normalize_report_type(report_type: str) -> str:
+    if not isinstance(report_type, str) or not report_type.strip():
+        return ""
+    return _REPORT_TYPES_BY_LOWER.get(report_type.strip().lower(), "")
+
+
 # --- REPORT WRITE OPERATIONS ---
 
 @tool
@@ -64,12 +74,19 @@ def create_report(
 ):
     """Answers: 'Register this report template in Fineract' or 'Create a new SQL report definition'.
     report_type: 'Table' | 'Chart' | 'SMS' | 'Text' | 'Pentaho'."""
-    logger.info(f"[Tool] Creating report: '{report_name}'...")
+    if not isinstance(report_name, str) or not report_name.strip():
+        return {"error": "report_name is required and cannot be blank."}
+    normalized_type = _normalize_report_type(report_type)
+    if not normalized_type:
+        return {"error": f"Invalid report_type: {report_type!r}. Must be one of: {', '.join(VALID_REPORT_TYPES)}."}
+    if not isinstance(report_sql, str) or not report_sql.strip():
+        return {"error": "report_sql is required and cannot be blank."}
+    logger.info(f"[Tool] Creating report: '{report_name.strip()}'...")
     payload = {
-        "reportName": report_name,
-        "reportType": report_type,
+        "reportName": report_name.strip(),
+        "reportType": normalized_type,
         "reportSql": report_sql,
-        "description": description,
+        "description": description if description is not None else "",
         "useReport": use_report,
     }
     return fineract_client.execute_post("reports", payload)
@@ -85,14 +102,25 @@ def update_report(
 ):
     """Answers: 'Update the SQL for report #5' or 'Rename this report'.
     Only the fields you pass will be changed."""
+    if not isinstance(report_id, int) or isinstance(report_id, bool) or report_id <= 0:
+        return {"error": f"Invalid report_id: {report_id}. Must be a positive integer."}
     logger.info(f"[Tool] Updating report #{report_id}...")
     payload = {}
     if report_name is not None:
-        payload["reportName"] = report_name
+        if not isinstance(report_name, str) or not report_name.strip():
+            return {"error": "report_name cannot be blank when provided."}
+        payload["reportName"] = report_name.strip()
     if report_type is not None:
-        payload["reportType"] = report_type
+        normalized_type = _normalize_report_type(report_type)
+        if not normalized_type:
+            return {"error": f"Invalid report_type: {report_type!r}. Must be one of: {', '.join(VALID_REPORT_TYPES)}."}
+        payload["reportType"] = normalized_type
     if report_sql is not None:
+        if not isinstance(report_sql, str) or not report_sql.strip():
+            return {"error": "report_sql cannot be blank when provided."}
         payload["reportSql"] = report_sql
     if description is not None:
         payload["description"] = description
+    if not payload:
+        return {"error": "Provide at least one field to update: report_name, report_type, report_sql, or description."}
     return fineract_client.execute_put(f"reports/{report_id}", payload)

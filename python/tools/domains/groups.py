@@ -30,16 +30,31 @@ def get_group(group_id: int):
     logger.info(f"[Tool] Fetching details for Group #{group_id}...")
     return fineract_client.execute_get(f"groups/{group_id}?associations=all")
 
+def _build_entity_payload(entity_label: str, name: str, office_id: int, external_id: str = None) -> dict:
+    """Validate and build the Fineract POST payload for creating a group or center."""
+    if not isinstance(name, str) or not name.strip():
+        return {"error": f"{entity_label} name is required and cannot be blank."}
+    if isinstance(office_id, bool) or not isinstance(office_id, int) or office_id <= 0:
+        return {"error": f"Invalid office_id: {office_id}. Must be a positive integer."}
+    payload = {
+        "name": name.strip(),
+        "officeId": office_id,
+        "active": False,
+    }
+    if external_id is not None:
+        if not isinstance(external_id, str) or not external_id.strip():
+            return {"error": "external_id cannot be blank when provided."}
+        payload["externalId"] = external_id.strip()
+    return payload
+
+
 @tool
 def create_group(name: str, office_id: int, external_id: str = None):
     """Answers: 'Create a new lending group named "Alpha Group" in office 1'"""
     logger.info(f"[Tool] Creating Group '{name}'...")
-    payload = {
-        "name": name,
-        "officeId": office_id,
-        "active": False,
-        "externalId": external_id
-    }
+    payload = _build_entity_payload("Group", name, office_id, external_id)
+    if "error" in payload:
+        return payload
     return fineract_client.execute_post("groups", payload)
 
 @tool
@@ -82,10 +97,7 @@ def get_center(center_id: int):
 def create_center(name: str, office_id: int, external_id: str = None):
     """Answers: 'Create a new center named "Main Center" in office 1'"""
     logger.info(f"[Tool] Creating Center '{name}'...")
-    payload = {
-        "name": name,
-        "officeId": office_id,
-        "active": False,
-        "externalId": external_id
-    }
+    payload = _build_entity_payload("Center", name, office_id, external_id)
+    if "error" in payload:
+        return payload
     return fineract_client.execute_post("centers", payload)
