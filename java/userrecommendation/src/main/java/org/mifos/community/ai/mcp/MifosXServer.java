@@ -27,14 +27,18 @@ import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import io.quarkiverse.mcp.server.Tool;
 import io.quarkiverse.mcp.server.ToolArg;
+import io.quarkiverse.mcp.server.ToolCallException;
 
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.jboss.logging.Logger;
 
 import org.mifos.community.ai.mcp.client.MifosXClient;
@@ -108,9 +112,7 @@ public class MifosXServer {
         client.setActive(false);        
         client.setDateFormat("yyyy-MM-dd");
         client.setLocale("en");
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern(client.getDateFormat());
-        String formattedDate = currentDate.format(dtf);
+        String formattedDate = todayFormatted(client.getDateFormat());
         client.setActivationDate(formattedDate);
         client.setSubmittedOnDate(formattedDate);
         ArrayList<FamilyMember> familyMembers = new ArrayList<FamilyMember>();
@@ -132,10 +134,7 @@ public class MifosXServer {
             clientActivation.setActivationDate(activationDate);
         }
         else {
-            LocalDate currentDate = LocalDate.now();
-            DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-            String formattedDate = currentDate.format(dtf);
-            clientActivation.setActivationDate(formattedDate);
+            clientActivation.setActivationDate(todayFormatted("dd MMMM yyyy"));
         }
         clientActivation.setDateFormat("dd MMMM yyyy");
         clientActivation.setLocale("en");
@@ -199,8 +198,8 @@ public class MifosXServer {
             @ToolArg(description = "Locale (e.g. en)",required = false) String locale) throws JsonProcessingException {
         FamilyMember familyMember = new FamilyMember();
 
-        familyMember.setIsDependent(isDependent.equalsIgnoreCase("dependent") ||
-                isDependent.equalsIgnoreCase("is dependent") ? "true" : "false");
+        familyMember.setIsDependent(isDependent != null && (isDependent.equalsIgnoreCase("dependent") ||
+                isDependent.equalsIgnoreCase("is dependent")) ? "true" : "false");
 
         familyMember.setRelationshipId(Optional.ofNullable(getCodeValueId(familyMember
                 .getRelationshipCodeValueId(), relationship)).orElse(familyMember.getDefaultRelationshipId()));
@@ -283,9 +282,7 @@ public class MifosXServer {
             throws IOException, JsonProcessingException {
         SavingProductApplication savingProductApplication = new SavingProductApplication();
         ObjectMapper ow = new ObjectMapper();
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-        String formattedDate = currentDate.format(dtf);
+        String formattedDate = todayFormatted("dd MMMM yyyy");
 
         JsonNode templateSavingApplication = mifosXClient.getTemplateSavingsAccount(clientId, productId);
 
@@ -327,9 +324,7 @@ public class MifosXServer {
         SavingAccountApproval savingAccountApproval = new SavingAccountApproval();
         String command = "approve";
         ObjectMapper ow = new ObjectMapper();
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-        String formattedDate = currentDate.format(dtf);
+        String formattedDate = todayFormatted("dd MMMM yyyy");
 
         savingAccountApproval.setApprovedOnDate(formattedDate);
         savingAccountApproval.setDateFormat("dd MMMM yyyy");
@@ -346,9 +341,7 @@ public class MifosXServer {
         SavingAccountActivation savingAccountActivation = new SavingAccountActivation();
         String command = "activate";
         ObjectMapper ow = new ObjectMapper();
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
-        String formattedDate = currentDate.format(dtf);
+        String formattedDate = todayFormatted("dd MMMM yyyy");
 
         savingAccountActivation.setActivatedOnDate(formattedDate);
         savingAccountActivation.setDateFormat("dd MMMM yyyy");
@@ -378,29 +371,20 @@ public class MifosXServer {
 
         SavingsTransaction savingsTransaction = new SavingsTransaction();
 
-
-        try {
-            PaymentType matchingPaymentType = template.getPaymentTypeOptions().stream()
-                    .filter(pt -> pt.getName().equalsIgnoreCase(paymentType))
-                    .findFirst()
-                    .orElse(null);
-
-            if (matchingPaymentType != null) {
-                savingsTransaction.setPaymentTypeId(matchingPaymentType.getId());
-            }
-        } catch (NullPointerException e) {
-            log.error("The provided payment type does not match any of the available options", e);
-        }
-
+        savingsTransaction.setPaymentTypeId(resolvePaymentTypeId(template.getPaymentTypeOptions(), paymentType));
         savingsTransaction.setDateFormat("dd MMMM yyyy");
         savingsTransaction.setLocale("en");
         savingsTransaction.setNote(Optional.ofNullable(note).orElse(""));
 
         savingsTransaction.setTransactionAmount(transactionAmount);
-        savingsTransaction.setTransactionDate(Optional.ofNullable(transactionDate).orElse(template.getDate()));
+        String resolvedDate = (transactionDate != null && !transactionDate.isBlank())
+                ? transactionDate
+                : (template.getDate() != null && !template.getDate().isBlank())
+                        ? template.getDate()
+                        : todayFormatted("dd MMMM yyyy");
+        savingsTransaction.setTransactionDate(resolvedDate);
 
         String jsonSavingsTransaction = ow.writeValueAsString(savingsTransaction);
-        jsonSavingsTransaction = jsonSavingsTransaction.replace(":null", ":\"\"");
 
         return mifosXClient.newSavingsTransaction(accountNumber, transaction.toLowerCase(), jsonSavingsTransaction);
     }
@@ -526,11 +510,7 @@ public class MifosXServer {
         loanProductApplication.setRepaymentFrequencyType(lpat.getRepaymentFrequencyType().getId());
         loanProductApplication.setRepaymentsStartingFromDate("");
 
-        LocalDate currentDate = LocalDate.now();
-        DateTimeFormatter dtf = DateTimeFormatter.ofPattern(loanProductApplication.getDateFormat());
-        String formattedDate = currentDate.format(dtf);
-
-        loanProductApplication.setSubmittedOnDate(formattedDate);
+        loanProductApplication.setSubmittedOnDate(todayFormatted(loanProductApplication.getDateFormat()));
         loanProductApplication.setTransactionProcessingStrategyCode(lpat.getTransactionProcessingStrategyCode());
 
         ObjectMapper ow = new ObjectMapper();
@@ -584,28 +564,20 @@ public class MifosXServer {
             @ToolArg(description = "Bank number related to the payment (e.g. 104)", required = false) String paymentBankNumber)
             throws JsonProcessingException {
         String command = "disburse";
-        PaymentType selectedPaymentType = null;
 
         DisburseLoanAccount disburseLoanAccount = new DisburseLoanAccount();
         JsonNode jsonNode = mifosXClient.getDisburseLoanAccount(loanAccountNumber,command);
         ObjectMapper ow = new ObjectMapper();
         DisburseLoanAccountTemplate template = ow.treeToValue(jsonNode, DisburseLoanAccountTemplate.class);
 
-        disburseLoanAccount.setActualDisbursementDate(template.getDate());
+        String disbursementDate = (template.getDate() != null && !template.getDate().isBlank())
+                ? template.getDate()
+                : todayFormatted("dd MMMM yyyy");
+        disburseLoanAccount.setActualDisbursementDate(disbursementDate);
         disburseLoanAccount.setTransactionAmount(Optional.ofNullable(transactionAmount).orElse(template.getAmount()));
         disburseLoanAccount.setExternalId(Optional.ofNullable(externalId).orElse(""));
 
-        for(PaymentType pt : template.getPaymentTypeOptions()) {
-            if (pt.getName().equalsIgnoreCase(paymentType)) {
-                selectedPaymentType = pt;
-                break;
-            }
-        }
-        if (selectedPaymentType == null) {
-            throw new IllegalArgumentException("Invalid payment type: '" + paymentType + "'. Please provide a valid payment type.");
-        }
-
-        disburseLoanAccount.setPaymentTypeId(selectedPaymentType.getId());
+        disburseLoanAccount.setPaymentTypeId(resolvePaymentTypeId(template.getPaymentTypeOptions(), paymentType));
         disburseLoanAccount.setNote(Optional.ofNullable(note).orElse(""));
         disburseLoanAccount.setAccountNumber(Optional.ofNullable(paymentAccountNumber).orElse(""));
         disburseLoanAccount.setCheckNumber(Optional.ofNullable(paymentCheckNumber).orElse(""));
@@ -636,26 +608,22 @@ public class MifosXServer {
             throws JsonProcessingException {
         String command = "repayment";
         LoanRepayment loanRepayment = new LoanRepayment();
-        PaymentType selectedPaymentType = null;
 
         JsonNode jsonNode = mifosXClient.getLoanRepaymentTemplate(loanAccountNumber, command);
         ObjectMapper ow = new ObjectMapper();
         LoanRepaymentTemplate template = ow.treeToValue(jsonNode, LoanRepaymentTemplate.class);
 
-        for(PaymentType pt : template.getPaymentTypeOptions()) {
-            if (pt.getName().equalsIgnoreCase(paymentType)) {
-                selectedPaymentType = pt;
-                break;
-            }
-        }
-        if (selectedPaymentType == null) {
-            throw new IllegalArgumentException("Invalid payment type: '" + paymentType + "'. Please provide a valid payment type.");
-        }
+        Integer paymentTypeId = resolvePaymentTypeId(template.getPaymentTypeOptions(), paymentType);
 
-        loanRepayment.setTransactionDate(Optional.ofNullable(transactionDate).orElse(template.getDate()));
+        String resolvedDate = (transactionDate != null && !transactionDate.isBlank())
+                ? transactionDate
+                : (template.getDate() != null && !template.getDate().isBlank())
+                        ? template.getDate()
+                        : todayFormatted("dd MMMM yyyy");
+        loanRepayment.setTransactionDate(resolvedDate);
         loanRepayment.setTransactionAmount(Optional.ofNullable(amount).orElse(template.getAmount()));
         loanRepayment.setExternalId(Optional.ofNullable(externalId).orElse(""));
-        loanRepayment.setPaymentTypeId(selectedPaymentType.getId());
+        loanRepayment.setPaymentTypeId(paymentTypeId);
 
         loanRepayment.setNote(Optional.ofNullable(note).orElse(""));
         loanRepayment.setAccountNumber(Optional.ofNullable(paymentAccountNumber).orElse(""));
@@ -692,5 +660,29 @@ public class MifosXServer {
             }
         }
         return null;
+    }
+
+    private static String todayFormatted(String pattern) {
+        return LocalDate.now().format(DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH));
+    }
+
+    private static Integer resolvePaymentTypeId(List<PaymentType> options, String paymentType) {
+        if (options == null || options.isEmpty()) {
+            throw new ToolCallException("Payment type '" + paymentType
+                    + "' cannot be matched because Fineract returned no paymentTypeOptions.");
+        }
+        if (paymentType != null && !paymentType.isBlank()) {
+            for (PaymentType option : options) {
+                if (option.getName() != null && option.getName().equalsIgnoreCase(paymentType)) {
+                    return option.getId();
+                }
+            }
+        }
+        String available = options.stream()
+                .map(PaymentType::getName)
+                .filter(Objects::nonNull)
+                .collect(Collectors.joining(", "));
+        throw new ToolCallException("Invalid payment type '" + paymentType
+                + "'. Available payment types: [" + available + "].");
     }
 }
