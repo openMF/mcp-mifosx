@@ -989,10 +989,12 @@ def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
     overdraft = (check.get("overdraftLimit") or 0) if check.get("allowOverdraft") else 0
     # Compared as decimals: as floats, 0.01 + 0.06 is just under 0.07.
     if Decimal(str(amount)) > Decimal(str(balance)) + Decimal(str(overdraft)):
-        funds = f"available balance is ${balance:.2f}"
+        # Label amounts with the account's own currency, not "$": most tenants are not in USD
+        unit = f" {_currency(check)}" if _currency(check) else ""
+        funds = f"available balance is {balance:.2f}{unit}"
         if overdraft:
-            funds += f" and the overdraft limit is ${overdraft:.2f}"
-        return {"error": f"Insufficient funds: requested ${amount:.2f} but {funds} in account {accountId}."}
+            funds += f" and the overdraft limit is {overdraft:.2f}{unit}"
+        return {"error": f"Insufficient funds: requested {amount:.2f}{unit} but {funds} in account {accountId}."}
     return withdraw_savings.func(accountId, amount, paymentTypeId)
 
 @mcp.tool()
