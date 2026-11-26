@@ -103,19 +103,21 @@ class FineractAdapter:
 
         if isinstance(error_data, dict):
             details = [
-                detail
+                str(detail).strip()
                 for detail in (
                     err.get("developerMessage") or err.get("defaultUserMessage")
                     for err in (error_data.get("errors") or [])
                     if isinstance(err, dict)
                 )
-                if detail
+                if detail is not None and str(detail).strip()
             ]
             if details:
                 return f"Validation Error: {'; '.join(details)}"
 
-            if "developerMessage" in error_data:
-                return f"Fineract Error: {error_data['developerMessage']}"
+            if "developerMessage" in error_data and error_data["developerMessage"] is not None:
+                dev_msg = str(error_data["developerMessage"]).strip()
+                if dev_msg:
+                    return f"Fineract Error: {dev_msg}"
 
         return f"Error {response.status_code}: {response.text}"
 

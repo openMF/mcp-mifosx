@@ -47,6 +47,7 @@ from tools.domains.clients import (
     update_client,
     update_client_mobile,
 )
+from tools.domains.clients import get_client_holistic_view as get_client_holistic_view_domain
 from tools.domains.codetables import get_code_values as get_code_values_domain
 from tools.domains.codetables import list_codes as list_codes_domain
 from tools.domains.codetables import list_datatables as list_datatables_domain
@@ -319,6 +320,12 @@ def get_client(clientId: int) -> dict:
         "activationDate": _fmt_date(data.get("activationDate")),
         "officeName":     data.get("officeName"),
     }
+
+@mcp.tool()
+@safe_tool("get_client_holistic_view")
+def get_client_holistic_view(clientId: int) -> dict:
+    """Concurrently fetches all client details, accounts, charges, and identifiers in one parallel turn."""
+    return get_client_holistic_view_domain.func(clientId)
 
 @mcp.tool()
 @safe_tool("get_client_accts")

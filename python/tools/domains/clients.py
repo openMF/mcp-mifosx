@@ -4,8 +4,10 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 import logging
-from typing import Optional
+from concurrent.futures import Future, ThreadPoolExecutor
+from typing import Any, Callable, Dict, List, Optional, Union
 
+import requests
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
@@ -281,3 +283,53 @@ def delete_client(client_id: int):
         return {"error": f"Client {client_id} is in status '{status}'. Only pending clients can be deleted."}
 
     return fineract_client.execute_delete(f"clients/{client_id}")
+
+
+ClientSubResponse = Union[Dict[str, Any], List[Dict[str, Any]]]
+
+
+@tool
+def get_client_holistic_view(client_id: int) -> Dict[str, ClientSubResponse]:
+    """Answers: 'Fetch client details, accounts, charges, and identifiers in one turn' or 'Give me a complete view of client 123'
+
+    Concurrently fetches all client details, accounts, charges, and identifiers in one parallel turn.
+
+    Args:
+        client_id: Positive integer ID of the client (required)
+
+    Returns:
+        dict: Consolidated dictionary with four keys:
+            - details: Client profile details from clients/{client_id}
+            - accounts: Loan and savings accounts from clients/{client_id}/accounts
+            - charges: Client-level charges from clients/{client_id}/charges
+            - identifiers: Client KYC documents from clients/{client_id}/identifiers
+    """
+    logger.info(f"[Tool] Fetching holistic view for Client #{client_id}...")
+
+    def _safe_fetch(call_fn: Callable[[], ClientSubResponse]) -> ClientSubResponse:
+        try:
+            return call_fn()
+        except requests.RequestException as exc:
+            logger.exception("Failed to execute sub-request in get_client_holistic_view for client %s", client_id)
+            return {"error": str(exc)}
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        future_details: Future[ClientSubResponse] = executor.submit(
+            _safe_fetch, lambda: get_client_details.func(client_id)
+        )
+        future_accounts: Future[ClientSubResponse] = executor.submit(
+            _safe_fetch, lambda: get_client_accounts.func(client_id)
+        )
+        future_charges: Future[ClientSubResponse] = executor.submit(
+            _safe_fetch, lambda: get_client_charges.func(client_id)
+        )
+        future_identifiers: Future[ClientSubResponse] = executor.submit(
+            _safe_fetch, lambda: get_client_identifiers.func(client_id)
+        )
+
+        return {
+            "details": future_details.result(),
+            "accounts": future_accounts.result(),
+            "charges": future_charges.result(),
+            "identifiers": future_identifiers.result(),
+        }

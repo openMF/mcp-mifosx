@@ -22,6 +22,7 @@ tools = [
     # Clients & groups
     "search_clients",
     "get_client",
+    "get_client_holistic_view",
     "get_client_accts",
     "get_group",
     "list_all_groups",
