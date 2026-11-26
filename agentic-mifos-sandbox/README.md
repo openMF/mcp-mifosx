@@ -1,6 +1,6 @@
 # Agentic Mifos sandbox
 
-A self-contained environment for agentic loan origination on Mifos X, running entirely on your machine: Apache Fineract as the system of record, the Mifos X web app, OpenFn Lightning as the orchestrator, a loan API with human review, a loan origination service (LOS) for commercial opportunities, local models through Ollama, and Pi agents that reach Fineract only through their own scoped MCP server.
+A self-contained environment for agentic loan origination on Mifos X, running entirely on your machine: Apache Fineract as the system of record, the Mifos X web app, OpenFn Lightning as the orchestrator, a loan API with human review, a loan origination service (LOS) for commercial opportunities, local models through Ollama, and Pi agents that reach Fineract only through their own scoped MCP server. Optionally, the commercial flow also runs on Conductor OSS, to compare the two engines (3.6).
 
 It shows how agents can take part in lending while the rules, the guardrails and a human keep the decision. It is an **evaluation sandbox, not a production deployment**: section 7 says what protects what today, and what does not.
 
@@ -28,6 +28,11 @@ It shows how agents can take part in lending while the rules, the guardrails and
 | | `ollama-pull` | One-shot: downloads the two models | — | `ollama` |
 | Agents | `agent-decision` | Pi agent behind an HTTP runner; serves the loan flow's decision step ([pi-agent/](pi-agent)) | — | `ollama`, `agents` |
 | | `mcp-decision` | Its MCP server: the [Python MCP server](../python) with the `decision` tool profile, signed in as `agent-decision` | — | `ollama`, `agents` |
+| Second engine | `conductor` | Conductor OSS: the commercial flow's workflows, for comparison with OpenFn ([agentic-banking-conductor](../agentic-banking-conductor/README.md)); its UI, read-only, and the entry at `/i/` | 8100 | `conductor` |
+| | `conductor-db` | Its Postgres: state, queues and search | — | `conductor` |
+| | `conductor-setup` | One-shot: loads the workflow and task definitions into Conductor | — | `conductor` |
+| | `conductor-entry` | Starts workflows for channels and officers, with their API keys | — | `conductor` |
+| | `conductor-intake` | The intake workflow's worker | — | `conductor` |
 
 ## 2. Quick start
 
@@ -35,7 +40,7 @@ It shows how agents can take part in lending while the rules, the guardrails and
 
 - Docker with Compose 2.20 or newer
 - Disk: about 15 GB of images (9.4 GB of them the Ollama image, which bundles GPU libraries) and 5.2 GB for the two models
-- Memory, measured in October 2026: the services use about 2.6 GB without a model loaded (Fineract alone 1.2 GB). Loading the text model adds about 2.7 GB, the vision model about 4 GB; Ollama keeps one model in memory at a time. On an 8 GB Docker VM shared with an IDE, model loads can stall (see [troubleshooting](#troubleshooting))
+- Memory, measured in October 2026: the services use about 2.6 GB without a model loaded (Fineract alone 1.2 GB). Loading the text model adds about 2.7 GB, the vision model about 4 GB; Ollama keeps one model in memory at a time. On an 8 GB Docker VM shared with an IDE, model loads can stall (see [troubleshooting](#troubleshooting)). The `conductor` profile adds about 0.6 GB (measured in November 2026) and a 1.1 GB image
 
 **Start**
 
@@ -44,6 +49,7 @@ cd agentic-mifos-sandbox
 ./scripts/gen-secrets.sh                              # creates .env with generated passwords and keys
 docker compose up -d --build --wait                   # without local models: the rules decide
 docker compose --profile ollama up -d --build --wait  # with Ollama and the decision agent
+docker compose --profile conductor up -d --build --wait  # also the commercial flow on Conductor (3.6)
 ```
 
 The first start takes about 3 minutes, most of it Fineract's database migrations. With the `ollama` profile the first start also downloads the two models (5.2 GB; about 20 minutes on a home connection). Later starts reuse everything.
@@ -54,6 +60,9 @@ The first start takes about 3 minutes, most of it Fineract's database migrations
 | Lightning: http://localhost:4000 | `LIGHTNING_ADMIN_EMAIL` / `LIGHTNING_ADMIN_PASSWORD` from `.env` |
 | Gateway: http://localhost:8080/actuator/health | none (see 7.4) |
 | LOS API docs: http://localhost:8090/docs | **Authorize** with `LOS_OFFICER_TOKEN` from `.env` |
+| Conductor (`conductor` profile): http://localhost:8100 | none: read-only (see 7.4) |
+
+To see the commercial flow end to end, from a lead to a loan application in Fineract: `python3 scripts/demo.py` (4.9).
 
 ## 3. Architecture
 
@@ -136,12 +145,13 @@ In `assessing`, an officer asks the **assessment** workflow (4.6) to assess it, 
 A reject pauses the opportunity with its reasons. Approve is a proposal: a person confirms it by moving the opportunity to `pre_approved`. Refer is theirs to decide. From there a person moves it on to `qualified`: the file stage is not automated yet. Once it is `qualified`, an officer asks the **registration** workflow (4.7) to register it in Fineract, with the officers' API key; the webhook answers when the run has finished. It checks first, and creates nothing otherwise: the opportunity is `qualified` (`not_qualified`), its newest CURP document was found `valid` and the CURP has not changed since (`identity_not_checked`), and its currency, amount and term still fit the loan product (`invalid`: the amount is never changed to fit). Then, as `agent-registration`:
 
 - The client: external ID the CURP, active, its name split the Mexican way (the last two words are the surnames: "María José López García" is María José / López García). A returning applicant's client is reused, and activated if pending
+- The identity document: the CURP image the identity check found `valid`, attached to the client (its Documents tab) before the loan application is made, and only once: its description names the LOS document
 - The loan application: the requested amount and term, external ID the opportunity's, submitted and **never approved**: approval is Credit's, in Fineract (maker-checker)
 - A note on the loan for Credit, from the LOS: the request, the eligibility and identity results, who qualified it, and the consents
 
-The LOS then records the Fineract ids, and the opportunity is `registered`. Asked again after a run that stopped half way, it reuses the client, the loan and the note; a client that is closed, or a loan with that external ID that no longer matches, goes to a person instead (`needs_review`). The LOS refuses the registration (409) if the CURP, name, amount, currency or term changed while the run made the application.
+The LOS then records the Fineract ids, and the opportunity is `registered`. Asked again after a run that stopped half way, it reuses the client, the loan and the note; a client that is closed, a loan with that external ID that no longer matches, or a mobile number that already belongs to another client (Fineract allows one client per number) goes to a person instead (`needs_review`). The LOS refuses the registration (409) if the CURP, name, amount, currency or term changed while the run made the application.
 
-Every call to the LOS carries a caller's token: the intake job's lets it search, create and set aside new leads; the eligibility workflow's lets it read one opportunity and move it from `qualifying` to `documents` or `paused`; the identity workflow's lets it read an opportunity in `documents` and its documents, record a check, and move it to `assessing` or `paused`; the registration workflow's lets it read an opportunity, its documents and its audit trail, and register it. None of them can record a consent or upload a document. The officers' token allows everything. The audit trail names the caller ([los/README.md](los/README.md), Access).
+Every call to the LOS carries a caller's token: the intake job's lets it search, create and set aside new leads; the eligibility workflow's lets it read one opportunity and move it from `qualifying` to `documents` or `paused`; the identity workflow's lets it read an opportunity in `documents` and its documents, record a check, and move it to `assessing` or `paused`; the registration workflow's lets it read an opportunity, its documents (their images too) and its audit trail, and register it; the assessment workflow's lets it read an opportunity and record its assessment, whose only move is a reject to `paused`. None of them can record a consent or upload a document. The officers' token allows everything. The audit trail names the caller ([los/README.md](los/README.md), Access).
 
 ### 3.4 Agents
 
@@ -177,6 +187,10 @@ flowchart LR
   bootstrap -- "core, openfn" --> fineract
   los -- los --> losdb[(los-db)]
   worker -- los-api --> los
+  cworkers[conductor-*<br/>workers] -- conductor --> conductor
+  centry[conductor-entry] -- conductor --> conductor
+  conductor -- conductor-db --> cdb[(conductor-db)]
+  cworkers -- los-api --> los
   lightning -. lightning-edge .-> net((internet))
   ollama -. llm-egress .-> net
 ```
@@ -192,13 +206,40 @@ flowchart LR
 | `openfn-agents` | yes | The worker, the agents' runners |
 | `agent-<name>` | yes | One agent and its MCP server |
 | `los` | yes | The LOS and its database |
-| `los-api` | yes | The LOS and the worker (the opportunity workflows), without the database |
-| `web-app-edge`, `gateway-edge`, `los-edge` | no | One service each, for its published port |
+| `los-api` | yes | The LOS and the workers of the opportunity workflows (OpenFn's, and Conductor's that call the LOS), without the database |
+| `conductor-db` | yes | Conductor and its database |
+| `conductor` | yes | Conductor, its workers, the entry and the setup job: the server calls nothing else |
+| `web-app-edge`, `gateway-edge`, `los-edge`, `conductor-edge` | no | One service each, for its published port |
 | `lightning-edge` | no | Lightning and its setup job: published port, npm adaptor catalogue |
 | `host-ollama` | no | Only with `docker-compose.host-ollama.yml`: the worker, to reach an Ollama server on the Docker host. Otherwise the worker has no route out: its OpenFn adaptors are built into its image from a lockfile ([worker/](worker/)) |
 | `llm-egress` | no | Ollama, to download models |
 
 Every service also runs with a read-only file system, no Linux capabilities, no privilege escalation, a non-root user and memory and process limits; [scripts/check-hardening.py](scripts/check-hardening.py) checks all of it, and the network memberships above, in CI.
+
+### 3.6 The commercial flow on Conductor
+
+With `--profile conductor`, the opportunity workflows also run on [Conductor OSS](https://conductor-oss.org), to compare the two engines on the same flow ([agentic-banking-conductor](../agentic-banking-conductor/README.md)). So far: intake. Both engines run against the same LOS and Fineract, as the same LOS callers and Fineract users, with the same rules, so a channel or an officer gets the same answers from either; only the way in and the run history differ.
+
+```mermaid
+flowchart LR
+  channel([Channels]) -->|"/i/intake, x-api-key"| nginx
+  subgraph conductor[conductor container]
+    nginx[nginx :8100] -->|"GET only"| server[Conductor server]
+  end
+  nginx -->|"/i/"| entry[conductor-entry]
+  entry -->|"start, wait"| server
+  server --> cdb[(conductor-db)]
+  worker[conductor-intake] -->|poll, results| server
+  worker -->|"intake token"| los[LOS]
+```
+
+- **One task per OpenFn job**, with the job's code: each task gets the state the one before returned, as in OpenFn. Retries are off, as in OpenFn; each task has its job's time limits, and a task no worker picks up within 60 seconds times the workflow out
+- **One worker per workflow**, each with only its own credentials and networks (`conductor-intake`: the LOS's intake token, on `los-api`). OpenFn's single worker receives every workflow's credentials from Lightning
+- **The entry** (`conductor-entry`) starts workflows: Conductor OSS has no authentication, so channels and officers call `/i/<workflow>` with the same API keys as Lightning's webhooks, and get the same replies (4.10)
+- **The UI on 8100 is read-only**: the container's nginx ([conductor/nginx/default.conf](conductor/nginx/default.conf)) passes only GET requests to the API, and refuses the GETs that change something (polling for a task, the scheduler's and the server's admin) and any path with parameters (`;`). Conductor's own port is not published
+- **The server** (3.34, Postgres only: no Redis or Elasticsearch) reaches only its database; JavaScript in a workflow cannot reach Java (`CONDUCTOR_APP_GRAALJS_RESTRICTEDHOSTACCESS`); one evaluation of a workflow runs at a time, locked in Postgres
+
+Measured in November 2026 on the laptop of 4.9: the profile uses about 0.6 GB (the server 400 MiB, its database 100 MiB, the entry and a worker 30 to 50 MiB each), and the server starts in about 45 seconds. Idle, the server and its database take about 10% of a CPU core each, polling their queues; Lightning idles below 1%.
 
 ## 4. Using it
 
@@ -275,7 +316,7 @@ The webhook answers when the three jobs have finished:
 
 ### 4.5 Checking an identity document
 
-With the opportunity from 4.4 in `documents`, and `curp.png` an image of a CURP constancia with the opportunity's CURP and name:
+With the opportunity from 4.4 in `documents`, and `curp.png` an image of a CURP constancia with the opportunity's CURP and name (`scripts/demo_constancia.py` draws a fictitious one; see its header):
 
 ```bash
 AUTH="Authorization: Bearer $(grep '^LOS_OFFICER_TOKEN=' .env | cut -d= -f2-)"
@@ -334,7 +375,7 @@ curl -s -X POST localhost:4000/i/3170dc43-1d7e-48e7-ba83-1a4cd4af2844 -H "x-api-
 {"data": {"decision": "registered", "stage": "registered", "clientId": 40, "loanId": 39, "reasons": [], "externalId": "opp-...", "opportunityId": "..."}, "meta": {"run_id": "..."}}
 ```
 
-`decision` is `registered`, `not_qualified`, `identity_not_checked`, `invalid` or `needs_review` (see `reasons`). In the web app, the client (search by the CURP) has a loan application "Submitted and pending approval" with the note for Credit, where a person approves or rejects it.
+`decision` is `registered`, `not_qualified`, `identity_not_checked`, `invalid` or `needs_review` (see `reasons`). In the web app, the client (search by the CURP) has the CURP image under Documents, and a loan application "Submitted and pending approval" with the note for Credit, where a person approves or rejects it.
 
 ### 4.8 Asking an agent directly
 
@@ -344,9 +385,64 @@ docker compose --profile ollama run --rm agent-decision -p "List the loan produc
 
 The agent has only its MCP server's tools. From a script, add `-T` and close stdin (`< /dev/null`): without a terminal, Pi reads stdin into the prompt and waits for it to end.
 
+### 4.9 The demo: the commercial flow in one command
+
+`scripts/demo.py` takes a fictitious applicant through the whole commercial flow, the way an officer drives it (4.3 to 4.7), and shows each decision as it is made. It needs Python 3.10 or newer on the host, and nothing else:
+
+```bash
+python3 scripts/demo.py               # the main run (the ollama profile up, or OLLAMA_URL set to your server)
+python3 scripts/demo.py --scenarios   # then three cases the rules stop
+python3 scripts/demo.py --fast        # the officer records the identity checks: no vision model
+python3 scripts/demo.py --pause       # wait for Enter before each step, for presenting
+```
+
+The main run, in eight steps:
+
+1. A lead arrives from the web channel (intake).
+2. The officer moves it to `qualifying`, and eligibility checks it against the loan product and the applicant's history in Fineract.
+3. The officer uploads the CURP constancia, and the vision model reads it. The script draws the constancia for the run in the MCP server's image (`scripts/demo_constancia.py`): fictitious, and marked as a test document.
+4. The officer records the client's bureau consent.
+5. The assessment: the simulated bureau, the rules and, if it is running, the decision agent.
+6. The officer confirms the pre-approval and qualifies the opportunity.
+7. Registration in Fineract.
+8. What Credit sees in Fineract: the client with the CURP image under Documents, the loan application waiting for approval, and the note. The script ends with the web app link where a person approves or rejects it.
+
+`--scenarios` adds three cases that end `paused` with their reason code: an amount above the product's limit (`amount_out_of_range`), a constancia with someone else's CURP (`document_mismatch`: the vision model reads it, or with `--fast` the officer records the mismatch), and a bureau score below 550 (`bureau_score_low`; the officer records its identity check, so that it reaches the assessment quickly).
+
+Measured in November 2026 on a laptop CPU with 8 threads (Intel i5-10300H) and no GPU:
+
+| Run | Took |
+|---|---|
+| `--fast`, with or without `--scenarios`, decision agent stopped | about 1 minute |
+| The main run, decision agent stopped | 4 to 8 minutes: the vision model reads the constancia in 3 to 7 (longest when it first loads) |
+| Any run with the decision agent running | 1 to 3 minutes more for each assessment, which waits for the agent |
+| The main run with `--scenarios`, decision agent stopped | 7 to 12 minutes: the mismatch scenario uses the vision model too |
+
+With the decision agent running, every assessment waits for its answer; `docker compose stop agent-decision` lets the rules decide at once. The script calls only the published ports, reads its keys and tokens from `.env` without printing them, and never starts or stops a service. Every run creates new applicants (CURPs starting with `PRUE`), so runs do not collide; they stay in the LOS and Fineract until a reset (5). It exits 0 when every step had its expected outcome, and otherwise names the step that did not. `python3 scripts/demo.py --check-config` only checks that the configuration has what the script needs.
+
+### 4.10 Intake on Conductor
+
+With the `conductor` profile up, the same lead as in 4.3, to Conductor's entry instead of Lightning's webhook, with the same key:
+
+```bash
+KEY=$(grep '^OPENFN_INTAKE_API_KEY=' .env | cut -d= -f2-)
+curl -s -X POST localhost:8100/i/intake -H "x-api-key: $KEY" \
+  -H 'Content-Type: application/json' -d '{"channel": "web", "external_id": "web-1002",
+  "full_name": "Ana López", "phone": "+52 55 8765-4322", "national_id": "LOPA800101MDFRRN08",
+  "requested_amount": 15000, "currency": "MXN", "term_months": 12, "productive_use": "Stock for the shop"}'
+```
+
+The answer is the one 4.3 describes, with the workflow's id in `meta`:
+
+```json
+{"data": {"outcome": "complete", "stage": "new", "missing": [], "externalId": "web-1002", "opportunityId": "..."}, "meta": {"state": "success", "workflow_id": "..."}}
+```
+
+Every outcome of 4.3 is the same on both engines, and the LOS records the same stage, reason code and note (checked in November 2026 with one lead of each outcome on each engine). Without the key, or with the officers', the entry answers 401. The run is at http://localhost:8100 (Executions), with each task's input, output and logs.
+
 ## 5. Operating
 
-**Health and logs**: `docker compose ps` and `docker compose logs -f <service>`. The OpenFn jobs' own output (`console.log`) is in Lightning's run view, not in the worker's logs.
+**Health and logs**: `docker compose ps` and `docker compose logs -f <service>`. The OpenFn jobs' own output (`console.log`) is in Lightning's run view, not in the worker's logs. The Conductor workers' lines are in both: each task's logs in Conductor's UI, and `docker compose logs conductor-<workflow>`.
 
 **Settings** (`.env`; [.env.example](.env.example) explains each one)
 
@@ -360,27 +456,30 @@ The agent has only its MCP server's tools. From a script, add `-T` and close std
 | `LIGHTNING_WORKER_CAPACITY` | 2 | Runs the worker takes at a time |
 | `LIGHTNING_WORKER_WATCHDOG_SECONDS` | 1200 | Seconds without worker output before the worker is restarted (7.4); keep it above a run's longest time (900) |
 | `FINERACT_TIMEZONE` | `UTC` | The default tenant's time zone |
-| `FINERACT_IMAGE`, `WEBAPP_IMAGE`, `LIGHTNING_IMAGE`, `LIGHTNING_WORKER_IMAGE`, `OLLAMA_IMAGE` | pinned | Test another version |
+| `CONDUCTOR_PORT` | 8100 | Conductor's UI and entry (`conductor` profile) |
+| `CONDUCTOR_WORKER_CONCURRENCY` | 2 | Tasks of each type a Conductor worker runs at a time |
+| `FINERACT_IMAGE`, `WEBAPP_IMAGE`, `LIGHTNING_IMAGE`, `LIGHTNING_WORKER_IMAGE`, `OLLAMA_IMAGE`, `CONDUCTOR_IMAGE` | pinned | Test another version |
 
 **Rotating secrets**
 
 - Agent passwords (`FINERACT_AGENT_*_PASSWORD`), agent tokens (`AGENT_*_TOKEN`) and `OPENFN_CALLBACK_SECRET`: change the value in `.env` and run `docker compose --profile ollama up -d`. The bootstrap updates the agents' Fineract users and replaces the agents' Lightning credentials, including the write-back job's `fineract` and the eligibility and registration workflows' `fineract-eligibility` and `fineract-registration`. An edit made to one of them in Lightning lasts until its settings in `.env` change.
-- `OPENFN_WEBHOOK_API_KEY`, `OPENFN_INTAKE_API_KEY` and `OPENFN_OFFICER_API_KEY`: the same. `lightning-webhook-auth` replaces the triggers' key, and the gateway restarts with the new one; give channels the new intake key and officers the new officers' key.
-- `LOS_INTAKE_TOKEN`, `LOS_ELIGIBILITY_TOKEN`, `LOS_IDENTITY_TOKEN`, `LOS_REGISTRATION_TOKEN`, `LOS_ASSESSMENT_TOKEN` and `LOS_OFFICER_TOKEN`: the same. The LOS restarts with the new tokens, and the bootstrap replaces the `los` and `los-<workflow>` credentials; a lead or a check sent in between gets a 401 from the LOS and can be sent again. A changed `OLLAMA_URL` or `OLLAMA_VISION_MODEL` reaches the identity workflow's `ollama` credential the same way.
+- `OPENFN_WEBHOOK_API_KEY`, `OPENFN_INTAKE_API_KEY` and `OPENFN_OFFICER_API_KEY`: the same. `lightning-webhook-auth` replaces the triggers' key, and the gateway restarts with the new one (and `conductor-entry`, with `--profile conductor` on that `up`); give channels the new intake key and officers the new officers' key.
+- `LOS_INTAKE_TOKEN`, `LOS_ELIGIBILITY_TOKEN`, `LOS_IDENTITY_TOKEN`, `LOS_REGISTRATION_TOKEN`, `LOS_ASSESSMENT_TOKEN` and `LOS_OFFICER_TOKEN`: the same. The LOS restarts with the new tokens, and the bootstrap replaces the `los` and `los-<workflow>` credentials; a lead or a check sent in between gets a 401 from the LOS and can be sent again. The Conductor workers restart with theirs when `--profile conductor` is on that `up`. A changed `OLLAMA_URL` or `OLLAMA_VISION_MODEL` reaches the identity workflow's `ollama` credential the same way.
 - **The database passwords and Lightning's admin password cannot be rotated through `.env`**: they are set when the volumes are first created. Changing them later breaks the connection (databases) or changes nothing (Lightning admin). Change them inside Postgres and Lightning first, or reset the volumes.
 - `./scripts/gen-secrets.sh` fills only empty values: blank one and run it again to generate a new value.
 - Fineract's admin password (`FINERACT_ADMIN_PASSWORD`): the bootstrap sets it only while the image's default (`password`) still works. To change it later, change it in the web app first (the user menu, then change password), then in `.env`.
 
-**Updating**: `git pull`, `./scripts/gen-secrets.sh` (it adds any secret a new version needs), then `docker compose --profile ollama up -d --build --wait`. Volumes are kept. A sandbox from before the worker's adaptors were built into its image keeps an unused volume: `docker volume rm agentic-mifos-sandbox_lightning-worker-home`.
+**Updating**: `git pull`, `./scripts/gen-secrets.sh` (it adds any secret a new version needs), then `docker compose --profile ollama up -d --build --wait`, with `--profile conductor` added if you run Conductor: Compose does not remember profiles between commands, so without it the Conductor workers are not rebuilt and its definitions not reloaded. Volumes are kept. A sandbox from before the worker's adaptors were built into its image keeps an unused volume: `docker volume rm agentic-mifos-sandbox_lightning-worker-home`. Fineract keeps documents on a volume of its own, `fineract-documents`, which `up` creates; before it, Fineract could not save an uploaded document. With the `conductor` profile, a change to `conductor/nginx/` takes `docker compose --profile conductor restart conductor`: nginx reads it only when it starts, and `up` does not recreate a container whose mounted folder changed.
 
 **Resetting**
 
 ```bash
-docker compose --profile ollama --profile agents down -v   # deletes ALL data, the 5 GB of models included
+docker compose --profile ollama --profile agents --profile conductor down -v   # deletes ALL data, the 5 GB of models included
 # or keep the models:
-docker compose --profile ollama --profile agents down
-docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_lightning-db-data \
-  agentic-mifos-sandbox_los-db-data agentic-mifos-sandbox_bootstrap-state
+docker compose --profile ollama --profile agents --profile conductor down
+docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_fineract-documents \
+  agentic-mifos-sandbox_lightning-db-data agentic-mifos-sandbox_los-db-data agentic-mifos-sandbox_bootstrap-state
+docker volume rm agentic-mifos-sandbox_conductor-db-data   # if the conductor profile ever ran
 ```
 
 ### Troubleshooting
@@ -390,12 +489,15 @@ docker volume rm agentic-mifos-sandbox_fineract-db-data agentic-mifos-sandbox_li
 - **A case stays in `OPENFN_TRIGGERED`, and its run in Lightning stays `available`**: the worker stopped claiming runs (7.4). The watchdog restarts it within 20 minutes, and its log then shows `watchdog: no output from the worker ...`. To act at once, run `docker compose restart lightning-worker`, then submit the case again.
 - **A case stays in `LLM_DECISION`, or Ollama's log shows a model load that never finishes**: there is not enough free memory for the model. Free memory (or stop services you do not need) and submit again; the case itself turns `FAILED` after 15 minutes and the rules decide when the agent does not answer in time.
 - **A submit returns 500, and the gateway log shows `OpenFn webhook trigger failed: 401` or `404 ... Webhook not found`**: the gateway's API key is not the triggers' key. Run `docker compose --profile ollama up -d`, which applies `OPENFN_WEBHOOK_API_KEY` from `.env` to both.
+- **A Conductor workflow ends `TIMED_OUT` with "Task poll timed out"**, and the entry answered 504: its worker was not running. Check `docker compose --profile conductor ps`, start it (`docker compose --profile conductor up -d conductor-<workflow>`) and send the request again.
+- **The entry answers 502 `conductor_error`**: Conductor refused the request; callers get only the code, and `docker compose logs conductor-entry` shows Conductor's status. With `Conductor answered 404` there, the workflow is not defined in Conductor, for example after its database was reset while the entry kept running: run `docker compose --profile conductor up -d`, which runs `conductor-setup` again. (`conductor_unavailable` means Conductor did not answer: see `docker compose logs conductor`.)
 - **An identity check records no result**: its run in Lightning failed, most often because the vision model did not answer within 9 minutes (not enough free memory, see the entry above, or a slower CPU), or because the LOS refused the check (409) after a newer upload or an edit of the CURP or name during the run. The document stays unchecked and the opportunity in `documents`; ask again once Ollama answers.
 - **An opportunity workflow's runs fail, and their log in Lightning shows a 401 from the LOS**: the `los` or `los-<workflow>` credential does not hold the LOS's current `LOS_INTAKE_TOKEN` or `LOS_<WORKFLOW>_TOKEN`, for example after it was edited in Lightning. Delete that credential in Lightning and run `docker compose up -d`: the bootstrap creates it again from `.env`.
-- **An assessment says `consent_missing`**: the client's bureau consent is not recorded. Record it (`POST /opportunities/{id}/consents/bureau`) and ask again.
+- **An assessment says `consent_missing`**: the client's bureau consent is not recorded. Record it (`POST /opportunities/{id}/consents/bureau`) and ask again. If the consent was recorded while an assessment run was going, the LOS refuses that run's `consent_missing` (409), and the run fails: ask again.
 - **An assessment's agent says `rules-fallback`**: the decision agent was not used, and `agent.error` says why (unreachable, over 260 s, no Fineract lookup, another answer shape). The rules decided, as they would without an agent.
-- **A registration answers `needs_review`**: Fineract already has something under the opportunity's ids that does not fit, as `reasons` says: a closed or rejected client with this CURP (`client_not_active`), or a loan application with the opportunity's external ID for another amount, term or client, or rejected (`loan_conflict`). Resolve it in the web app (reopen the client; reject the stale application, or correct the opportunity), then ask again.
+- **A registration answers `needs_review`**: Fineract already has something under the opportunity's ids that does not fit, as `reasons` says: a closed or rejected client with this CURP (`client_not_active`), or a loan application with the opportunity's external ID for another amount, term or client, or rejected (`loan_conflict`). Resolve it in the web app (reopen the client; reject the stale application, or correct the opportunity), then ask again. With `phone_in_use`, the opportunity's mobile number already belongs to the Fineract client the detail names, and Fineract allows one client per number; nothing was created. If the detail names no client ("another Fineract client"), find it by searching the web app for the number. If the number is someone else's (a relative's, a shared phone), correct the opportunity's phone (`PATCH /opportunities/{id}` with the applicant's own number) and ask again. If the applicant is that client under another record, a person first checks that client in the web app. Its status: an active client is reused and a pending one is activated, but a closed or rejected one must be reopened first, or the registration answers `client_not_active`. Its external ID: if it already has one, check what relies on it before changing it, and reconcile or escalate rather than overwrite it. Another CURP means another person's record, or a wrong CURP; `<workflow id>-client` links it to a case of the loan flow. If it is the same person and both are clear, set that client's external ID to the CURP: the registration then reuses it, as for any returning applicant.
 - **An agent run never returns in a script**: stdin is open; add `-T` and `< /dev/null`.
+- **`scripts/demo.py` stops with `the MCP server's image has no Pillow`**: the image was built before the MCP server needed Pillow. Rebuild it: `docker compose --profile ollama build mcp-decision`.
 - **`docker compose up` fails on the first start**: read `docker compose logs lightning-setup bootstrap`; the bootstrap stops with the request that failed.
 - **The bootstrap stops with `the password of Fineract's admin 'mifos' is neither FINERACT_ADMIN_PASSWORD nor the default`**: the password was changed in the web app, or this `.env` is new while Fineract's volume is not. Set `FINERACT_ADMIN_PASSWORD` to the current password.
 
@@ -421,7 +523,7 @@ This is a local evaluation sandbox. The model below says what protects what toda
 
 ### 7.1 Assets
 
-- Client personal data: names, CURP, phone, email, loan and savings data, in Fineract, the LOS, Lightning's run data and the decision notes; identity document images, in the LOS and Lightning's run data; bureau results, in the LOS's assessments
+- Client personal data: names, CURP, phone, email, loan and savings data, in Fineract, the LOS, Lightning's run data, Conductor's workflow data (with `--profile conductor`) and the decision notes; identity document images, in the LOS, Fineract (the client's documents) and Lightning's run data; bureau results, in the LOS's assessments
 - Fineract's integrity: clients, loans and approvals
 - Secrets: `.env` (database passwords, Lightning keys, agent passwords and tokens, the LOS tokens, the callback secret)
 - The host machine
@@ -430,7 +532,7 @@ This is a local evaluation sandbox. The model below says what protects what toda
 
 - **Untrusted**: application and LOS input, identity documents, model output, and tool results (Fineract data can carry injected text)
 - **Constrained**: the agents. The model assumes a prompt injection fully controls an agent, and asks what it can still do
-- **Trusted**: Fineract, the gateway, Lightning, the worker and the job code it runs, and the operator who holds `.env`
+- **Trusted**: Fineract, the gateway, Lightning, the worker and the job code it runs, Conductor and its workers, entry and setup, and the operator who holds `.env`
 - **Anyone on the host**: the published ports are bound to 127.0.0.1, but any local user or process can reach them
 
 ### 7.3 Threats and mitigations
@@ -441,14 +543,17 @@ This is a local evaluation sandbox. The model below says what protects what toda
 | An agent invents findings or a recommendation | The evidence gate and check; the guardrail; the tools called, listed in the note or the assessment; human approval or confirmation | A stricter but wrong answer from an agent that did look the applicant up |
 | An agent takes credentials | Agents hold no Fineract password, only their runner token; no tool can read their environment | — |
 | A compromised job or adaptor uses the write-back login | The `agent-writeback` role: no disbursement, no user administration; paying a loan out takes a person in the web app | It can create clients and loans and approve them |
-| A compromised job uses the LOS | The intake token: search, create, and set aside a lead still in `new`. The eligibility token: read one opportunity, and move it from `qualifying` to `documents` or `paused`. The identity token: read an opportunity and its documents, record a check, and move it from `documents` to `assessing` or `paused`. The registration token: read an opportunity, its documents and its audit trail, and register a `qualified` one. The assessment token: read an opportunity and record its assessment, whose only move is a reject to `paused`. None records consents, edits or uploads, or moves an opportunity between stages other than its own (403) | Intake can read every opportunity: it searches them for duplicates. Eligibility can move any `qualifying` opportunity on to `documents`, identity any opportunity in `documents` on to `assessing`; identity and registration can read any opportunity's documents |
+| A compromised job uses the LOS | The intake token: search, create, and set aside a lead still in `new`. The eligibility token: read one opportunity, and move it from `qualifying` to `documents` or `paused`. The identity token: read an opportunity and its documents, record a check, and move it from `documents` to `assessing` or `paused`. The registration token: read an opportunity, its documents and their images, and its audit trail, and register a `qualified` one. The assessment token: read an opportunity and record its assessment, whose only move is a reject to `paused`. None records consents, edits or uploads, or moves an opportunity between stages other than its own (403) | Intake can read every opportunity: it searches them for duplicates. Eligibility can move any `qualifying` opportunity on to `documents`, identity any opportunity in `documents` on to `assessing`; identity and registration can read any opportunity's documents |
 | A forged or misleading identity document | The CURP read from the image must be the opportunity's, and the name must match; a mismatch goes to a person. The model's answer is data, checked by rules | A forgery with the right CURP and name; text in an image that misleads the model. The model is a reading aid: RENAPO verification stays with risk and the officer |
 | A compromised job uses the eligibility login | The `agent-eligibility` role: reading clients and loan products only (403 on anything else) | It can read any client's record and accounts |
-| A compromised job uses the registration login | The `agent-registration` role: no approval, disbursement or user administration; the bootstrap checks each refusal on every start | It can create and activate clients, submit loan applications and add notes |
+| A compromised job uses the registration login | The `agent-registration` role: no approval, disbursement or user administration; the bootstrap checks each refusal on every start | It can create and activate clients, attach documents to them, submit loan applications and add notes |
 | A compromised container moves sideways | Segmented networks: each database only from its application, agents only to their MCP server and Ollama | The worker is on `core` (the write-back job) |
-| Data leaves the machine | Fineract, the MCP servers and the agents have no route out | The web app, gateway and LOS (published ports), and Lightning and Ollama (downloads), do; the worker only with the host-Ollama override |
+| Data leaves the machine | Fineract, the MCP servers, the agents and the Conductor workers have no route out | The web app, gateway, LOS and Conductor (published ports), and Lightning and Ollama (downloads), do; the worker only with the host-Ollama override |
 | Container escape or privilege escalation | Read-only file systems, no capabilities, no privilege escalation, non-root users, process limits; root only in two one-shot jobs without a network | — |
 | Spoofed callbacks or agent calls | `X-OpenFn-Secret` on the gateway callbacks; a bearer token per agent runner; an API key on the Lightning webhook triggers, one for the loan triggers, one for intake and one for officers' eligibility, identity, assessment and registration requests (`[REDACTED]` in run data); a token per LOS caller | — |
+| Someone on the host uses Conductor's API to start, change or claim work (`--profile conductor`) | Its port is not published; on `CONDUCTOR_PORT`, nginx passes only GET requests to the API and refuses polling for tasks, admin and path parameters (`;`); workflows start only through `conductor-entry`, with the channels' or officers' key | Reading: anyone on the host can read every workflow's input and output in the UI (7.4) |
+| Workflow JavaScript reaches the server's Java (GHSA-77c4-x563-ccgr) | Conductor 3.34 with `CONDUCTOR_APP_GRAALJS_RESTRICTEDHOSTACCESS`; the sandbox's workflows use no JavaScript; definitions cannot be changed from the published port | — |
+| A compromised Conductor worker | Each workflow's worker holds only its own LOS token (and later its own Fineract login) and joins only the networks of the services it calls, checked in CI | What that workflow's LOS caller may do (3.3) |
 | Exhausted memory or processes | Memory and process limits; one case at a time per agent with a timeout; the 15-minute stall check | — |
 | Supply chain | Images pinned by tag or digest, Pi from a lockfile, OpenFn adaptors pinned to exact versions and built into the worker image from a lockfile (both checked in CI), Renovate updates, images built in CI | — |
 
@@ -462,9 +567,10 @@ This is a local evaluation sandbox. The model below says what protects what toda
 - **The webhook API key is set through Lightning's internal functions** (`lightning-webhook-auth`), as Lightning has no API for it: a Lightning upgrade that changes them makes the job, and so `up`, fail. On a new sandbox the triggers are open for the few seconds before the job's first run
 - **The bureau check is simulated**: the assessment's bureau result comes from the CURP's last character, not from a bureau. A real connector, with its consent evidence, replaces one job
 - **No TLS between services**, and Fineract's self-signed certificate is not verified
-- **Application data and the callback secret are stored in Lightning's run data** (the webhook bodies), and so are identity document images, which pass from the LOS to the vision model through it. Lightning can erase run data per project, which would also affect every workflow's history
+- **Application data and the callback secret are stored in Lightning's run data** (the webhook bodies), and so are identity document images, which pass through it from the LOS to the vision model and to Fineract. Lightning can erase run data per project, which would also affect every workflow's history
 - **The OpenFn worker can stop claiming runs after a reconnect** (a ws-worker bug, still in 1.30.0): a watchdog restarts it after 20 minutes without output. Cases submitted meanwhile turn `FAILED` and must be submitted again
 - **Agents can reach each other's runners** on `agents-llm` / `openfn-agents`; each runner requires its own token
+- **Conductor's UI needs no login** (`--profile conductor`): Conductor OSS has no authentication. The UI is read-only, but anyone on the host can read every workflow's input and output there, which hold applicants' names, CURPs and phone numbers. Lightning's UI requires a login
 
 ### 7.5 Measured agent reliability
 
@@ -483,3 +589,4 @@ With 3B models on CPU the agent rarely gives a usable, correct answer, so in pra
 - [los/README.md](los/README.md): the LOS's stages, rules and API
 - [python/README.md](../python/README.md): the MCP server, its tool profiles and its HTTP transport
 - [agentic-banking-openfn/README.md](../agentic-banking-openfn/README.md): the gateway and the OpenFn project, set up by hand without this sandbox
+- [agentic-banking-conductor/README.md](../agentic-banking-conductor/README.md): the commercial flow on Conductor OSS: definitions, workers, entry

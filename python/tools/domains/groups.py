@@ -4,10 +4,14 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
+import logging
+
 from langchain_core.tools import tool
 
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
+
+logger = logging.getLogger(__name__)
 
 # --- GROUP OPERATIONS ---
 
@@ -17,19 +21,19 @@ def list_groups(office_id: int = None):
     endpoint = "groups"
     if office_id:
         endpoint += f"?officeId={office_id}"
-    print("[Tool] Fetching Groups...")
+    logger.info("[Tool] Fetching Groups...")
     return fineract_client.execute_get(endpoint)
 
 @tool
 def get_group(group_id: int):
     """Answers: 'Show me details for group #12'"""
-    print(f"[Tool] Fetching details for Group #{group_id}...")
+    logger.info(f"[Tool] Fetching details for Group #{group_id}...")
     return fineract_client.execute_get(f"groups/{group_id}?associations=all")
 
 @tool
 def create_group(name: str, office_id: int, external_id: str = None):
     """Answers: 'Create a new lending group named "Alpha Group" in office 1'"""
-    print(f"[Tool] Creating Group '{name}'...")
+    logger.info(f"[Tool] Creating Group '{name}'...")
     payload = {
         "name": name,
         "officeId": office_id,
@@ -41,7 +45,7 @@ def create_group(name: str, office_id: int, external_id: str = None):
 @tool
 def activate_group(group_id: int):
     """Answers: 'Activate this pending group'"""
-    print(f"[Tool] Activating Group #{group_id}...")
+    logger.info(f"[Tool] Activating Group #{group_id}...")
     today = get_fineract_today()
     payload = {
         "activationDate": today,
@@ -53,7 +57,7 @@ def activate_group(group_id: int):
 @tool
 def add_group_member(group_id: int, client_id: int):
     """Answers: 'Add client #5 to group #12'"""
-    print(f"[Tool] Adding Client #{client_id} to Group #{group_id}...")
+    logger.info(f"[Tool] Adding Client #{client_id} to Group #{group_id}...")
     payload = {"clientMembers": [client_id]}
     return fineract_client.execute_post(f"groups/{group_id}?command=associateClients", payload)
 
@@ -65,19 +69,19 @@ def list_centers(office_id: int = None):
     endpoint = "centers"
     if office_id:
         endpoint += f"?officeId={office_id}"
-    print("[Tool] Fetching Centers...")
+    logger.info("[Tool] Fetching Centers...")
     return fineract_client.execute_get(endpoint)
 
 @tool
 def get_center(center_id: int):
     """Answers: 'Show me details for center #5'"""
-    print(f"[Tool] Fetching details for Center #{center_id}...")
+    logger.info(f"[Tool] Fetching details for Center #{center_id}...")
     return fineract_client.execute_get(f"centers/{center_id}?associations=groupMembers,collectionMeetingCalendar")
 
 @tool
 def create_center(name: str, office_id: int, external_id: str = None):
     """Answers: 'Create a new center named "Main Center" in office 1'"""
-    print(f"[Tool] Creating Center '{name}'...")
+    logger.info(f"[Tool] Creating Center '{name}'...")
     payload = {
         "name": name,
         "officeId": office_id,

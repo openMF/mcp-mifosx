@@ -1661,28 +1661,34 @@ workflows:
               `Eligibility: ${eligibility ? `moved to ${eligibility.to_stage} on ${day(eligibility.at)} (eligibility)` : 'not checked by the eligibility workflow'}`,
               `Identity: CURP ${read.curpClave} checked valid on ${day(document.checked_at)} (name ${read.fullName}, issued ${read.issueDate})`,
               `Qualified by: ${qualified ? `${qualified.actor} on ${day(qualified.at)}` : 'unknown'}`,
-              `Consents: bureau ${consent('bureau')}, SAT ${consent('sat')}, contact ${consent('contact')}`
+              `Consents: bureau ${consent('bureau')}, SAT ${consent('sat')}, contact ${consent('contact')}`,
+              `Identity document: attached to the client (LOS document ${document.id})`
             ].join('\n');
-            return { opportunity, note };
+            // The image the identity check found valid, for the client's documents
+            const image = (await get(`/opportunities/${id}/documents/${document.id}/content`, { parseAs: 'base64' })(state)).data;
+            return { opportunity, note, document: { id: document.id, contentType: document.content_type, curp: read.curpClave,
+              checkedOn: day(document.checked_at), image } };
           });
 
       register-in-fineract:
-        name: Create the Client, Loan Application and Note in Fineract
+        name: Create the Client, its Identity Document, the Loan Application and Note in Fineract
         adaptor: "@openfn/language-http@7.3.3"
         credential: super@openfn.org-fineract-registration
         enabled: true
         body: |
-          // The client (external ID: the CURP), the loan application (external ID:
-          // the opportunity's) and a note for Credit. A rerun reuses what exists,
+          // The client (external ID: the CURP), its identity document (the CURP image
+          // the identity check found valid), the loan application (external ID: the
+          // opportunity's) and a note for Credit, in that order. A rerun reuses what exists,
           // so a run that stopped half way can be asked again; anything that does
-          // not match goes to a person (needs_review) and nothing more is created.
+          // not match (a closed client, a loan that differs, a mobile number another
+          // client has) goes to a person (needs_review) and nothing more is created.
           // Never approves: agent-registration may not (fineract-rbac.json).
           // Uses the "fineract-registration" credential (raw JSON):
           //   { baseUrl, username, password, tenantId, productId, officeId, tls }
           fn(async state => {
             if (state.result) return state;
             const cfg = state.configuration || {};
-            const { opportunity, note } = state;
+            const { opportunity, note, document } = state;
             const opts = { headers: { 'Fineract-Platform-TenantId': cfg.tenantId || 'default' } };
             const productId = Number(cfg.productId || 1);
             const idOf = v => (v && typeof v === 'object' ? v.id : v);
@@ -1701,6 +1707,32 @@ workflows:
             };
             const stop = (decision, reasons) => ({ result: { decision, opportunityId: opportunity.id,
               externalId: opportunity.external_id, stage: opportunity.stage, reasons } });
+            // Fineract allows one client per mobile number: a new client with one that
+            // another client has is refused (HTTP 403, error.msg.client.duplicate.mobileNo)
+            const phoneInUse = e => {
+              let body = e && e.body;
+              if (typeof body === 'string') {
+                try { body = JSON.parse(body); } catch (_) { body = null; }
+              }
+              if (!e || e.statusCode !== 403 || !body || typeof body !== 'object') return false;
+              const code = 'error.msg.client.duplicate.mobileNo';
+              return body.userMessageGlobalisationCode === code
+                || (Array.isArray(body.errors) && body.errors.some(x => x && x.userMessageGlobalisationCode === code));
+            };
+            // The client that has the number, by id and account only: that person's
+            // details stay in Fineract, for the officer to open there. The search
+            // also matches names and external IDs, so only a row whose mobile number
+            // is this one names a client.
+            const phoneOwner = async phone => {
+              try {
+                const found = (await get(`/search?query=${encodeURIComponent(phone)}&resource=clients&exactMatch=true`,
+                  { ...opts, timeout: 15000 })(state)).data || [];
+                const owner = found.find(r => r.entityType === 'CLIENT' && String(r.entityMobileNo || '') === phone);
+                return owner ? `Fineract client ${owner.entityId} (account ${owner.entityAccountNo})` : 'another Fineract client';
+              } catch (e) {
+                return 'another Fineract client';
+              }
+            };
 
             // The product still fits: the amount is never changed to fit it
             const product = (await get(`/loanproducts/${productId}`, opts)(state)).data;
@@ -1741,18 +1773,48 @@ workflows:
               // María José / López García; with two words, the second is the surname
               const words = opportunity.full_name.trim().split(/\s+/);
               const surnames = words.length >= 3 ? 2 : 1;
-              clientId = (await post('/clients', {
-                officeId: Number(cfg.officeId || 1),
-                firstname: words.length > 1 ? words.slice(0, -surnames).join(' ') : words[0],
-                lastname: words.length > 1 ? words.slice(-surnames).join(' ') : 'NA',
-                legalFormId: 1,
-                active: true,
-                activationDate: today,
-                externalId: opportunity.national_id,
-                ...(opportunity.email ? { emailAddress: opportunity.email } : {}),
-                ...(opportunity.phone ? { mobileNo: opportunity.phone } : {}),
-                ...dates
-              }, opts)(state)).data.clientId;
+              try {
+                clientId = (await post('/clients', {
+                  officeId: Number(cfg.officeId || 1),
+                  firstname: words.length > 1 ? words.slice(0, -surnames).join(' ') : words[0],
+                  lastname: words.length > 1 ? words.slice(-surnames).join(' ') : 'NA',
+                  legalFormId: 1,
+                  active: true,
+                  activationDate: today,
+                  externalId: opportunity.national_id,
+                  ...(opportunity.email ? { emailAddress: opportunity.email } : {}),
+                  ...(opportunity.phone ? { mobileNo: opportunity.phone } : {}),
+                  ...dates
+                }, opts)(state)).data.clientId;
+              } catch (e) {
+                if (!phoneInUse(e)) throw e;
+                return stop('needs_review', [{ code: 'phone_in_use',
+                  detail: `mobile number ${opportunity.phone} already belongs to ${await phoneOwner(opportunity.phone)}; Fineract allows one client per mobile number` }]);
+              }
+            }
+
+            // The identity document the check found valid, on the client, once per LOS
+            // document. Jobs have Buffer but no FormData, so the multipart body is
+            // built here: name, description, then the file itself.
+            const tag = `LOS document ${document.id}`;
+            const attached = (await get(`/clients/${clientId}/documents`, opts)(state)).data || [];
+            if (!attached.some(d => String(d.description || '').includes(tag))) {
+              const boundary = `----los-${Math.random().toString(16).slice(2)}${Date.now().toString(16)}`;
+              const field = (name, value) => `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`;
+              // The LOS document's id makes the name unique: Fineract's S3 store
+              // keys files by client and name, so a returning applicant's second
+              // image would otherwise replace the first.
+              const filename = `curp-${document.curp}-${document.id}.${document.contentType === 'image/png' ? 'png' : 'jpg'}`;
+              const body = Buffer.concat([
+                Buffer.from(field('name', `CURP ${document.curp}`)
+                  + field('description', `Identity document checked valid on ${document.checkedOn}; ${tag}`)
+                  + `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n`
+                  + `Content-Type: ${document.contentType}\r\n\r\n`),
+                Buffer.from(document.image, 'base64'),
+                Buffer.from(`\r\n--${boundary}--\r\n`)
+              ]);
+              await post(`/clients/${clientId}/documents`, body,
+                { headers: { ...opts.headers, 'Content-Type': `multipart/form-data; boundary=${boundary}` } })(state);
             }
 
             // The loan application, by the opportunity's external ID: reused only
@@ -1814,7 +1876,10 @@ workflows:
           // Uses the "los-registration" credential, like the first job.
           fn(async state => {
             if (state.result) {
-              console.log('registration', JSON.stringify(state.result));
+              // The decision and reason codes only: a reason's detail can hold the
+              // applicant's data, such as a mobile number
+              console.log('registration', state.result.decision,
+                (state.result.reasons || []).map(r => r.code).join(',') || '-');
               return state.result;
             }
             const { opportunity, clientId, loanId } = state;

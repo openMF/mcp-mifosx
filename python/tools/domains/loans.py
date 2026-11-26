@@ -3,6 +3,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import logging
 from typing import Optional
 
 from langchain_core.tools import tool
@@ -11,18 +12,20 @@ from tools.domains.products import product_required
 from tools.mcp_adapter import fineract_client
 from tools.utils import get_fineract_today
 
+logger = logging.getLogger(__name__)
+
 # --- LOAN READ OPERATIONS ---
 
 @tool
 def get_loan_details(loan_id: int):
     """Answers: 'What is the status and outstanding balance of Loan #12345?'"""
-    print(f"[Tool] Fetching summary details for Loan #{loan_id}...")
+    logger.info(f"[Tool] Fetching summary details for Loan #{loan_id}...")
     return fineract_client.execute_get(f"loans/{loan_id}")
 
 @tool
 def get_repayment_schedule(loan_id: int):
     """Answers: 'What is the repayment schedule for Loan #12345?'"""
-    print(f"[Tool] Fetching repayment schedule for Loan #{loan_id}...")
+    logger.info(f"[Tool] Fetching repayment schedule for Loan #{loan_id}...")
     response = fineract_client.execute_get(f"loans/{loan_id}?associations=repaymentSchedule")
     if "error" in response: return response
     return response.get("repaymentSchedule", {})
@@ -31,7 +34,7 @@ def get_repayment_schedule(loan_id: int):
 def get_loan_history(loan_id: int):
     """Answers: 'Show me the full transaction history for Loan #12345', 'What was the last repayment?',
     'How much has been paid so far on this loan?', 'Create a loan with the same terms as the previous cycle'"""
-    print(f"[Tool] Fetching full transaction history for Loan #{loan_id}...")
+    logger.info(f"[Tool] Fetching full transaction history for Loan #{loan_id}...")
     response = fineract_client.execute_get(
         f"loans/{loan_id}?associations=transactions,repaymentSchedule,charges"
     )
@@ -95,7 +98,7 @@ def get_loan_history(loan_id: int):
 @tool
 def get_overdue_loans(client_id: int):
     """Answers: 'Show me all overdue loans for this client' or 'Which loans are in arrears?'"""
-    print(f"[Tool] Fetching overdue loans for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching overdue loans for Client #{client_id}...")
     response = fineract_client.execute_get(f"loans?clientId={client_id}&loanStatus=300&inArrears=true&associations=repaymentSchedule")
     if "error" in response:
         return response
@@ -150,7 +153,8 @@ def create_loan(client_id: int, principal: float, months: int, product_id: Optio
     """Answers: 'Create a new loan for Client X for MXN 20,000 over 12 months'
     product_id has to be one of this tenant's loan products; without it nothing is created
     and the error lists them."""
-    print(f"[Tool] Creating {principal} loan for Client #{client_id}...")
+    # Principal is financial data; log the action, never the amount.
+    logger.info(f"[Tool] Creating a loan for Client #{client_id}...")
     if product_id is None:
         return product_required("loan")
     terms = _product_terms(f"templateType=individual&clientId={client_id}&productId={product_id}", product_id)
@@ -181,7 +185,8 @@ def create_group_loan(group_id: int, principal: float, months: int, product_id: 
     """Answers: 'Create a group loan for Group #5 for $10,000 over 6 months'
     product_id has to be one of this tenant's loan products; without it nothing is created
     and the error lists them."""
-    print(f"[Tool] Creating {principal} group loan for Group #{group_id}...")
+    # Principal is financial data; log the action, never the amount.
+    logger.info(f"[Tool] Creating a group loan for Group #{group_id}...")
     if product_id is None:
         return product_required("loan")
     terms = _product_terms(f"templateType=group&groupId={group_id}&productId={product_id}", product_id)
@@ -224,13 +229,13 @@ def approve_and_disburse_loan(loan_id: int, amount: float = None, already_approv
 
     # Step 1: Approve
     if not already_approved:
-        print(f"[Tool] Approving Loan #{loan_id}...")
+        logger.info(f"[Tool] Approving Loan #{loan_id}...")
         approve_payload = {**base_payload, "approvedOnDate": today, "note": "AI Approved"}
         approval = fineract_client.execute_post(f"loans/{loan_id}?command=approve", approve_payload)
         if "error" in approval: return approval
 
     # Step 2: Disburse
-    print(f"[Tool] Disbursing Loan #{loan_id}...")
+    logger.info(f"[Tool] Disbursing Loan #{loan_id}...")
     disburse_payload = {**base_payload, "actualDisbursementDate": today}
     if amount: disburse_payload["transactionAmount"] = amount
 
@@ -262,7 +267,7 @@ def approve_and_disburse_loan(loan_id: int, amount: float = None, already_approv
 @tool
 def reject_loan_application(loan_id: int, note: str = "Rejected via AI Agent due to risk profile"):
     """Answers: 'Reject this loan application'"""
-    print(f"[Tool] Rejecting Loan #{loan_id}...")
+    logger.info(f"[Tool] Rejecting Loan #{loan_id}...")
     today = get_fineract_today()
 
     payload = {
@@ -282,7 +287,8 @@ def make_loan_repayment(loan_id: int, amount: float, payment_type_id: Optional[i
     payment_type_id records how the money arrived, when the caller knows it (payment types
     are tenant-specific, so nothing is guessed). A repayment does not need one in Fineract,
     so it is left out of the request when not given."""
-    print(f"[Tool] Logging repayment of {amount} on Loan #{loan_id}...")
+    # The amount is financial data; log the action, never the value.
+    logger.info(f"[Tool] Logging a repayment on Loan #{loan_id}...")
     today = get_fineract_today()
 
     payload = {
@@ -298,7 +304,8 @@ def make_loan_repayment(loan_id: int, amount: float, payment_type_id: Optional[i
 @tool
 def apply_late_fee(loan_id: int, fee_amount: float, charge_id: int = 2):
     """Answers: 'Apply a late fee to the last missed installment'"""
-    print(f"[Tool] Applying late fee of {fee_amount} to Loan #{loan_id}...")
+    # The fee amount is financial data; log the action, never the value.
+    logger.info(f"[Tool] Applying a late fee to Loan #{loan_id}...")
     today = get_fineract_today()
 
     payload = {
@@ -313,7 +320,8 @@ def apply_late_fee(loan_id: int, fee_amount: float, charge_id: int = 2):
 @tool
 def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waiver"):
     """Answers: 'Waive $50 of interest on this loan to help the client'"""
-    print(f"[Tool] Waiving interest of {amount} on Loan #{loan_id}...")
+    # The amount is financial data; log the action, never the value.
+    logger.info(f"[Tool] Waiving interest on Loan #{loan_id}...")
     today = get_fineract_today()
 
     payload = {
@@ -331,7 +339,7 @@ def waive_interest(loan_id: int, amount: float, note: str = "AI Authorized Waive
 @tool
 def undo_loan_approval(loan_id: int):
     """Answers: 'Undo the approval for Loan #123' or 'Reverse loan approval so we can modify terms'"""
-    print(f"[Tool] Undoing approval for Loan #{loan_id}...")
+    logger.info(f"[Tool] Undoing approval for Loan #{loan_id}...")
     payload = {
         "note": "Approval undone via AI Agent"
     }
@@ -340,7 +348,7 @@ def undo_loan_approval(loan_id: int):
 @tool
 def undo_loan_disbursal(loan_id: int):
     """Answers: 'Undo the disbursal for Loan #123' or 'Reverse the disbursement so we can correct the amount'"""
-    print(f"[Tool] Undoing disbursal for Loan #{loan_id}...")
+    logger.info(f"[Tool] Undoing disbursal for Loan #{loan_id}...")
     payload = {
         "note": "Disbursal undone via AI Agent"
     }
@@ -350,7 +358,7 @@ def undo_loan_disbursal(loan_id: int):
 def get_loan_template(client_id: int, product_id: int = None):
     """Answers: 'What are the default loan terms for this client?' or 'Show loan application template for client 5'
     Returns the pre-filled template for creating a loan application, including product defaults and charge options."""
-    print(f"[Tool] Fetching loan template for Client #{client_id}...")
+    logger.info(f"[Tool] Fetching loan template for Client #{client_id}...")
     params = f"templateType=individual&clientId={client_id}"
     if product_id:
         params += f"&productId={product_id}"
@@ -387,7 +395,7 @@ def reschedule_loan(loan_id: int, reschedule_from_date: str, adjusted_due_date: 
     Fineract requires a reschedule reason (a LoanRescheduleReason code value). Without
     reschedule_reason_id nothing is submitted; the reasons configured in Fineract are
     returned so the user can pick one."""
-    print(f"[Tool] Submitting reschedule request for Loan #{loan_id}...")
+    logger.info(f"[Tool] Submitting reschedule request for Loan #{loan_id}...")
     if reschedule_reason_id is None:
         return _reschedule_reason_required()
     today = get_fineract_today()
@@ -420,7 +428,7 @@ def update_loan(
     product_id: Optional[int] = None,
 ):
     """Answers: 'Update Loan #123 to increase principal to $25,000' or 'Change loan term to 18 months'"""
-    print(f"[Tool] Updating Loan #{loan_id}...")
+    logger.info(f"[Tool] Updating Loan #{loan_id}...")
 
     # Validate input types
     if not isinstance(loan_id, int) or loan_id <=0:

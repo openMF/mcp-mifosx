@@ -10,6 +10,10 @@
 #   curl http://localhost:8080/actuator/health   Agentic gateway (loan API)
 #   open http://localhost:8090/docs   LOS: commercial opportunities (los/README.md)
 #
+# The commercial flow on Conductor OSS too, for comparison (optional):
+#   docker compose --profile conductor up -d
+#   open http://localhost:8100   Conductor's UI (read-only)
+#
 # Local models (optional, several GB to download on first start):
 #   docker compose --profile ollama up -d
 # Without the profile the OpenFn jobs fall back to rule-based decisions, or
@@ -42,9 +46,13 @@
 #   agent-<name> - internal: one agent and its MCP server
 #   openfn-agents - internal: the OpenFn worker and the agents' runners
 #   los          - internal: the LOS and its database (no route to Fineract)
-#   los-api      - internal: the LOS API for the OpenFn worker (the opportunity workflows)
-#   web-app-edge, lightning-edge, gateway-edge, los-edge - one published port each
-#                  (lightning-edge also for the npm adaptor catalogue)
+#   los-api      - internal: the LOS API for the OpenFn worker and the Conductor
+#                  workers (the opportunity workflows)
+#   conductor-db - internal: Conductor and its database (--profile conductor)
+#   conductor    - internal: Conductor, its workers, entry and setup
+#   web-app-edge, lightning-edge, gateway-edge, los-edge, conductor-edge - one
+#                  published port each (lightning-edge also for the npm adaptor
+#                  catalogue)
 #   llm-egress   - Ollama, to download models
 #   host-ollama  - only with docker-compose.host-ollama.yml: the OpenFn worker,
 #                  to reach an Ollama server on the Docker host
@@ -74,6 +82,27 @@ x-postgres: &postgres
   user: postgres
   tmpfs: ["/run/postgresql:uid=70,gid=70,mode=0775,size=1m", "/tmp:size=16m"]
   pids_limit: 512
+
+# The Conductor workers, entry and setup: one image, built once
+# (../agentic-banking-conductor), run with a different command each.
+x-conductor-node: &conductor-node
+  <<: *hardened
+  build: ../agentic-banking-conductor
+  image: agentic-mifos-sandbox-conductor-node
+  profiles: [conductor]
+  # Forwards signals to node and reaps its children.
+  init: true
+  # On stop, a worker lets its poll under way and its running tasks finish and
+  # report before it exits: at most 14 s for the poll, its tasks' longest time
+  # limit (their runs are cut there) and 114 s to report (src/worker.mjs,
+  # drainSeconds), so 188 s for intake. An idle worker stops at once. A worker
+  # with longer tasks sets a longer period.
+  stop_grace_period: 195s
+  # The node image's unprivileged user (uid 1000).
+  user: node
+  tmpfs: ["/tmp:size=16m"]
+  networks: [conductor]
+  pids_limit: 64
 
 # Models: the decision agent's (text) and the identity document job's
 # (vision). ollama-pull downloads both.
@@ -113,6 +142,8 @@ services:
     depends_on:
       fineract-db:
         condition: service_healthy
+      state-init:
+        condition: service_completed_successfully
     environment:
       SPRING_PROFILES_ACTIVE: test,diagnostics
       FINERACT_NODE_ID: 1
@@ -132,6 +163,9 @@ services:
       FINERACT_SERVER_SSL_ENABLED: "true"
       FINERACT_INSECURE_HTTP_CLIENT: "true"
       FINERACT_EXTERNAL_EVENTS_ENABLED: "false"
+      # Documents (clients' identity documents, uploads from the web app) on a
+      # volume: the rest of the file system is read-only.
+      FINERACT_CONTENT_FILESYSTEM_ROOT_FOLDER: /var/lib/fineract/documents
       JAVA_TOOL_OPTIONS: >-
         -Xmx1536m -Xms512m
         -XX:+UseG1GC -XX:MaxGCPauseMillis=200
@@ -148,6 +182,8 @@ services:
     # Docker's init reaps them.
     init: true
     tmpfs: ["/tmp:size=128m"]
+    volumes:
+      - fineract-documents:/var/lib/fineract/documents
     networks: [fineract-db, core]
     mem_limit: 2g
     pids_limit: 1024
@@ -220,16 +256,18 @@ services:
     restart: unless-stopped
 
   # Hands the shared bootstrap-state volume to uid 1000 (the Lightning and
-  # bootstrap images), so neither needs to run as root. FOWNER: on later runs
-  # the folder already belongs to 1000, and root needs it to chmod.
+  # bootstrap images), and the fineract-documents volume to nobody (65534,
+  # Fineract), so none of them needs to run as root. FOWNER: on later runs the
+  # folders already belong to those users, and root needs it to chmod.
   state-init:
     <<: *hardened
     image: busybox:1.38
-    command: ["sh", "-c", "chown 1000:1000 /state && chmod 700 /state"]
+    command: ["sh", "-c", "chown 1000:1000 /state && chmod 700 /state && chown 65534:65534 /fineract-documents && chmod 700 /fineract-documents"]
     user: root
     cap_add: [CHOWN, FOWNER]
     volumes:
       - bootstrap-state:/state
+      - fineract-documents:/fineract-documents
     network_mode: none
     mem_limit: 32m
     pids_limit: 32
@@ -834,6 +872,163 @@ services:
     pids_limit: 256
     restart: unless-stopped
 
+  # Conductor OSS (`--profile conductor`): the commercial flow's workflows on a
+  # second engine, for comparison with OpenFn (../agentic-banking-conductor).
+  # Its workers sign in to the LOS and Fineract as the same callers and users
+  # as the OpenFn jobs. Conductor's API has no authentication: only
+  # conductor-entry, with the channels' and officers' API keys, starts
+  # workflows, and the UI on CONDUCTOR_PORT is read-only
+  # (conductor/nginx/default.conf).
+  conductor-db:
+    <<: *postgres
+    image: postgres:18.6-alpine
+    profiles: [conductor]
+    environment:
+      POSTGRES_USER: postgres
+      # Superuser, used only by the init script; Conductor never sees it.
+      POSTGRES_PASSWORD: ${CONDUCTOR_DB_ADMIN_PASSWORD:?run scripts/gen-secrets.sh}
+      CONDUCTOR_APP_DB_USER: conductor
+      CONDUCTOR_APP_DB_PASSWORD: ${CONDUCTOR_DB_APP_PASSWORD:?run scripts/gen-secrets.sh}
+    volumes:
+      - ./conductor/postgresql-init.sh:/docker-entrypoint-initdb.d/01-init.sh:ro
+      - conductor-db-data:/var/lib/postgresql
+    healthcheck:
+      # Over TCP: passes once the init script has created the conductor database.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d conductor"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [conductor-db]
+    mem_limit: 256m
+    restart: unless-stopped
+
+  # The server and its UI in one container (nginx serves the UI and proxies
+  # the API). Postgres holds the state, the queues and the search index: no
+  # Redis or Elasticsearch. Settings are environment variables, not a mounted
+  # file. Measured: 370 MiB idle, 460 MiB with 200 workflows running.
+  conductor:
+    <<: *hardened
+    # 3.34 adds the setting that stops workflow JavaScript from reaching Java
+    # (GHSA-77c4-x563-ccgr): with no authentication, anyone who reaches the
+    # API could otherwise run commands on the server.
+    image: ${CONDUCTOR_IMAGE:-conductoross/conductor:3.34.1@sha256:ca62931a90c439519d63b58776013ea33ba0183153b1c3802160b91841ffd536}
+    profiles: [conductor]
+    depends_on:
+      conductor-db:
+        condition: service_healthy
+    environment:
+      CONDUCTOR_DB_TYPE: postgres
+      CONDUCTOR_QUEUE_TYPE: postgres
+      CONDUCTOR_EXTERNALPAYLOADSTORAGE_TYPE: postgres
+      CONDUCTOR_INDEXING_ENABLED: "true"
+      CONDUCTOR_INDEXING_TYPE: postgres
+      # Keeps it from connecting to Elasticsearch
+      CONDUCTOR_ELASTICSEARCH_VERSION: "0"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://conductor-db:5432/conductor
+      SPRING_DATASOURCE_USERNAME: conductor
+      SPRING_DATASOURCE_PASSWORD: ${CONDUCTOR_DB_APP_PASSWORD}
+      # One evaluation of a workflow at a time, locked in Postgres
+      CONDUCTOR_APP_WORKFLOWEXECUTIONLOCKENABLED: "true"
+      CONDUCTOR_WORKFLOWEXECUTIONLOCK_TYPE: postgres
+      # Less database traffic: poll data flushed every 5 s, workflows indexed
+      # when their status changes rather than after every task
+      CONDUCTOR_POSTGRES_POLLDATAFLUSHINTERVAL: "5000"
+      CONDUCTOR_POSTGRES_POLLDATACACHEVALIDITYPERIOD: "5000"
+      CONDUCTOR_POSTGRES_ONLYINDEXONSTATUSCHANGE: "true"
+      # The server polls its system-task queues every 50 ms and its event
+      # queues every 100 ms by default; the workflows here use workers only.
+      # Measured idle: its database at 7-10% of a core with these (11-15%
+      # without), the server at 8-10% either way (its sweeper and scheduler).
+      CONDUCTOR_APP_SYSTEMTASKWORKERPOLLINTERVAL: 1s
+      CONDUCTOR_APP_EVENTQUEUEPOLLINTERVAL: 1s
+      CONDUCTOR_APP_GRAALJS_RESTRICTEDHOSTACCESS: "true"
+      # Definitions name no owner email
+      CONDUCTOR_APP_OWNEREMAILMANDATORY: "false"
+      # No AI tasks: the decision agent is called by a worker, as from OpenFn
+      CONDUCTOR_INTEGRATIONS_AI_ENABLED: "false"
+      LOADSAMPLE: "false"
+      # The nginx user's home is read-only: GraalVM's cache and the server's
+      # payload folder go to /tmp
+      JAVA_OPTS: -Duser.home=/tmp
+    healthcheck:
+      # The Alpine-based image has BusyBox's wget, not curl.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    # The image starts nginx in the background and the server under a shell.
+    init: true
+    # The image's nginx user, which owns nginx's folders; the server runs as it too.
+    user: "100:101"
+    tmpfs:
+      - /tmp:uid=100,gid=101,mode=0700,size=64m
+      - /app/logs:uid=100,gid=101,mode=0700,size=16m
+      - /var/lib/nginx/tmp:uid=100,gid=101,mode=0700,size=16m
+      - /var/log/nginx:uid=100,gid=101,mode=0700,size=8m
+      - /run/nginx:uid=100,gid=101,mode=0700,size=1m
+    # A folder, not a single file: a file bind mount breaks when git replaces it.
+    # Replaces the image's site (Alpine's nginx reads sites from http.d).
+    volumes:
+      - ./conductor/nginx:/etc/nginx/http.d:ro
+    ports:
+      - "127.0.0.1:${CONDUCTOR_PORT:-8100}:5000"
+    # conductor-edge: only for the published port.
+    networks: [conductor-db, conductor, conductor-edge]
+    mem_limit: 1g
+    pids_limit: 512
+    restart: unless-stopped
+
+  # Loads definitions/ into Conductor on every `up`.
+  conductor-setup:
+    <<: *conductor-node
+    command: ["src/setup.mjs"]
+    depends_on:
+      conductor:
+        condition: service_healthy
+    environment:
+      CONDUCTOR_URL: http://conductor:8080
+    mem_limit: 128m
+    restart: "no"
+
+  # Starts workflows for callers with an API key, at /i/<workflow> on
+  # CONDUCTOR_PORT (through the conductor container's nginx).
+  conductor-entry:
+    <<: *conductor-node
+    command: ["src/entry.mjs"]
+    depends_on:
+      conductor-setup:
+        condition: service_completed_successfully
+    environment:
+      CONDUCTOR_URL: http://conductor:8080
+      ENTRY_INTAKE_API_KEY: ${OPENFN_INTAKE_API_KEY:?run scripts/gen-secrets.sh}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8000/health').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    mem_limit: 128m
+    restart: unless-stopped
+
+  # One worker per workflow, each with only its own credentials and networks.
+  conductor-intake:
+    <<: *conductor-node
+    command: ["src/worker.mjs", "intake"]
+    depends_on:
+      conductor-setup:
+        condition: service_completed_successfully
+      los:
+        condition: service_healthy
+    environment:
+      CONDUCTOR_URL: http://conductor:8080
+      LOS_URL: http://los:8000
+      LOS_TOKEN: ${LOS_INTAKE_TOKEN}
+      WORKER_CONCURRENCY: ${CONDUCTOR_WORKER_CONCURRENCY:-2}
+    # los-api: the LOS, without its database
+    networks: [conductor, los-api]
+    mem_limit: 128m
+    restart: unless-stopped
+
 networks:
   fineract-db:
     internal: true
@@ -860,10 +1055,17 @@ networks:
   gateway-edge: {}
   los-edge: {}
   llm-egress: {}
+  conductor-db:
+    internal: true
+  conductor:
+    internal: true
+  conductor-edge: {}
 
 volumes:
   fineract-db-data: {}
+  fineract-documents: {}
   lightning-db-data: {}
   bootstrap-state: {}
   ollama-data: {}
   los-db-data: {}
+  conductor-db-data: {}
