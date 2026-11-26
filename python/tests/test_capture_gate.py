@@ -155,6 +155,18 @@ def test_validate_directory_returns_error_sentinel(tmp_path, monkeypatch):
     assert r["error"].startswith(str(tmp_path))
 
 
+def test_validate_directory_returns_error_sentinel_when_open_denies_it(tmp_path, monkeypatch):
+    """A directory gets the is-a-directory sentinel even where open() raises PermissionError, as on Windows."""
+    monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
+
+    def windows_open(path, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", path)
+
+    monkeypatch.setattr(doc_domain, "open", windows_open, raising=False)
+    r = doc_domain.validate_capture_quality.func(str(tmp_path))
+    assert r == {"error": f"{tmp_path} is a directory — pass the photo file"}
+
+
 def test_validate_corrupt_file_returns_error_sentinel(tmp_path, monkeypatch):
     """A capture dir file that is not a decodable image yields an error sentinel."""
     monkeypatch.setenv("MIFOSX_CAPTURE_DIR", str(tmp_path))
