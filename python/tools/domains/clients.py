@@ -212,7 +212,7 @@ def get_client_transactions(client_id: int):
 def get_client_addresses(client_id: int):
     """Answers: 'Where does this client live?' or 'Show me the home address for client 844'"""
     logger.info(f"[Tool] Fetching addresses for Client #{client_id}...")
-    return fineract_client.execute_get(f"clients/{client_id}/addresses")
+    return fineract_client.execute_get(f"client/{client_id}/addresses")
 
 @tool
 def update_client(
