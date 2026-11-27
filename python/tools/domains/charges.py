@@ -29,7 +29,7 @@ def get_charge(charge_id: int):
 # --- CHARGE WRITE OPERATIONS ---
 
 @tool
-def create_charge(name: str, amount: float, currency_code: str = "USD",
+def create_charge(name: str, amount: float, currency_code: str,
                   charge_applies_to: int = 1, charge_time_type: int = 2,
                   charge_calculation_type: int = 1, is_penalty: bool = False,
                   is_active: bool = True):
@@ -37,12 +37,16 @@ def create_charge(name: str, amount: float, currency_code: str = "USD",
     charge_applies_to: 1=Loan, 2=Savings, 3=Client
     charge_time_type: 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee
     charge_calculation_type: 1=Flat, 2=% of Amount
+    currency_code is the charge's currency (e.g. "USD"). Fineract only attaches a charge to a loan
+    or savings account in the same currency, and that differs per tenant, so it is not guessed.
     """
+    if not isinstance(currency_code, str) or not currency_code.strip():
+        return {"error": "currency_code is required for a charge (e.g. \"USD\") and cannot be blank."}
     logger.info(f"[Tool] Creating charge: {name}...")
     payload = {
         "name": name,
         "amount": amount,
-        "currencyCode": currency_code,
+        "currencyCode": currency_code.strip(),
         "chargeAppliesTo": charge_applies_to,
         "chargeTimeType": charge_time_type,
         "chargeCalculationType": charge_calculation_type,
