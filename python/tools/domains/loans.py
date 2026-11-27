@@ -46,7 +46,7 @@ def get_loan_history(loan_id: int):
     'How much has been paid so far on this loan?', 'Create a loan with the same terms as the previous cycle'"""
     logger.info(f"[Tool] Fetching full transaction history for Loan #{loan_id}...")
     response = fineract_client.execute_get(
-        f"loans/{loan_id}?associations=transactions,repaymentSchedule,charges"
+        f"loans/{loan_id}?associations=transactions,repaymentSchedule,charges,notes"
     )
     if "error" in response:
         return response
@@ -55,6 +55,14 @@ def get_loan_history(loan_id: int):
     summary   = response.get("summary", {})
     timeline  = response.get("timeline", {})
     status    = response.get("status", {}).get("value", "Unknown")
+
+    # Fineract returns loan and transaction notes together, newest first.
+    notes_by_transaction = {}
+    for note in response.get("notes") or []:
+        transaction_id = note.get("loanTransactionId")
+        note_text = note.get("note")
+        if transaction_id is not None and note_text is not None:
+            notes_by_transaction.setdefault(transaction_id, note_text)
 
     # --- Extract and clean each transaction ---
     raw_txns = response.get("transactions", [])
@@ -71,6 +79,7 @@ def get_loan_history(loan_id: int):
             "interestPortion":   t.get("interestPortion"),
             "feeChargesPortion": t.get("feeChargesPortion"),
             "outstandingLoanBalance": t.get("outstandingLoanBalance"),
+            "noteText":     notes_by_transaction.get(t.get("id")),
         })
 
     # --- Extract applied charges ---
