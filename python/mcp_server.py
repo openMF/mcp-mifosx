@@ -998,10 +998,17 @@ def withdraw(accountId: int, amount: float, paymentTypeId: int = None) -> dict:
 @mcp.tool()
 @safe_tool("apply_savings_fee")
 def apply_savings_fee(accountId: int, amount: float, chargeId: int = None) -> dict:
-    """Apply a charge/block to a savings account, due today.
+    """Apply a charge/block to a savings account, due today. Validates accountId exists and is in Active status before executing.
     chargeId is the charge to apply (a savings charge with a specified due date). If it is
     missing, nothing is charged and the error lists the available charges
     (id = name (default amount)) so you can ask the user which one applies."""
+    check = get_savings_account.func(accountId)
+    if not isinstance(check, dict) or "error" in check:
+        return _prefetch_failure(check, f"Savings account ID {accountId} not found. Check get_client_accts to see valid savingsIds.")
+    status_obj = check.get("status")
+    status = (status_obj.get("value") or "") if isinstance(status_obj, dict) else (status_obj or "")
+    if str(status).strip().casefold() != "active":
+        return {"error": f"Savings account {accountId} is in status '{status}'. Only Active accounts can have fees applied."}
     if chargeId is None:
         return _charge_required("Savings")
     return apply_savings_charge.func(accountId, amount, chargeId)
