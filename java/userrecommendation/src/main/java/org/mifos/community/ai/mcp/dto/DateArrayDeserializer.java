@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.JsonDeserializer;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 
 /**
  * Custom deserializer to convert dates represented as arrays
@@ -41,7 +42,7 @@ public class DateArrayDeserializer extends JsonDeserializer<String> {
 
             LocalDate date = LocalDate.of(year, month, day);
 
-            DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy");
+            DateTimeFormatter dtf = DateTimeFormatter.ofPattern("dd MMMM yyyy", Locale.ENGLISH);
             String formattedDate = date.format(dtf);
 
             return formattedDate;
