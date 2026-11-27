@@ -60,7 +60,7 @@ def get_loan_history(loan_id: int):
     raw_txns = response.get("transactions", [])
     transactions = []
     for t in raw_txns:
-        if t.get("reversed", False):          # skip reversed/voided entries
+        if t.get("reversed") or t.get("manuallyReversed"):
             continue
         transactions.append({
             "id":           t.get("id"),
