@@ -15,6 +15,7 @@ import mcp_server
 from core import api_server
 from tools.mcp_adapter import fineract_client
 
+ACTIVE_SAVINGS = {"id": 8, "status": {"value": "Active"}}
 CHARGES = [
     {"id": 1, "name": "Withdrawal fee", "amount": 2, "active": True,
      "chargeAppliesTo": {"value": "Savings"}, "chargeTimeType": {"value": "Withdrawal Fee"}},
@@ -37,9 +38,11 @@ def _call(**kwargs: Any) -> Dict[str, Any]:
 
 
 def test_applies_the_requested_charge() -> None:
-    with patch("tools.domains.savings.get_fineract_today", return_value="15 October 2026"), patch.object(
-        fineract_client, "execute_post", return_value={"resourceId": 3}
-    ) as post:
+    with (
+        patch.object(mcp_server.get_savings_account, "func", return_value=ACTIVE_SAVINGS),
+        patch("tools.domains.savings.get_fineract_today", return_value="15 October 2026"),
+        patch.object(fineract_client, "execute_post", return_value={"resourceId": 3}) as post,
+    ):
         assert _call(accountId=8, amount=15, chargeId=4) == {"resourceId": 3}
     endpoint, payload = post.call_args.args
     assert endpoint == "savingsaccounts/8/charges"
@@ -48,9 +51,11 @@ def test_applies_the_requested_charge() -> None:
 
 
 def test_without_a_charge_lists_the_options_and_charges_nothing() -> None:
-    with patch.object(mcp_server.list_charges_domain, "func", return_value=CHARGES), patch.object(
-        fineract_client, "execute_post"
-    ) as post:
+    with (
+        patch.object(mcp_server.get_savings_account, "func", return_value=ACTIVE_SAVINGS),
+        patch.object(mcp_server.list_charges_domain, "func", return_value=CHARGES),
+        patch.object(fineract_client, "execute_post") as post,
+    ):
         result = _call(accountId=8, amount=15)
     post.assert_not_called()
     # Only active savings charges with a specified due date, and in the message the agent sees
@@ -61,12 +66,86 @@ def test_without_a_charge_lists_the_options_and_charges_nothing() -> None:
 
 
 def test_without_a_charge_and_none_available() -> None:
-    with patch.object(mcp_server.list_charges_domain, "func", return_value=CHARGES[:1]), patch.object(
-        fineract_client, "execute_post"
-    ) as post:
+    with (
+        patch.object(mcp_server.get_savings_account, "func", return_value=ACTIVE_SAVINGS),
+        patch.object(mcp_server.list_charges_domain, "func", return_value=CHARGES[:1]),
+        patch.object(fineract_client, "execute_post") as post,
+    ):
         result = _call(accountId=8, amount=15)
     post.assert_not_called()
     assert "no active savings charge with a specified due date" in result["error"]
+
+
+def test_non_existent_savings_account_returns_prefetch_failure() -> None:
+    missing = {"error": "Fineract Error: The requested resource is not available.", "status_code": 404}
+    with patch.object(mcp_server.get_savings_account, "func", return_value=missing), patch.object(
+        fineract_client, "execute_post"
+    ) as post:
+        result = _call(accountId=99, amount=15, chargeId=4)
+    post.assert_not_called()
+    assert result == {"error": "Savings account ID 99 not found. Check get_client_accts to see valid savingsIds."}
+
+
+def test_non_existent_savings_account_without_charge_id_validates_account_first() -> None:
+    missing = {"error": "Fineract Error: The requested resource is not available.", "status_code": 404}
+    with (
+        patch.object(mcp_server.get_savings_account, "func", return_value=missing),
+        patch.object(mcp_server.list_charges_domain, "func") as list_charges,
+        patch.object(fineract_client, "execute_post") as post,
+    ):
+        result = _call(accountId=99, amount=15)
+    post.assert_not_called()
+    list_charges.assert_not_called()
+    assert result == {"error": "Savings account ID 99 not found. Check get_client_accts to see valid savingsIds."}
+
+
+def test_savings_prefetch_outage_is_reported_as_itself() -> None:
+    outage = {"error": "Connection failed: ('Connection aborted.', RemoteDisconnected())", "status_code": 503}
+    with patch.object(mcp_server.get_savings_account, "func", return_value=outage), patch.object(
+        fineract_client, "execute_post"
+    ) as post:
+        result = _call(accountId=8, amount=15, chargeId=4)
+    post.assert_not_called()
+    assert result == {"error": outage["error"]}
+    assert "not found" not in result["error"]
+
+
+def test_savings_prefetch_outage_without_charge_id_is_reported_before_listing_charges() -> None:
+    outage = {"error": "Connection failed: ('Connection aborted.', RemoteDisconnected())", "status_code": 503}
+    with (
+        patch.object(mcp_server.get_savings_account, "func", return_value=outage),
+        patch.object(mcp_server.list_charges_domain, "func") as list_charges,
+        patch.object(fineract_client, "execute_post") as post,
+    ):
+        result = _call(accountId=8, amount=15)
+    post.assert_not_called()
+    list_charges.assert_not_called()
+    assert result == {"error": outage["error"]}
+
+
+@pytest.mark.parametrize("status", ["Submitted and pending approval", "Approved", "Closed", "Inactive"])
+def test_does_not_apply_fee_to_savings_account_that_is_not_active(status: str) -> None:
+    account = {"id": 8, "status": {"value": status}}
+    with patch.object(mcp_server.get_savings_account, "func", return_value=account), patch.object(
+        fineract_client, "execute_post"
+    ) as post:
+        result = _call(accountId=8, amount=15, chargeId=4)
+    post.assert_not_called()
+    assert result == {
+        "error": f"Savings account 8 is in status '{status}'. Only Active accounts can have fees applied."
+    }
+
+
+def test_does_not_apply_fee_to_savings_account_with_malformed_status() -> None:
+    account = {"id": 8, "status": "NotADict"}
+    with patch.object(mcp_server.get_savings_account, "func", return_value=account), patch.object(
+        fineract_client, "execute_post"
+    ) as post:
+        result = _call(accountId=8, amount=15, chargeId=4)
+    post.assert_not_called()
+    assert result == {
+        "error": "Savings account 8 is in status 'NotADict'. Only Active accounts can have fees applied."
+    }
 
 
 @pytest.mark.parametrize("endpoint, body", [
