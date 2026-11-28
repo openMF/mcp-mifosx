@@ -16,22 +16,37 @@
       "required_when": [
         {"if": {"chargeAppliesTo": 1}, "then": ["chargePaymentMode"]},
         {"if": {"chargeAppliesTo": 2, "chargeTimeType": 6}, "then": ["feeOnMonthDay", "monthDayFormat", "locale"]},
-        {"if": {"chargeAppliesTo": 2, "chargeTimeType": 7}, "then": ["feeOnMonthDay", "feeInterval", "monthDayFormat", "locale"]}
+        {"if": {"chargeAppliesTo": 2, "chargeTimeType": 7}, "then": ["feeOnMonthDay", "feeInterval", "monthDayFormat", "locale"]},
+        {"if": {"feeFrequency": true}, "then": ["feeInterval"]}
+      ],
+      "forbidden_when": [
+        {
+          "if": {"chargeAppliesTo": 2, "chargeTimeType": 11},
+          "field": "feeOnMonthDay",
+          "message": "feeOnMonthDay: must be blank for weekly savings charges"
+        }
       ],
       "one_of_when": [
+        {"if": {}, "field": "chargeAppliesTo", "in": [1, 2, 3, 4, 5]},
         {"if": {"chargeAppliesTo": 1}, "field": "chargeTimeType", "in": [1, 2, 8, 9, 12]},
         {"if": {"chargeAppliesTo": 2}, "field": "chargeTimeType", "in": [2, 3, 4, 5, 6, 7, 10, 11, 16]},
         {"if": {"chargeAppliesTo": 3}, "field": "chargeTimeType", "in": [2]},
         {"if": {"chargeAppliesTo": 4}, "field": "chargeTimeType", "in": [13, 14, 15]},
+        {"if": {"chargeAppliesTo": 5}, "field": "chargeTimeType", "in": [1, 2]},
         {"if": {"chargeAppliesTo": 1}, "field": "chargeCalculationType", "in": [1, 2, 3, 4, 5]},
         {"if": {"chargeAppliesTo": 1, "chargeCalculationType": 5}, "field": "chargeTimeType", "in": [12]},
         {"if": {"chargeAppliesTo": 2}, "field": "chargeCalculationType", "in": [1, 2]},
         {"if": {"chargeAppliesTo": 3}, "field": "chargeCalculationType", "in": [1]},
+        {"if": {"chargeAppliesTo": 4}, "field": "chargeCalculationType", "in": [1, 2]},
+        {"if": {"chargeAppliesTo": 4, "chargeTimeType": 13}, "field": "chargeCalculationType", "in": [1]},
+        {"if": {"chargeAppliesTo": 5}, "field": "chargeCalculationType", "in": [1, 2]},
+        {"if": {"chargeAppliesTo": 5, "chargeTimeType": 2}, "field": "chargeCalculationType", "in": [1]},
         {"if": {"chargeTimeType": 12}, "field": "chargeCalculationType", "in": [1, 5]},
-        {"if": {"chargeAppliesTo": 1}, "field": "chargePaymentMode", "in": [0, 1]}
+        {"if": {"chargeAppliesTo": 1}, "field": "chargePaymentMode", "in": [0, 1]},
+        {"if": {"chargeAppliesTo": 5}, "field": "chargePaymentMode", "in": [0]}
       ],
       "codes": {
-        "chargeAppliesTo": {"1": ["Loan"], "2": ["Savings"], "3": ["Client"], "4": ["Shares"]},
+        "chargeAppliesTo": {"1": ["Loan"], "2": ["Savings"], "3": ["Client"], "4": ["Shares"], "5": ["Working Capital Loan", "Working Capital"]},
         "chargeTimeType": {
           "1": ["Disbursement"], "2": ["Specified due date"], "3": ["Savings activation"], "4": ["Savings closure"],
           "5": ["Withdrawal fee"], "6": ["Annual fee"], "7": ["Monthly fee"], "8": ["Instalment fee", "Installment fee"],
