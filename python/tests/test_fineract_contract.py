@@ -126,6 +126,11 @@ def contract_violations(operation_name: str, endpoint: str, payload: Dict[str, A
     for name, why in operation.get("forbidden", {}).items():
         if name in payload:
             problems.append(f"{name}: {why}")
+    for rule in operation.get("forbidden_when", []):
+        if _applies(rule["if"], payload):
+            val = payload.get(rule["field"])
+            if val is not None and not (isinstance(val, str) and not val.strip()):
+                problems.append(rule.get("message", f"{rule['field']}: forbidden when {rule['if']}"))
     for rule in operation.get("required_when", []):
         if _applies(rule["if"], payload):
             missing = [
@@ -145,7 +150,7 @@ def contract_violations(operation_name: str, endpoint: str, payload: Dict[str, A
             problems.append(f"{name}: required by Fineract, not sent")
     for rule in operation.get("one_of_when", []):
         name = rule["field"]
-        if _applies(rule["if"], payload) and name in payload and payload[name] not in rule["in"]:
+        if _applies(rule["if"], payload) and name in payload and payload[name] is not None and payload[name] not in rule["in"]:
             problems.append(f"{name}={payload[name]!r}: Fineract only accepts {rule['in']} when {rule['if']}")
     for name in operation.get("tenant_ids", []):
         if name in chosen:
@@ -481,6 +486,250 @@ def test_documented_codes_match_fineract(scenario: Scenario) -> None:
             {},
             None,
         ),
+        # (g) feeFrequency without feeInterval requires feeInterval (even if feeFrequency is 0)
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Recurring fee",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 1,
+                "chargeTimeType": 2,
+                "chargeCalculationType": 1,
+                "chargePaymentMode": 0,
+                "feeFrequency": 0,
+            },
+            {},
+            "feeInterval: required by Fineract, not sent",
+        ),
+        # Passing case: feeFrequency with feeInterval provided
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Recurring fee",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 1,
+                "chargeTimeType": 2,
+                "chargeCalculationType": 1,
+                "chargePaymentMode": 0,
+                "feeFrequency": 1,
+                "feeInterval": 2,
+            },
+            {},
+            None,
+        ),
+        # (h) chargeAppliesTo restricted to [1, 2, 3, 4, 5]
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Invalid applies",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 99,
+                "chargeTimeType": 1,
+                "chargeCalculationType": 1,
+            },
+            {},
+            "chargeAppliesTo=99: Fineract only accepts [1, 2, 3, 4, 5] when {}",
+        ),
+        # (i) Weekly savings charges cannot have non-blank feeOnMonthDay
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Weekly savings",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 2,
+                "chargeTimeType": 11,
+                "chargeCalculationType": 1,
+                "feeOnMonthDay": "01 January",
+            },
+            {},
+            "feeOnMonthDay: must be blank for weekly savings charges",
+        ),
+        # Passing case: Weekly savings charge with whitespace-only feeOnMonthDay (counted as blank)
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Weekly savings",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 2,
+                "chargeTimeType": 11,
+                "chargeCalculationType": 1,
+                "feeOnMonthDay": "   ",
+            },
+            {},
+            None,
+        ),
+        # Passing case: Weekly savings charge without feeOnMonthDay
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Weekly savings",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 2,
+                "chargeTimeType": 11,
+                "chargeCalculationType": 1,
+            },
+            {},
+            None,
+        ),
+        # (j) Working Capital (chargeAppliesTo=5) restrictions
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Working capital",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 5,
+                "chargeTimeType": 8,
+                "chargeCalculationType": 1,
+            },
+            {},
+            "chargeTimeType=8: Fineract only accepts [1, 2] when {'chargeAppliesTo': 5}",
+        ),
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Working capital",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 5,
+                "chargeTimeType": 2,
+                "chargeCalculationType": 2,
+            },
+            {},
+            "chargeCalculationType=2: Fineract only accepts [1] when {'chargeAppliesTo': 5, 'chargeTimeType': 2}",
+        ),
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Working capital",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 5,
+                "chargeTimeType": 1,
+                "chargeCalculationType": 1,
+                "chargePaymentMode": 1,
+            },
+            {},
+            "chargePaymentMode=1: Fineract only accepts [0] when {'chargeAppliesTo': 5}",
+        ),
+        # Passing cases for Working Capital:
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Working capital",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 5,
+                "chargeTimeType": 1,
+                "chargeCalculationType": 2,
+                "chargePaymentMode": 0,
+            },
+            {},
+            None,
+        ),
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Working capital",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 5,
+                "chargeTimeType": 2,
+                "chargeCalculationType": 1,
+            },
+            {},
+            None,
+        ),
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Working capital",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 5,
+                "chargeTimeType": 1,
+                "chargeCalculationType": 1,
+                "chargePaymentMode": None,
+            },
+            {},
+            None,
+        ),
+        # (k) Shares (chargeAppliesTo=4) calculation type restrictions
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Shares activation",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 4,
+                "chargeTimeType": 13,
+                "chargeCalculationType": 2,
+            },
+            {},
+            "chargeCalculationType=2: Fineract only accepts [1] when {'chargeAppliesTo': 4, 'chargeTimeType': 13}",
+        ),
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Shares purchase",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 4,
+                "chargeTimeType": 14,
+                "chargeCalculationType": 3,
+            },
+            {},
+            "chargeCalculationType=3: Fineract only accepts [1, 2] when {'chargeAppliesTo': 4}",
+        ),
+        # Passing cases for Shares:
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Shares activation",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 4,
+                "chargeTimeType": 13,
+                "chargeCalculationType": 1,
+            },
+            {},
+            None,
+        ),
+        (
+            "charge.create",
+            "charges",
+            {
+                "name": "Shares purchase",
+                "amount": 10,
+                "currencyCode": "USD",
+                "chargeAppliesTo": 4,
+                "chargeTimeType": 14,
+                "chargeCalculationType": 2,
+            },
+            {},
+            None,
+        ),
     ],
     ids=[
         "client_charge_invalid_calc_type",
@@ -496,6 +745,22 @@ def test_documented_codes_match_fineract(scenario: Scenario) -> None:
         "shares_charge_valid_time_type_15",
         "annual_charge_valid_month_day",
         "monthly_charge_valid_month_day",
+        "fee_frequency_zero_without_fee_interval",
+        "fee_frequency_with_fee_interval_valid",
+        "charge_applies_to_invalid_99",
+        "weekly_savings_charge_with_fee_on_month_day",
+        "weekly_savings_charge_whitespace_fee_on_month_day",
+        "weekly_savings_charge_valid_no_month_day",
+        "working_capital_invalid_time_type",
+        "working_capital_time_2_invalid_calc_type_2",
+        "working_capital_invalid_payment_mode_1",
+        "working_capital_valid_time_1_calc_2_payment_mode_0",
+        "working_capital_valid_time_2_calc_1_payment_mode_omitted",
+        "working_capital_valid_payment_mode_null",
+        "shares_activation_invalid_calc_type_2",
+        "shares_invalid_calc_type_3",
+        "shares_activation_valid_calc_type_1",
+        "shares_purchase_valid_calc_type_2",
     ],
 )
 def test_contract_violations_payloads(

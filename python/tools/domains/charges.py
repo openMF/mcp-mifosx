@@ -34,7 +34,7 @@ def create_charge(name: str, amount: float, currency_code: str = "USD",
                   charge_calculation_type: int = 1, is_penalty: bool = False,
                   is_active: bool = True):
     """Answers: 'Create a late payment fee of $50' or 'Add a new loan disbursement charge'
-    charge_applies_to: 1=Loan, 2=Savings, 3=Client
+    charge_applies_to: 1=Loan, 2=Savings, 3=Client, 4=Shares, 5=Working Capital Loan
     charge_time_type: 1=Disbursement, 2=Specified Due Date, 3=Savings Activation, 5=Withdrawal Fee
     charge_calculation_type: 1=Flat, 2=% of Amount
     """
