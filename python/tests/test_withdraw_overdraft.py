@@ -19,6 +19,7 @@ def _account(available: float, allow_overdraft: bool = False, limit: Optional[fl
         "status": {"value": "Active"},
         "summary": {"accountBalance": available, "availableBalance": available},
         "allowOverdraft": allow_overdraft,
+        "currency": {"code": "MXN", "displaySymbol": "$"},
     }
     if limit is not None:
         account["overdraftLimit"] = limit
@@ -55,7 +56,8 @@ def test_withdrawal_from_an_overdrawn_account_within_the_limit_is_sent() -> None
 def test_withdrawal_beyond_the_overdraft_limit_is_refused() -> None:
     result = _withdraw(_account(100, allow_overdraft=True, limit=500), 600.01)
     assert result["error"] == (
-        "Insufficient funds: requested $600.01 but available balance is $100.00 and the overdraft limit is $500.00 in account 7."
+        "Insufficient funds: requested 600.01 MXN but available balance is 100.00 MXN and the overdraft limit is 500.00 MXN "
+        "in account 7."
     )
 
 
@@ -67,10 +69,26 @@ def test_withdrawal_of_exactly_balance_plus_limit_is_sent() -> None:
 
 def test_overdraft_limit_is_ignored_when_overdraft_is_not_allowed() -> None:
     result = _withdraw(_account(100, allow_overdraft=False, limit=500), 400)
-    assert result["error"] == "Insufficient funds: requested $400.00 but available balance is $100.00 in account 7."
+    assert result["error"] == "Insufficient funds: requested 400.00 MXN but available balance is 100.00 MXN in account 7."
 
 
 def test_overdraft_account_without_a_limit_cannot_go_below_zero() -> None:
     # Fineract leaves overdraftLimit out of the response when it is zero.
     assert "Insufficient funds" in _withdraw(_account(100, allow_overdraft=True), 150)["error"]
     assert _withdraw(_account(100, allow_overdraft=True), 100) == {"resourceId": 6}
+
+
+def test_refusal_uses_the_account_currency_not_dollars() -> None:
+    # A KES account must not be reported in "$" (the same mislabel AI-280 fixed for balances)
+    account = {**_account(100), "currency": {"code": "KES"}}
+    assert _withdraw(account, 150)["error"] == (
+        "Insufficient funds: requested 150.00 KES but available balance is 100.00 KES in account 7."
+    )
+
+
+def test_refusal_without_a_currency_shows_plain_amounts() -> None:
+    account = _account(100)
+    del account["currency"]
+    assert _withdraw(account, 150)["error"] == (
+        "Insufficient funds: requested 150.00 but available balance is 100.00 in account 7."
+    )
